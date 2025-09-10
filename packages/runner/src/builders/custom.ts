@@ -12,7 +12,6 @@ import {
 	InstallTask,
 	InstallTaskArgs,
 	IsValid,
-	UpgradeTask,
 	TaskError,
 	CreateTask,
 	StopTask,
@@ -20,6 +19,8 @@ import {
 	StatusTask,
 	FileDigest,
 	defaultBuilderRuntime,
+	InstallArgsTask,
+	ConfigTask,
 } from "./lib.js"
 import { getNodeByPath, ParamsToArgs, TaskParamsToArgs } from "../tasks/lib.js"
 import {
@@ -31,15 +32,14 @@ import {
 	makeCanisterStatusTask,
 	makeCreateTask,
 	makeInstallTask,
+	makeInstallArgsTask,
+	makeConfigTask,
 	makeRemoveTask,
 	makeStopTask,
 	NormalizeDeps,
 	normalizeDepsMap,
-	resolveConfig,
 	Tags,
 	ValidProvidedDeps,
-	resolveMode,
-	makeUpgradeTask,
 } from "./lib.js"
 // TODO: move to lib.ts
 import { generateDIDJS } from "../canister.js"
@@ -62,11 +62,13 @@ export type CustomCanisterScope<
 	// children: Record<string, Task>
 	children: {
 		// create: Task<string>
+		config: ConfigTask<CustomCanisterConfig>
 		create: CreateTask
 		bindings: BindingsTask
 		build: CustomBuildTask
-		install: InstallTask<_SERVICE, I, D, P>
-		upgrade: UpgradeTask<_SERVICE, U, D, P>
+		install: InstallTask<_SERVICE, I, U>
+		install_args: InstallArgsTask<_SERVICE, I, U, D, P>
+		// upgrade: UpgradeTask<_SERVICE, U, D, P>
 		// D,
 		// P
 		stop: StopTask
@@ -151,10 +153,6 @@ export type DeployTaskArgs = ParamsToArgs<typeof deployParams>
 
 export const makeCustomDeployTask = <_SERVICE>(
 	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape }) => CustomCanisterConfig)
-		| CustomCanisterConfig,
 ): DeployTask<_SERVICE> => {
 	return {
 		_tag: "task",
@@ -260,81 +258,29 @@ export const makeCustomDeployTask = <_SERVICE>(
 						},
 					)
 					const [canisterId, [{ wasmPath, candidPath }]] = result
-					// TODO: canister installed, but cache deleted. should use reinstall, not install
-					const mode =
-						taskArgs.mode === "auto"
-							? yield* resolveMode(taskCtx, canisterId)
-							: taskArgs.mode
-					yield* Effect.logDebug("resolved deploy mode:", mode)
+					// TODO: move to install task? (mode normalization handled in install)
 
 					yield* Effect.logDebug("Now running install task", {
 						canisterId,
 						wasmPath,
-						mode,
+						mode: taskArgs.mode,
 						result: JSON.stringify(result),
 					})
-					// result: [
-					// 	"uqqxf-5h777-77774-qaaaa-cai",
-					// 	[
-					// 		{
-					// 			_id: "Option",
-					// 			_tag: "Some",
-					// 			value: {
-					// 				wasmPath:
-					// 					"/Users/user/projects/ice_example/.ice/canisters/dip20/dip20.wasm.gz",
-					// 				candidPath:
-					// 					"/Users/user/projects/ice_example/.ice/canisters/dip20/dip20.did",
-					// 			},
-					// 		},
-					// 		{
-					// 			_id: "Option",
-					// 			_tag: "Some",
-					// 			value: {
-					// 				didJSPath:
-					// 					"/Users/user/projects/ice_example/.ice/canisters/dip20/dip20.did.js",
-					// 				didTSPath:
-					// 					"/Users/user/projects/ice_example/.ice/canisters/dip20/dip20.did.ts",
-					// 			},
-					// 		},
-					// 	],
-					// ]
-					let taskResult
-					if (mode === "upgrade") {
-						// TODO: but if its the first time, unnecessary? how do we know to run it
-						const result = yield* Effect.tryPromise({
-							try: () =>
-								runTask(parentScope.children.upgrade, {
-									canisterId,
-									wasm: wasmPath,
-								}),
-							catch: (error) => {
-								return new TaskError({
-									message: String(error),
-								})
-							},
-						})
-						taskResult = result
-					} else {
-						const result = yield* Effect.tryPromise({
-							try: () =>
-								runTask(parentScope.children.install, {
-									mode,
-									// TODO: currently does nothing. they are generated inside the installTask from the installArgsFn
-									// do we run the installArgsFn here instead? separate the task again?
-									// args: taskArgs.args,
-									canisterId,
-									wasm: wasmPath,
-								}),
-							catch: (error) => {
-								return new TaskError({
-									message: String(error),
-								})
-							},
-						})
-						taskResult = result
-					}
+					const taskResult = yield* Effect.tryPromise({
+						try: () =>
+							runTask(parentScope.children.install, {
+								mode: taskArgs.mode,
+								canisterId,
+								wasm: wasmPath,
+							}),
+						catch: (error) => {
+							return new TaskError({
+								message: String(error),
+							})
+						},
+					})
 					yield* Effect.logDebug("Canister deployed successfully")
-					return taskResult as any
+					return taskResult
 				})(),
 			),
 		description: "Deploy canister code",
@@ -344,24 +290,26 @@ export const makeCustomDeployTask = <_SERVICE>(
 
 export const makeBindingsTask = (
 	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape }) => CustomCanisterConfig)
-		| CustomCanisterConfig,
+	configTask: ConfigTask<CustomCanisterConfig>,
 ): BindingsTask => {
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/bindings"),
 		dependsOn: {},
-		dependencies: {},
+		dependencies: {
+			config: configTask,
+		},
 		// TODO: do we allow a fn as args here?
 		effect: (taskCtx) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_effect")(function* () {
-					const canisterConfig = yield* resolveConfig(
-						taskCtx,
-						canisterConfigOrFn,
-					)
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as CustomCanisterConfig
+					// const canisterConfig = yield* resolveConfig(
+					// 	taskCtx,
+					// 	canisterConfigOrFn,
+					// )
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
@@ -386,8 +334,8 @@ export const makeBindingsTask = (
 		computeCacheKey: (input) => {
 			return hashJson({
 				depsHash: hashJson(input.depCacheKeys),
+				// TODO: unnecessary?
 				taskPath: input.taskPath,
-				configHash: hashConfig(canisterConfigOrFn),
 			})
 		},
 		input: (taskCtx) =>
@@ -453,20 +401,21 @@ const customBuildParams = {}
 // TODO: pass in wasm and candid as task params instead?
 export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	canisterConfigOrFn:
-		| ((args: {
-				ctx: TaskCtxShape
-				deps: P
-		  }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape; deps: P }) => CustomCanisterConfig)
-		| CustomCanisterConfig,
+	configTask: ConfigTask<CustomCanisterConfig>,
+	// canisterConfigOrFn:
+	// 	| ((args: {
+	// 			ctx: TaskCtxShape
+	// 			deps: P
+	// 	  }) => Promise<CustomCanisterConfig>)
+	// 	| ((args: { ctx: TaskCtxShape; deps: P }) => CustomCanisterConfig)
+	// 	| CustomCanisterConfig,
 ): BuildTask => {
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/build"),
 		dependsOn: {},
 		dependencies: {
-			// no deps
+			config: configTask,
 		},
 		effect: (taskCtx) =>
 			builderRuntime.runPromise(
@@ -474,10 +423,13 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 					const fs = yield* FileSystem.FileSystem
 					const path = yield* Path.Path
 					// TODO: could be a promise
-					const canisterConfig = yield* resolveConfig(
-						taskCtx,
-						canisterConfigOrFn,
-					)
+					// const canisterConfig = yield* resolveConfig(
+					// 	taskCtx,
+					// 	canisterConfigOrFn,
+					// )
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as CustomCanisterConfig
 					const { taskPath, appDir, iceDir } = taskCtx
 					// TODO: pass in as arg instead?
 					const canisterName = taskPath
@@ -496,13 +448,10 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 					// 	),
 					// )
 					const outWasmPath = path.join(
-						appDir,
 						iceDir,
 						"canisters",
 						canisterName,
-						isGzipped
-							? `${canisterName}.wasm.gz`
-							: `${canisterName}.wasm`,
+						isGzipped ? `${canisterName}.wasm.gz` : `${canisterName}.wasm`,
 					)
 					yield* Effect.logDebug(
 						"Reading wasm file",
@@ -516,7 +465,6 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 					yield* fs.writeFile(outWasmPath, wasm)
 
 					const outCandidPath = path.join(
-						appDir,
 						iceDir,
 						"canisters",
 						canisterName,
@@ -540,7 +488,6 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 				wasmHash: input.wasm.sha256,
 				candidHash: input.candid.sha256,
 				depsHash: hashJson(input.depCacheKeys),
-				configHash: hashConfig(canisterConfigOrFn),
 			}
 			const cacheKey = hashJson(installInput)
 			return cacheKey
@@ -560,10 +507,8 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 					const path = yield* Path.Path
 					const { appDir, iceDir } = taskCtx
 					// TODO...? might be problematic if user does lots of async
-					const canisterConfig = yield* resolveConfig(
-						taskCtx,
-						canisterConfigOrFn,
-					)
+					const canisterConfig = depResults["config"]
+						?.result as CustomCanisterConfig
 					const wasmPath = canisterConfig.wasm
 					const candidPath = canisterConfig.candid
 
@@ -618,6 +563,20 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 	}
 }
 
+type ArgsFields<
+	I,
+	D extends Record<string, Task>,
+	P extends Record<string, Task>,
+> = {
+	fn: (args: {
+		ctx: TaskCtxShape
+		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+	}) => I | Promise<I>
+	customEncode:
+		| undefined
+		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+}
+
 export class CustomCanisterBuilder<
 	I,
 	U,
@@ -629,14 +588,21 @@ export class CustomCanisterBuilder<
 > {
 	#scope: S
 	#builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>
+	#installArgs: ArgsFields<I, D, P>
+	#upgradeArgs: ArgsFields<U, D, P>
 	constructor(
 		builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
 		scope: S,
+		installArgs: ArgsFields<I, D, P>,
+		upgradeArgs: ArgsFields<U, D, P>,
 	) {
 		this.#builderRuntime = builderRuntime
 		this.#scope = scope
+		this.#installArgs = installArgs
+		this.#upgradeArgs = upgradeArgs
 	}
 
+    // TODO: does nothing? what do we even use it for?
 	create(
 		canisterConfigOrFn:
 			| Config
@@ -655,16 +621,23 @@ export class CustomCanisterBuilder<
 			...this.#scope,
 			children: {
 				...this.#scope.children,
-				create: makeCreateTask<P>(
+				create: makeCreateTask<CustomCanisterConfig>(
 					this.#builderRuntime,
-					canisterConfigOrFn,
+					this.#scope.children.config,
+					// canisterConfigOrFn,
 					[Tags.CUSTOM],
 				),
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			this.#installArgs,
+			this.#upgradeArgs,
+		)
 	}
 
+    // TODO: does nothing? what do we even use it for?
 	build(
 		canisterConfigOrFn:
 			| Config
@@ -685,11 +658,17 @@ export class CustomCanisterBuilder<
 				...this.#scope.children,
 				build: makeCustomBuildTask<P>(
 					this.#builderRuntime,
-					canisterConfigOrFn,
+					this.#scope.children.config,
+					// canisterConfigOrFn,
 				),
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			this.#installArgs,
+			this.#upgradeArgs,
+		)
 	}
 
 	installArgs(
@@ -718,43 +697,41 @@ export class CustomCanisterBuilder<
 		// TODO: passing in I makes the return type: any
 		// TODO: we need to inject dependencies again! or they can be overwritten
 
+		// const upgradeArgsFn = this.#scope.children.install_args ??
+		this.#installArgs = {
+			fn: installArgsFn,
+			customEncode,
+		}
+		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
+			this.#builderRuntime,
+			this.#installArgs,
+			this.#upgradeArgs,
+			this.#scope.children.install_args.dependencies,
+		)
+
 		const updatedScope = {
 			...this.#scope,
 			children: {
 				...this.#scope.children,
 				// TODO: add these to the task type
-				install: {
-					...makeInstallTask<I, D, P, _SERVICE>(
-						this.#builderRuntime,
-						installArgsFn,
-						{
-							customEncode,
-						},
-					),
-					dependsOn: this.#scope.children.install.dependsOn,
-					dependencies: this.#scope.children.install.dependencies,
-				} as InstallTask<_SERVICE, I, D, P>,
+				install: makeInstallTask<_SERVICE, I, U>(
+					this.#builderRuntime,
+					this.#scope.children.install_args,
+				) as InstallTask<_SERVICE, I, U>,
+				install_args,
 				// reuse installTask as upgradeTask by default unless overridden by user
 				// how will it affect caching? both get invalidated when argsFn has changed
 
 				// TODO: check in make instead?
-				upgrade: {
-					// TODO: makeUpgradeTask
-					...makeUpgradeTask<I, D, P, _SERVICE>(
-						this.#builderRuntime,
-						installArgsFn,
-						{
-							customEncode,
-						},
-					),
-					// TODO: ...?
-					dependsOn: this.#scope.children.install.dependsOn,
-					dependencies: this.#scope.children.install.dependencies,
-				} as UpgradeTask<_SERVICE, I, D, P>,
 			},
-		} satisfies CustomCanisterScope<_SERVICE, I, I, D, P>
+		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
 
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			this.#installArgs,
+			this.#upgradeArgs,
+		)
 	}
 
 	upgradeArgs(
@@ -780,6 +757,17 @@ export class CustomCanisterBuilder<
 		Config,
 		_SERVICE
 	> {
+		this.#upgradeArgs = {
+			fn: upgradeArgsFn,
+			customEncode,
+		}
+		// deps??
+		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
+			this.#builderRuntime,
+			this.#installArgs,
+			this.#upgradeArgs,
+			this.#scope.children.install_args.dependencies,
+		)
 		// TODO: passing in I makes the return type: any
 		// TODO: we need to inject dependencies again! or they can be overwritten
 
@@ -787,22 +775,16 @@ export class CustomCanisterBuilder<
 			...this.#scope,
 			children: {
 				...this.#scope.children,
-				upgrade: {
-					...makeUpgradeTask<U, D, P, _SERVICE>(
-						this.#builderRuntime,
-						upgradeArgsFn,
-						{
-							customEncode,
-						},
-					),
-					// TODO: ...?
-					dependsOn: this.#scope.children.install.dependsOn,
-					dependencies: this.#scope.children.install.dependencies,
-				} as UpgradeTask<_SERVICE, U, D, P>,
+				install_args,
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
 
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			this.#installArgs,
+			this.#upgradeArgs,
+		)
 	}
 
 	deps<UP extends Record<string, AllowedDep>, NP extends NormalizeDeps<UP>>(
@@ -817,21 +799,27 @@ export class CustomCanisterBuilder<
 		_SERVICE
 	> {
 		const updatedDependencies = normalizeDepsMap(dependencies) as NP
+		// TODO: ..... this is too much duplication
+		const installArgs = this.#installArgs as unknown as ArgsFields<I, D, NP>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, D, NP>
+		const install_args = {
+			...this.#scope.children.install_args,
+			dependencies: updatedDependencies,
+		} as InstallArgsTask<_SERVICE, I, U, D, NP>
+
 		const updatedScope = {
 			...this.#scope,
 			children: {
 				...this.#scope.children,
-				install: {
-					...this.#scope.children.install,
-					dependencies: updatedDependencies,
-				} as InstallTask<_SERVICE, I, D, NP>,
-				upgrade: {
-					...this.#scope.children.upgrade,
-					dependencies: updatedDependencies,
-				} as UpgradeTask<_SERVICE, U, D, NP>,
+				install_args,
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, NP>
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			installArgs,
+			upgradeArgs,
+		)
 	}
 
 	dependsOn<
@@ -849,21 +837,25 @@ export class CustomCanisterBuilder<
 		_SERVICE
 	> {
 		const updatedDependsOn = normalizeDepsMap(dependsOn) as ND
+		// TODO: ..... this is too much duplication
+		const installArgs = this.#installArgs as unknown as ArgsFields<I, ND, P>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, ND, P>
 		const updatedScope = {
 			...this.#scope,
 			children: {
 				...this.#scope.children,
-				install: {
-					...this.#scope.children.install,
+				install_args: {
+					...this.#scope.children.install_args,
 					dependsOn: updatedDependsOn,
-				} as InstallTask<_SERVICE, I, ND, P>,
-				upgrade: {
-					...this.#scope.children.upgrade,
-					dependsOn: updatedDependsOn,
-				} as UpgradeTask<_SERVICE, U, ND, P>,
+				} as InstallArgsTask<_SERVICE, I, U, ND, P>,
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, ND, P>
-		return new CustomCanisterBuilder(this.#builderRuntime, updatedScope)
+		return new CustomCanisterBuilder(
+			this.#builderRuntime,
+			updatedScope,
+			installArgs,
+			upgradeArgs,
+		)
 	}
 
 	make(
@@ -919,6 +911,22 @@ export const makeCustomCanister = <
 	CustomCanisterConfig,
 	_SERVICE
 > => {
+	const config = makeConfigTask(builderRuntime, canisterConfigOrFn)
+	const installArgs = {
+		fn: () => [] as I,
+		customEncode: undefined,
+	}
+	const upgradeArgs = {
+		fn: () => [] as U,
+		customEncode: undefined,
+	}
+	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
+		builderRuntime,
+		installArgs,
+		upgradeArgs,
+		{},
+	)
+
 	const initialScope = {
 		_tag: "scope",
 		id: Symbol("scope"),
@@ -927,18 +935,20 @@ export const makeCustomCanister = <
 		defaultTask: "deploy",
 		// TODO: default implementations
 		children: {
-			create: makeCreateTask(builderRuntime, canisterConfigOrFn, [
-				Tags.CUSTOM,
-			]),
-			bindings: makeBindingsTask(builderRuntime, canisterConfigOrFn),
-			build: makeCustomBuildTask(builderRuntime, canisterConfigOrFn),
-			install: makeInstallTask<I, {}, {}, _SERVICE>(builderRuntime),
-			upgrade: makeUpgradeTask<U, {}, {}, _SERVICE>(builderRuntime),
+			config,
+			create: makeCreateTask(builderRuntime, config, [Tags.CUSTOM]),
+			bindings: makeBindingsTask(builderRuntime, config),
+			build: makeCustomBuildTask(builderRuntime, config),
+			install: makeInstallTask<_SERVICE, I, U>(
+				builderRuntime,
+				install_args,
+			),
+			install_args,
+			// upgrade: makeUpgradeTask<U, {}, {}, _SERVICE>(builderRuntime),
 			stop: makeStopTask(builderRuntime),
 			remove: makeRemoveTask(builderRuntime),
 			deploy: makeCustomDeployTask<_SERVICE>(
 				builderRuntime,
-				canisterConfigOrFn,
 			),
 			status: makeCanisterStatusTask(builderRuntime, [Tags.CUSTOM]),
 		},
@@ -952,7 +962,7 @@ export const makeCustomCanister = <
 		{},
 		CustomCanisterConfig,
 		_SERVICE
-	>(builderRuntime, initialScope)
+	>(builderRuntime, initialScope, installArgs, upgradeArgs)
 }
 
 // TODO: some kind of metadata?

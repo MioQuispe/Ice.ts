@@ -15,7 +15,6 @@ export type {
     IsValid,
     ValidProvidedDeps,
     InstallTaskArgs,
-    CreateConfig,
     FileDigest,
     MergeScopeDependencies,
     MergeScopeDependsOn,

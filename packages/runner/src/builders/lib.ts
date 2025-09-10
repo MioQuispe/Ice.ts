@@ -45,6 +45,8 @@ import { configLayer } from "../services/config.js"
 import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
+import { DeploymentsService } from "../services/deployments.js"
+import { layerFileSystem } from "@effect/platform/KeyValueStore"
 
 const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 	Layer.provide(NodeContext.layer),
@@ -59,6 +61,13 @@ const baseLayer = Layer.mergeAll(
 		Layer.provide(NodeContext.layer),
 		Layer.provide(configLayer),
 		Layer.provide(IceDirLayer),
+	),
+	DeploymentsService.Live.pipe(
+		Layer.provide(
+			layerFileSystem(".ice/deployments").pipe(
+				Layer.provide(NodeContext.layer),
+			),
+		),
 	),
 	// CanisterIdsService.Test,
 	configLayer,
@@ -90,41 +99,133 @@ export const loadCanisterId = (taskCtx: TaskCtxShape, taskPath: string) =>
 		return Option.none()
 	})
 
-export const resolveConfig = <T, P extends Record<string, unknown>>(
-	taskCtx: TaskCtxShape,
+export type ConfigTask<
+	Config extends Record<string, unknown>,
+	D extends Record<string, Task> = {},
+	P extends Record<string, Task> = {},
+> = CachedTask<
+	Config,
+	D,
+	P,
+	{
+		depCacheKeys: Record<string, string | undefined>
+	} // TODO: input
+> & {
+	params: {}
+}
+
+export const makeConfigTask = <
+	Config extends Record<string, unknown>,
+	D extends Record<string, Task> = {},
+	P extends Record<string, Task> = {},
+>(
+	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
 	configOrFn:
-		| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<T>)
-		| ((args: { ctx: TaskCtxShape; deps: P }) => T)
-		| T,
-) =>
-	Effect.gen(function* () {
-		if (typeof configOrFn === "function") {
-			const configFn = configOrFn as (args: {
-				ctx: TaskCtxShape
-			}) => Promise<T> | T
-			const configResult = configFn({ ctx: taskCtx })
-			if (configResult instanceof Promise) {
-				return yield* Effect.tryPromise({
-					try: () => configResult,
-					catch: (error) => {
-						return new TaskError({ message: String(error) })
-					},
-				})
-			}
-			return configResult
-		}
-		return configOrFn
-	})
+		| ((args: { ctx: TaskCtxShape }) => Promise<Config>)
+		| ((args: { ctx: TaskCtxShape }) => Config)
+		| Config,
+) => {
+	return {
+		_tag: "task",
+		description: "Config task",
+		tags: [Tags.CANISTER, Tags.CONFIG],
+		dependsOn: {} as D,
+		dependencies: {} as P,
+		namedParams: {},
+		params: {},
+		positionalParams: [],
+		effect: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_effect")(function* () {
+					if (typeof configOrFn === "function") {
+						const configFn = configOrFn as (args: {
+							ctx: TaskCtxShape
+						}) => Promise<Config> | Config
+						const configResult = configFn({ ctx: taskCtx })
+						if (configResult instanceof Promise) {
+							return yield* Effect.tryPromise({
+								try: () => configResult,
+								catch: (error) => {
+									return new TaskError({
+										message: String(error),
+									})
+								},
+							})
+						}
+						return configResult
+					}
+					return configOrFn
+				})(),
+			),
+		id: Symbol("canister/config"),
+		input: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_input")(function* () {
+					const { depResults } = taskCtx
+					const depCacheKeys = Record.map(
+						depResults,
+						(dep) => dep.cacheKey,
+					)
+					return {
+						depCacheKeys,
+					}
+				})(),
+			),
+		encode: (taskCtx, value) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_encode")(function* () {
+					return JSON.stringify(value)
+				})(),
+			),
+		encodingFormat: "string",
+		decode: (taskCtx, value) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_decode")(function* () {
+					return JSON.parse(value as string)
+				})(),
+			),
+		computeCacheKey: (input) => {
+			return hashJson({
+				configHash: hashConfig(configOrFn),
+				depsHash: hashJson(Object.values(input.depCacheKeys)),
+			})
+		},
+	} satisfies ConfigTask<Config, D, P>
+}
+
+// export const resolveConfig = <T, P extends Record<string, unknown>>(
+// 	taskCtx: TaskCtxShape,
+// 	configOrFn:
+// 		| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<T>)
+// 		| ((args: { ctx: TaskCtxShape; deps: P }) => T)
+// 		| T,
+// ) =>
+// 	Effect.gen(function* () {
+// 		if (typeof configOrFn === "function") {
+// 			const configFn = configOrFn as (args: {
+// 				ctx: TaskCtxShape
+// 			}) => Promise<T> | T
+// 			const configResult = configFn({ ctx: taskCtx })
+// 			if (configResult instanceof Promise) {
+// 				return yield* Effect.tryPromise({
+// 					try: () => configResult,
+// 					catch: (error) => {
+// 						return new TaskError({ message: String(error) })
+// 					},
+// 				})
+// 			}
+// 			return configResult
+// 		}
+// 		return configOrFn
+// 	})
 
 export type CreateConfig = {
 	canisterId?: string
 }
-export const makeCreateTask = <P extends Record<string, unknown>>(
+
+export const makeCreateTask = <Config extends CreateConfig>(
 	runtime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<CreateConfig>)
-		| ((args: { ctx: TaskCtxShape; deps: P }) => CreateConfig)
-		| CreateConfig,
+	configTask: ConfigTask<Config>,
 	tags: string[] = [],
 ): CreateTask => {
 	const id = Symbol("canister/create")
@@ -132,7 +233,9 @@ export const makeCreateTask = <P extends Record<string, unknown>>(
 		_tag: "task",
 		id,
 		dependsOn: {},
-		dependencies: {},
+		dependencies: {
+			config: configTask,
+		},
 		effect: (taskCtx) =>
 			runtime.runPromise(
 				Effect.fn("task_effect")(function* () {
@@ -152,10 +255,13 @@ export const makeCreateTask = <P extends Record<string, unknown>>(
 					yield* Effect.logDebug("makeCreateTask", {
 						storedCanisterId,
 					})
-					const canisterConfig = yield* resolveConfig(
-						taskCtx,
-						canisterConfigOrFn,
-					)
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as Config
+					// const canisterConfig = yield* resolveConfig(
+					// 	taskCtx,
+					// 	canisterConfigOrFn,
+					// )
 					const configCanisterId = canisterConfig?.canisterId
 					// TODO: handle all edge cases related to this. what happens
 					// if the user provides a new canisterId in the config? and so on
@@ -216,12 +322,7 @@ export const makeCreateTask = <P extends Record<string, unknown>>(
 						network: taskCtx.currentNetwork,
 						canisterId,
 					})
-					const outDir = path.join(
-						appDir,
-						iceDir,
-						"canisters",
-						canisterName,
-					)
+					const outDir = path.join(iceDir, "canisters", canisterName)
 					yield* fs.makeDirectory(outDir, { recursive: true })
 					return canisterId
 				})(),
@@ -279,10 +380,13 @@ export const makeCreateTask = <P extends Record<string, unknown>>(
 						.split(":")
 						.slice(0, -1)
 						.join(":")
-					const canisterConfig = yield* resolveConfig(
-						taskCtx,
-						canisterConfigOrFn,
-					)
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as Config
+					// const canisterConfig = yield* resolveConfig(
+					// 	taskCtx,
+					// 	canisterConfigOrFn,
+					// )
 					const canisterIdsService = yield* CanisterIdsService
 					const configCanisterId = canisterConfig?.canisterId
 					const storedCanisterIds =
@@ -553,40 +657,46 @@ export type BuildTask = CachedTask<
 	}
 >
 
-export type InstallTask<
+export type InstallArgsTask<
 	_SERVICE = unknown,
 	I = unknown,
+	U = unknown,
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
 > = Omit<
 	CachedTask<
 		{
-			canisterId: string
 			canisterName: string
-			actor: ActorSubclass<_SERVICE>
-			mode: InstallModes
-			args: I
-			encodedArgs: Uint8Array<ArrayBufferLike>
+			installArgs: {
+				raw: I
+				encoded: Uint8Array<ArrayBufferLike>
+			}
+			upgradeArgs: {
+				raw: U
+				encoded: Uint8Array<ArrayBufferLike>
+			}
+			// mode: InstallModes
+			// encodedArgs: Uint8Array<ArrayBufferLike>
 		},
 		D,
 		P,
 		{
 			network: string
-			canisterId: string
 			canisterName: string
-			taskPath: string
 			mode: InstallModes
 			depCacheKeys: Record<string, string | undefined>
 			installArgsFn: Function
+			upgradeArgsFn: Function
 		}
 	>,
 	"params"
 > & {
-	params: typeof installParams
+	params: typeof installArgsParams
 }
 
-export type UpgradeTask<
+export type InstallTask<
 	_SERVICE = unknown,
+	I = unknown,
 	U = unknown,
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
@@ -597,7 +707,7 @@ export type UpgradeTask<
 			canisterName: string
 			actor: ActorSubclass<_SERVICE>
 			mode: InstallModes
-			args: U
+			args: I | U
 			encodedArgs: Uint8Array<ArrayBufferLike>
 		},
 		D,
@@ -605,16 +715,52 @@ export type UpgradeTask<
 		{
 			network: string
 			canisterId: string
-			canisterName: string
-			taskPath: string
+			// canisterName: string
+			mode: InstallModes
+			// computeKeyMode?: "install" | "upgrade"
 			depCacheKeys: Record<string, string | undefined>
-			upgradeArgsFn: Function
+			wasmDigest: FileDigest
+			installArgsDigest: string
+			upgradeArgsDigest: string
+			// installArgsFn: Function
+			// upgradeArgsFn: Function
 		}
 	>,
 	"params"
 > & {
-	params: typeof upgradeParams
+	params: typeof installParams
 }
+
+// export type UpgradeTask<
+// 	_SERVICE = unknown,
+// 	U = unknown,
+// 	D extends Record<string, Task> = {},
+// 	P extends Record<string, Task> = {},
+// > = Omit<
+// 	CachedTask<
+// 		{
+// 			canisterId: string
+// 			canisterName: string
+// 			actor: ActorSubclass<_SERVICE>
+// 			mode: InstallModes
+// 			args: U
+// 			encodedArgs: Uint8Array<ArrayBufferLike>
+// 		},
+// 		D,
+// 		P,
+// 		{
+// 			network: string
+// 			canisterId: string
+// 			canisterName: string
+// 			taskPath: string
+// 			depCacheKeys: Record<string, string | undefined>
+// 			upgradeArgsFn: Function
+// 		}
+// 	>,
+// 	"params"
+// > & {
+// 	params: typeof upgradeParams
+// }
 
 // D,
 // P
@@ -659,16 +805,14 @@ export type CanisterScopeSimple = {
 	// children: Record<string, Task>
 	children: {
 		// create: Task<string>
+		config: Task
 		create: Task
 		bindings: Task
 		build: Task
 		install: Task
-		upgrade: Task
-		// D,
-		// P
+		install_args: Task
 		stop: Task
 		remove: Task
-		// TODO: same as install?
 		deploy: Task
 		status: Task
 	}
@@ -688,7 +832,9 @@ export const Tags = {
 	STATUS: "$$ice/canister/status",
 	BUILD: "$$ice/canister/build",
 	INSTALL: "$$ice/canister/install",
-	UPGRADE: "$$ice/canister/upgrade",
+	INSTALL_ARGS: "$$ice/canister/install_args",
+	CONFIG: "$$ice/canister/config",
+	// UPGRADE: "$$ice/canister/upgrade",
 	BINDINGS: "$$ice/canister/bindings",
 	DEPLOY: "$$ice/canister/deploy",
 	STOP: "$$ice/canister/stop",
@@ -728,8 +874,8 @@ export type AllowedDep = Task | CanisterScopeSimple
 export type NormalizeDep<T> = T extends Task
 	? T
 	: T extends CanisterScopeSimple
-		? T["children"]["deploy"] extends Task
-			? T["children"]["deploy"]
+		? T["children"]["install"] extends Task
+			? T["children"]["install"]
 			: never
 		: never
 
@@ -746,7 +892,7 @@ export type NormalizeDeps<Deps extends Record<string, AllowedDep>> = {
 	[K in keyof Deps]: Deps[K] extends Task
 		? Deps[K]
 		: Deps[K] extends CanisterScopeSimple
-			? Deps[K]["children"]["deploy"]
+			? Deps[K]["children"]["install"]
 			: never
 }
 
@@ -824,8 +970,8 @@ export type IsValid<S extends CanisterScopeSimple> =
 // TODO: arktype match?
 export function normalizeDep(dep: Task | CanisterScopeSimple): Task {
 	if ("_tag" in dep && dep._tag === "task") return dep
-	if ("_tag" in dep && dep._tag === "scope" && dep.children?.deploy)
-		return dep.children.deploy as Task
+	if ("_tag" in dep && dep._tag === "scope" && dep.children?.install)
+		return dep.children.install as Task
 	throw new Error("Invalid dependency type provided to normalizeDep")
 }
 
@@ -1007,36 +1153,6 @@ export const makeCanisterStatusTask = (
 							info: undefined,
 						}
 					}
-					// export interface canister_status_result {
-					//   'status' : { 'stopped' : null } |
-					//     { 'stopping' : null } |
-					//     { 'running' : null },
-					//   'memory_size' : bigint,
-					//   'cycles' : bigint,
-					//   'settings' : definite_canister_settings,
-					//   'query_stats' : {
-					//     'response_payload_bytes_total' : bigint,
-					//     'num_instructions_total' : bigint,
-					//     'num_calls_total' : bigint,
-					//     'request_payload_bytes_total' : bigint,
-					//   },
-					//   'idle_cycles_burned_per_day' : bigint,
-					//   'module_hash' : [] | [Array<number>],
-					//   'reserved_cycles' : bigint,
-					// }
-
-					// const status = yield* Effect.tryPromise({
-					// 	try: () =>
-					// 		mgmt.canister_status({
-					// 			canister_id: Principal.fromText(canisterId),
-					// 		}),
-					// 	catch: (err) =>
-					// 		new DeploymentError({
-					// 			message: `Failed to get status for ${canisterName}: ${
-					// 				err instanceof Error ? err.message : String(err)
-					// 			}`,
-					// 		}),
-					// // })
 					const {
 						roles: {
 							deployer: { identity },
@@ -1075,11 +1191,12 @@ export const resolveMode = (
 			roles: {
 				deployer: { identity },
 			},
+			depResults,
 		} = taskCtx
 		const { taskPath } = taskCtx
-		// const taskArgs = args as {
-		// 	mode: InstallModes
-		// }
+		const taskArgs = args as InstallTaskArgs
+		const requestedMode = taskArgs.mode
+		const wasmPath = taskArgs.wasm
 		const canisterName = taskPath.split(":").slice(0, -1).join(":")
 		const canisterIdsService = yield* CanisterIdsService
 		const canisterIdsMap = yield* canisterIdsService.getCanisterIds()
@@ -1109,36 +1226,46 @@ export const resolveMode = (
 			canisterInfo.status === CanisterStatus.NOT_FOUND ||
 			canisterInfo.module_hash.length === 0
 
-		let mode: InstallModes = "install"
-		if (canisterInfo.status === CanisterStatus.NOT_FOUND) {
-			// TODO: noModule fails
+		const Deployments = yield* DeploymentsService
+		const lastDeployment = yield* Deployments.get(
+			canisterName,
+			currentNetwork,
+		)
+		const { installArgs, upgradeArgs } = depResults["install_args"]
+			?.result as TaskSuccess<InstallArgsTask>
+		const installArgsHash = hashUint8(installArgs.encoded)
+		const upgradeArgsHash = hashUint8(upgradeArgs.encoded)
+
+		// // const mode =
+		// // 	resolvedMode === "reinstall" ? "install" : resolvedMode
+
+		let mode: InstallModes
+		if (requestedMode === "auto") {
 			if (noModule) {
 				mode = "install"
 			} else {
-				return yield* Effect.fail(
-					new TaskError({
-						message: "Canister not found but has module??",
-					}),
-				)
+				mode = Option.match(lastDeployment, {
+					onSome: (lastDeployment) => {
+						if (
+							lastDeployment.installArgsHash !== installArgsHash
+						) {
+							return "reinstall"
+						}
+						if (
+							lastDeployment.upgradeArgsHash !== upgradeArgsHash
+						) {
+							return "upgrade"
+						}
+						// TODO: This one is changed, but it causes OTHER ISSUES
+						return "install"
+					},
+					onNone: () => "reinstall",
+				})
 			}
-		} else if (canisterInfo.status === CanisterStatus.STOPPING) {
-			if (noModule) {
-				mode = "install"
-			} else {
-				mode = "upgrade"
-			}
-		} else if (canisterInfo.status === CanisterStatus.STOPPED) {
-			if (noModule) {
-				mode = "install"
-			} else {
-				mode = "upgrade"
-			}
-		} else if (canisterInfo.status === CanisterStatus.RUNNING) {
-			if (noModule) {
-				mode = "install"
-			} else {
-				mode = "upgrade"
-			}
+		} else {
+			// TODO: why not working? still returning cached result?
+			// maybe need to add mode to cache again?
+			mode = requestedMode
 		}
 
 		return mode
@@ -1200,7 +1327,7 @@ const decodeWithBigInt = (str: string) =>
 
 export const installParams = {
 	mode: {
-		type: type("'install' | 'reinstall'"),
+		type: type("'install' | 'reinstall' | 'upgrade' | 'auto'"),
 		description: "The mode to install the canister in",
 		default: "install" as const,
 		isFlag: true as const,
@@ -1265,36 +1392,401 @@ export const installParams = {
 
 export type InstallTaskArgs = ParamsToArgs<typeof installParams>
 
-export const makeInstallTask = <
+export const makeInstallTaskParams = <T extends CustomCanisterConfig>(
+	canisterConfig: T,
+) => {
+	return {
+		...installParams,
+		wasm: {
+			...installParams.wasm,
+			isOptional: true as const,
+			default: canisterConfig.wasm,
+		},
+		canisterId: {
+			...installParams.canisterId,
+			isOptional: true as const,
+			default: canisterConfig.canisterId,
+		},
+		candid: {
+			...installParams.candid,
+			isOptional: true as const,
+			default: canisterConfig.candid,
+		},
+	}
+}
+
+export const installArgsParams = {
+	// mode: {
+	// 	// TODO: add "auto" ?
+	// 	type: type("'install' | 'reinstall' | 'upgrade'"),
+	// 	description: "The mode to generate install args for",
+	// 	default: "install" as const,
+	// 	isFlag: true as const,
+	// 	isOptional: true as const,
+	// 	isVariadic: false as const,
+	// 	name: "mode",
+	// 	aliases: ["m"],
+	// 	parse: (value: string) => value as InstallModes,
+	// },
+}
+
+export const makeInstallArgsTask = <
+	_SERVICE,
 	I,
+	U,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
-	_SERVICE,
 >(
 	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	installArgsFn: (args: {
-		ctx: TaskCtxShape
-		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-	}) => Promise<I> | I = () => [] as unknown as I,
-	{
-		customEncode,
-		// customInitIDL,
-	}: {
+	installArgs: {
+		fn: (args: {
+			ctx: TaskCtxShape
+			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+		}) => Promise<I> | I
 		customEncode:
 			| undefined
-			| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
-		// customInitIDL: IDL.Type[] | undefined
-	} = {
-		customEncode: undefined,
-		// customInitIDL: undefined,
+			| ((
+					args: I,
+					mode: InstallModes,
+			  ) => Promise<Uint8Array<ArrayBufferLike>>)
 	},
-): InstallTask<_SERVICE, I, D, P> => {
+	upgradeArgs: {
+		fn: (args: {
+			ctx: TaskCtxShape
+			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+		}) => Promise<U> | U
+		customEncode:
+			| undefined
+			| ((
+					args: U,
+					mode: InstallModes,
+			  ) => Promise<Uint8Array<ArrayBufferLike>>)
+	},
+	dependencies: P,
+): InstallArgsTask<_SERVICE, I, U, D, P> => {
+	return {
+		_tag: "task",
+		id: Symbol("customCanister/install_args"),
+		dependsOn: {} as D,
+		dependencies,
+		// TODO: allow passing in candid as a string from CLI
+		namedParams: installArgsParams,
+		positionalParams: [],
+		params: installArgsParams,
+		effect: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_effect")(function* () {
+					yield* Effect.logDebug(
+						"Starting custom canister installation",
+					)
+					const path = yield* Path.Path
+					// TODO: can I pass in the task itself as a type parameter to get automatic type inference?
+					// To avoid having to use "as"
+					const { appDir, iceDir } = taskCtx
+					const identity = taskCtx.roles.deployer.identity
+					const { replica, args, depResults } = taskCtx
+					const taskArgs = args as InstallTaskArgs
+					const { taskPath } = taskCtx
+					const canisterName = taskPath
+						.split(":")
+						.slice(0, -1)
+						.join(":")
+
+					const {
+						wasm: wasmPath,
+						// TODO: js or candid?
+						candid,
+						// TODO: support raw args
+						args: rawInstallArgs,
+						// mode,
+					} = taskArgs
+
+					yield* Effect.logDebug("Starting install args generation")
+
+					let initArgs = [] as unknown as I | U
+					yield* Effect.logDebug("Executing install args function")
+
+					// TODO: use params?
+					const didJSPath = path.join(
+						iceDir,
+						"canisters",
+						canisterName,
+						`${canisterName}.did.js`,
+					)
+
+					// TODO: should it catch errors?
+					// TODO: handle different modes
+					const deps = Record.map(
+						depResults,
+						(dep) => dep.result,
+					) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+
+					const installFnResult = installArgs.fn({
+						ctx: taskCtx,
+						deps,
+					})
+					let installArgsResult = [] as unknown as I
+					if (installFnResult instanceof Promise) {
+						installArgsResult = yield* Effect.tryPromise<
+							I,
+							TaskError
+						>({
+							try: () => installFnResult,
+							catch: (e) =>
+								new TaskError({
+									message: `Install args function failed for: ${canisterName},
+							typeof installArgsFn: ${typeof installArgs.fn},
+							 typeof installResult: ${typeof installFnResult}
+							 error: ${e},
+							 installArgsFn: ${installArgs.fn},
+							 installResult: ${installFnResult},
+							 `,
+								}),
+						})
+					} else {
+						installArgsResult = installFnResult
+					}
+
+					const upgradeFnResult = upgradeArgs.fn({
+						ctx: taskCtx,
+						deps,
+					})
+
+					let upgradeArgsResult = [] as unknown as U
+					if (upgradeFnResult instanceof Promise) {
+						upgradeArgsResult = yield* Effect.tryPromise<
+							U,
+							TaskError
+						>({
+							try: () => upgradeFnResult,
+							catch: (e) =>
+								new TaskError({
+									message: `Install args function failed for: ${canisterName},
+							typeof installArgsFn: ${typeof upgradeArgs.fn},
+							 typeof installResult: ${typeof upgradeFnResult}
+							 error: ${e},
+							 installArgsFn: ${upgradeArgs.fn},
+							 installResult: ${upgradeFnResult},
+							 `,
+								}),
+						})
+					} else {
+						upgradeArgsResult = upgradeFnResult
+					}
+
+					yield* Effect.logDebug("Install args generated", {
+						installArgsResult,
+						upgradeArgsResult,
+					})
+
+					const canisterDID = yield* Effect.tryPromise({
+						try: () =>
+							import(didJSPath) as Promise<CanisterDidModule>,
+						catch: (e) => {
+							return new TaskError({
+								message: "Failed to load canisterDID",
+							})
+						},
+					})
+					yield* Effect.logDebug("Encoding args install args", {
+						installArgsResult,
+						canisterDID,
+					})
+					// TODO: do we accept simple objects as well?
+					// let encodedArgs
+					const encodedInstallArgs = installArgs.customEncode
+						? yield* Effect.tryPromise({
+								try: () =>
+									installArgs.customEncode!(
+										installArgsResult,
+										"install",
+									),
+								catch: (error) => {
+									return new TaskError({
+										message: `customEncode failed, error: ${error}`,
+									})
+								},
+							})
+						: yield* encodeArgs(
+								installArgsResult as unknown[],
+								canisterDID,
+							)
+
+					const encodedUpgradeArgs = upgradeArgs.customEncode
+						? yield* Effect.tryPromise({
+								try: () =>
+									upgradeArgs.customEncode!(
+										upgradeArgsResult,
+										"upgrade",
+									), // typescript cant infer properly
+								catch: (error) => {
+									return new TaskError({
+										message: `customEncode failed, error: ${error}`,
+									})
+								},
+							})
+						: yield* encodeArgs(
+								upgradeArgsResult as unknown[],
+								canisterDID,
+							)
+
+					return {
+						installArgs: {
+							raw: installArgsResult,
+							encoded: encodedInstallArgs,
+						},
+						upgradeArgs: {
+							raw: upgradeArgsResult,
+							encoded: encodedUpgradeArgs,
+						},
+						// args: installArgs,
+						// encodedArgs,
+						// mode,
+						canisterName,
+					}
+				})(),
+			),
+		description: "Generate install args for canister",
+		tags: [Tags.CANISTER, Tags.INSTALL_ARGS],
+		// TODO: add network?
+		// TODO: pocket-ic could be restarted?
+		computeCacheKey: (input) => {
+			const installInput = {
+				installArgsFnHash: hashConfig(input.installArgsFn),
+				upgradeArgsFnHash: hashConfig(input.upgradeArgsFn),
+				depsHash: hashJson(input.depCacheKeys),
+				network: input.network,
+			}
+			const cacheKey = hashJson(installInput)
+			return cacheKey
+		},
+		input: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_input")(function* () {
+					const { args } = taskCtx
+					const { taskPath, depResults } = taskCtx
+					const taskArgs = args as {
+						mode: "install" | "reinstall"
+						args: string
+					}
+					const canisterName = taskPath
+						.split(":")
+						.slice(0, -1)
+						.join(":")
+					const dependencies = depResults as {
+						[K in keyof P]: {
+							result: TaskReturnValue<P[K]>
+							cacheKey: string | undefined
+						}
+					}
+					const depCacheKeys = Record.map(
+						dependencies,
+						(dep) => dep.cacheKey,
+					)
+					const { currentNetwork } = taskCtx
+					const mode = taskArgs.mode
+
+					// const taskRegistry = yield* TaskRegistry
+					// TODO: we need a separate cache for this?
+					const input = {
+						canisterName,
+						network: currentNetwork,
+						mode,
+						depCacheKeys,
+						installArgsFn: installArgs.fn,
+						upgradeArgsFn: upgradeArgs.fn,
+					}
+					return input
+				})(),
+			),
+		encodingFormat: "string",
+
+		encode: (taskCtx, result, input) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_encode")(function* () {
+					yield* Effect.logDebug("encoding:", result)
+					return yield* encodeWithBigInt({
+						canisterName: result.canisterName,
+						installArgs: {
+							raw: result.installArgs.raw,
+							encoded: uint8ArrayToJsonString(
+								result.installArgs.encoded,
+							),
+						},
+						upgradeArgs: {
+							raw: result.upgradeArgs.raw,
+							encoded: uint8ArrayToJsonString(
+								result.upgradeArgs.encoded,
+							),
+						},
+					})
+				})(),
+			),
+		decode: (taskCtx, value, input) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_decode")(function* () {
+					const { canisterName, installArgs, upgradeArgs } =
+						(yield* decodeWithBigInt(value as string)) as {
+							canisterName: string
+							installArgs: {
+								raw: I
+								encoded: string
+							}
+							upgradeArgs: {
+								raw: U
+								encoded: string
+							}
+						}
+					const encodedInstallArgs = jsonStringToUint8Array(
+						installArgs.encoded,
+					)
+					const encodedUpgradeArgs = jsonStringToUint8Array(
+						upgradeArgs.encoded,
+					)
+					const {
+						replica,
+						roles: {
+							deployer: { identity },
+						},
+					} = taskCtx
+					const { appDir, iceDir, args } = taskCtx
+					const taskArgs = args as InstallTaskArgs
+					const path = yield* Path.Path
+					const didJSPath = path.join(
+						iceDir,
+						"canisters",
+						canisterName,
+						`${canisterName}.did.js`,
+					)
+					const decoded = {
+						canisterName,
+						installArgs: {
+							raw: installArgs.raw,
+							encoded: encodedInstallArgs,
+						},
+						upgradeArgs: {
+							raw: upgradeArgs.raw,
+							encoded: encodedUpgradeArgs,
+						},
+					}
+					return decoded
+				})(),
+			),
+	} satisfies InstallArgsTask<_SERVICE, I, U, D, P>
+}
+
+export const makeInstallTask = <_SERVICE, I, U>(
+	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
+	installArgsTask: InstallArgsTask<_SERVICE, I, U>,
+): InstallTask<_SERVICE, I, U> => {
 	// TODO: canister installed, but cache deleted. should use reinstall, not install
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/install"),
-		dependsOn: {} as D,
-		dependencies: {} as P,
+		dependsOn: {},
+		dependencies: {
+			install_args: installArgsTask,
+		},
 		// TODO: allow passing in candid as a string from CLI
 		namedParams: installParams,
 		positionalParams: [],
@@ -1325,57 +1817,30 @@ export const makeInstallTask = <
 						candid,
 						// TODO: support raw args
 						args: rawInstallArgs,
-						mode,
+						mode: requestedMode,
 					} = taskArgs
 
 					yield* Effect.logDebug("Starting install args generation")
 
-					let initArgs = [] as unknown as I
+					const { installArgs, upgradeArgs } = depResults[
+						"install_args"
+					]?.result as TaskSuccess<InstallArgsTask<_SERVICE, I, U>>
+
+					// TODO: cache somehow?
+					const mode = yield* resolveMode(taskCtx, canisterId)
+					const initArgs =
+						mode === "install" || mode === "reinstall"
+							? installArgs
+							: upgradeArgs
 					yield* Effect.logDebug("Executing install args function")
 
 					// TODO: use params
 					const didJSPath = path.join(
-						appDir,
 						iceDir,
 						"canisters",
 						canisterName,
 						`${canisterName}.did.js`,
 					)
-
-					// TODO: should it catch errors?
-					// TODO: handle different modes
-					const deps = Record.map(
-						depResults,
-						(dep) => dep.result,
-					) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-					const installResult = installArgsFn({
-						ctx: taskCtx,
-						deps,
-					})
-					if (installResult instanceof Promise) {
-						initArgs = yield* Effect.tryPromise({
-							try: () => installResult,
-							catch: (e) =>
-								new TaskError({
-									message: `Install args function failed for: ${canisterName},
-							typeof installArgsFn: ${typeof installArgsFn},
-							 typeof installResult: ${typeof installResult}
-							 error: ${e},
-							 installArgsFn: ${installArgsFn},
-							 installResult: ${installResult},
-							 `,
-								}),
-						})
-					} else {
-						initArgs = installResult
-					}
-					yield* Effect.logDebug(
-						"installArgsFn effect result:",
-						installResult,
-					)
-					yield* Effect.logDebug("Install args generated", {
-						args: initArgs,
-					})
 
 					const canisterDID = yield* Effect.tryPromise({
 						try: () =>
@@ -1389,49 +1854,78 @@ export const makeInstallTask = <
 					yield* Effect.logDebug("Loaded canisterDID", {
 						canisterDID,
 					})
-
-					yield* Effect.logDebug("Encoding args", {
-						installArgs: initArgs,
-						canisterDID,
-					})
-
-					// TODO: do we accept simple objects as well?
-					const encodedArgs = customEncode
-						? yield* Effect.tryPromise({
-								try: () => customEncode(initArgs),
-								catch: (error) => {
-									return new TaskError({
-										message: `customEncode failed, error: ${error}`,
-									})
-								},
-							})
-						: yield* encodeArgs(initArgs as unknown[], canisterDID)
-
-					yield* Effect.logDebug("Loaded canister ID", {
-						canisterId,
-					})
 					const fs = yield* FileSystem.FileSystem
 
-					const canisterInfo = yield* replica.getCanisterInfo({
-						canisterId,
-						identity,
-					})
-					yield* Effect.logDebug("canisterInfo", canisterInfo)
 					// TODO:
 					// they can return the values we need perhaps? instead of reading from fs
 					// we need the wasm blob and candid DIDjs / idlFactory?
 					const wasmContent = yield* fs.readFile(wasmPath)
 					const wasm = new Uint8Array(wasmContent)
 					const maxSize = 3670016
+					// Enforce explicit mode preconditions
+					const canisterInfo = yield* replica.getCanisterInfo({
+						canisterId,
+						identity,
+					})
+					const modulePresent =
+						canisterInfo.status !== CanisterStatus.NOT_FOUND &&
+						canisterInfo.module_hash.length > 0
+					switch (mode) {
+						case "install": {
+							if (modulePresent) {
+								return yield* Effect.fail(
+									new TaskError({
+										message:
+											"Explicit install not allowed on non-empty canister. Use reinstall.",
+									}),
+								)
+							}
+							break
+						}
+						case "reinstall": {
+							if (!modulePresent) {
+								return yield* Effect.fail(
+									new TaskError({
+										message:
+											"Explicit reinstall requires an existing non-empty canister.",
+									}),
+								)
+							}
+							break
+						}
+						case "upgrade": {
+							if (!modulePresent) {
+								return yield* Effect.fail(
+									new TaskError({
+										message:
+											"Explicit upgrade requires an existing non-empty canister.",
+									}),
+								)
+							}
+							break
+						}
+					}
 					yield* Effect.logDebug(
 						`Installing code for ${canisterId} at ${wasmPath} with mode ${mode}`,
 					)
 					yield* replica.installCode({
 						canisterId,
 						wasm,
-						encodedArgs,
+						encodedArgs: initArgs.encoded,
 						identity,
 						mode,
+					})
+					const Deployments = yield* DeploymentsService
+					yield* Deployments.set({
+						canisterName,
+						network: taskCtx.currentNetwork,
+						deployment: {
+							installArgsHash: hashUint8(installArgs.encoded),
+							upgradeArgsHash: hashUint8(upgradeArgs.encoded),
+							wasmHash: hashUint8(wasm),
+							mode,
+							updatedAt: Date.now(),
+						},
 					})
 					yield* Effect.logDebug(`Code installed for ${canisterId}`)
 					yield* Effect.logDebug(
@@ -1443,12 +1937,13 @@ export const makeInstallTask = <
 						identity,
 					})
 					return {
-						args: initArgs,
-						encodedArgs,
+						args: initArgs.raw,
+						encodedArgs: initArgs.encoded,
 						canisterId,
 						canisterName,
 						mode,
 						actor,
+						// wasm,
 						// TODO: plugin which transforms install tasks?
 						// actor: proxyActor(canisterName, actor),
 					}
@@ -1459,14 +1954,24 @@ export const makeInstallTask = <
 		// TODO: add network?
 		// TODO: pocket-ic could be restarted?
 		computeCacheKey: (input) => {
-			const installInput = {
-				argFnHash: hashConfig(input.installArgsFn),
+			// TODO: input.mode causes cache miss. but should reuse install cache
+			// on 2nd run? TODO: determine in inputs?
+			const argsDigest =
+				input.mode === "install" || input.mode === "reinstall"
+					? "install:" + input.installArgsDigest
+					: "upgrade:" + input.upgradeArgsDigest
+			const keyInput = {
 				depsHash: hashJson(input.depCacheKeys),
 				canisterId: input.canisterId,
 				network: input.network,
-				// mode: input.mode,
+				wasmDigest: input.wasmDigest.sha256,
+				// TODO: mode="upgrade" just returns cached. but should upgrade?
+				// installArgsDigest: input.installArgsDigest,
+				// upgradeArgsDigest: input.upgradeArgsDigest,
+				// mode: input.mode === "reinstall" ? "install" : input.mode,
+				argsDigest,
 			}
-			const cacheKey = hashJson(installInput)
+			const cacheKey = hashJson(keyInput)
 			return cacheKey
 		},
 		input: (taskCtx) =>
@@ -1474,22 +1979,28 @@ export const makeInstallTask = <
 				Effect.fn("task_input")(function* () {
 					const { args } = taskCtx
 					const { taskPath, depResults } = taskCtx
-					const taskArgs = args as {
-						mode: "install" | "reinstall"
-						args: string
-					}
+					const taskArgs = args as InstallTaskArgs
 					const canisterName = taskPath
 						.split(":")
 						.slice(0, -1)
 						.join(":")
 					const dependencies = depResults as {
-						[K in keyof P]: {
-							result: TaskReturnValue<P[K]>
+						[K in keyof {
+							install_args: InstallArgsTask<_SERVICE, I, U>
+						}]: {
+							result: TaskReturnValue<
+								InstallArgsTask<_SERVICE, I, U>
+							>
 							cacheKey: string | undefined
 						}
 					}
 					const depCacheKeys = Record.map(
 						dependencies,
+						// Record.filter(
+						// 	dependencies,
+						// 	// causes issues for mode selection due to argsDigest
+						// 	(dep, key) => key !== "install_args",
+						// ),
 						(dep) => dep.cacheKey,
 					)
 					const maybeCanisterId = yield* loadCanisterId(
@@ -1509,21 +2020,30 @@ export const makeInstallTask = <
 					}
 					const canisterId = maybeCanisterId.value
 
-					const { currentNetwork } = taskCtx
-					const mode = taskArgs.mode
+					const {
+						currentNetwork,
+						// replica,
+						// roles: {
+						// 	deployer: { identity },
+						// },
+					} = taskCtx
+					const { installArgs, upgradeArgs } = depResults[
+						"install_args"
+					]?.result as TaskSuccess<InstallArgsTask<_SERVICE, I, U>>
 
-					// const taskRegistry = yield* TaskRegistry
-					// TODO: we need a separate cache for this?
+					const installArgsDigest = hashUint8(installArgs.encoded)
+					const upgradeArgsDigest = hashUint8(upgradeArgs.encoded)
+					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
+					const mode = yield* resolveMode(taskCtx, canisterId)
 					const input = {
 						canisterId,
-						canisterName,
+						// canisterName,
 						network: currentNetwork,
-						// TODO: remove?
-						taskPath,
-						///////////////
 						mode,
+						wasmDigest,
 						depCacheKeys,
-						installArgsFn,
+						installArgsDigest,
+						upgradeArgsDigest,
 					}
 					return input
 				})(),
@@ -1535,6 +2055,9 @@ export const makeInstallTask = <
 						replica,
 						roles: { deployer },
 					} = taskCtx
+					if (input.mode === "reinstall") {
+						return true
+					}
 					const info = yield* replica.getCanisterInfo({
 						canisterId: input.canisterId,
 						identity: deployer.identity,
@@ -1554,17 +2077,6 @@ export const makeInstallTask = <
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					yield* Effect.logDebug("encoding:", result)
-					if (customEncode) {
-						return yield* encodeWithBigInt({
-							canisterId: result.canisterId,
-							canisterName: result.canisterName,
-							mode: result.mode,
-							encodedArgs: uint8ArrayToJsonString(
-								result.encodedArgs,
-							),
-							args: result.args,
-						})
-					}
 					return yield* encodeWithBigInt({
 						canisterId: result.canisterId,
 						canisterName: result.canisterName,
@@ -1588,7 +2100,7 @@ export const makeInstallTask = <
 						canisterName: string
 						mode: InstallModes
 						encodedArgs: string
-						args: I
+						args: I | U
 					}
 					const encodedArgs =
 						jsonStringToUint8Array(encodedArgsString)
@@ -1602,7 +2114,6 @@ export const makeInstallTask = <
 					const taskArgs = args as InstallTaskArgs
 					const path = yield* Path.Path
 					const didJSPath = path.join(
-						appDir,
 						iceDir,
 						"canisters",
 						canisterName,
@@ -1637,454 +2148,7 @@ export const makeInstallTask = <
 					return decoded
 				})(),
 			),
-	} satisfies InstallTask<_SERVICE, I, D, P>
-}
-
-export const makeInstallTaskParams = <T extends CustomCanisterConfig>(
-	canisterConfig: T,
-) => {
-	return {
-		...installParams,
-		wasm: {
-			...installParams.wasm,
-			isOptional: true as const,
-			default: canisterConfig.wasm,
-		},
-		canisterId: {
-			...installParams.canisterId,
-			isOptional: true as const,
-			default: canisterConfig.canisterId,
-		},
-		candid: {
-			...installParams.candid,
-			isOptional: true as const,
-			default: canisterConfig.candid,
-		},
-	}
-}
-
-export const upgradeParams = {
-	args: {
-		// TODO: maybe not Uint8Array?
-		type: type("TypedArray.Uint8"),
-		description: "The arguments to pass to the canister as a candid string",
-		// default: undefined,
-		isFlag: true as const,
-		isOptional: true as const,
-		isVariadic: false as const,
-		name: "args",
-		aliases: ["a"],
-		parse: (value: string) => {
-			// TODO: convert to candid string
-			return new Uint8Array(Buffer.from(value))
-		},
-	},
-	// TODO: provide defaults. just read from fs by canister name
-	// should we allow passing in wasm bytes?
-	wasm: {
-		type: type("string"),
-		description: "The path to the wasm file",
-		isFlag: true as const,
-		isOptional: false as const,
-		isVariadic: false as const,
-		name: "wasm",
-		aliases: ["w"],
-		parse: (value: string) => value as string,
-	},
-	// TODO: provide defaults
-	candid: {
-		// TODO: should be encoded?
-		type: type("string"),
-		description: "The path to the candid file",
-		isFlag: true as const,
-		isOptional: true as const,
-		isVariadic: false as const,
-		name: "candid",
-		aliases: ["c"],
-		parse: (value: string) => value as string,
-	},
-	// TODO: provide defaults
-	canisterId: {
-		type: type("string"),
-		description: "The canister ID to install the canister in",
-		isFlag: true as const,
-		default: "aaaaa-aa",
-		isOptional: false as const,
-		isVariadic: false as const,
-		name: "canisterId",
-		aliases: ["i"],
-		parse: (value: string) => value as string,
-	},
-}
-
-export type UpgradeTaskArgs = ParamsToArgs<typeof upgradeParams>
-export const makeUpgradeTask = <
-	U,
-	D extends Record<string, Task>,
-	P extends Record<string, Task>,
-	_SERVICE,
->(
-	builderRuntime: ManagedRuntime.ManagedRuntime<unknown, unknown>,
-	upgradeArgsFn: (args: {
-		ctx: TaskCtxShape
-		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-	}) => Promise<U> | U = () => [] as unknown as U,
-	{
-		customEncode,
-		// customInitIDL,
-	}: {
-		customEncode:
-			| undefined
-			| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
-		// customInitIDL: IDL.Type[] | undefined
-	} = {
-		customEncode: undefined,
-		// customInitIDL: undefined,
-	},
-): UpgradeTask<_SERVICE, U, D, P> => {
-	return {
-		_tag: "task",
-		id: Symbol("canister/upgrade"),
-		dependsOn: {} as D,
-		dependencies: {} as P,
-		// TODO: allow passing in candid as a string from CLI
-		namedParams: upgradeParams,
-		positionalParams: [],
-		params: upgradeParams,
-		effect: (taskCtx) =>
-			builderRuntime.runPromise(
-				Effect.fn("task_effect")(function* () {
-					yield* Effect.logDebug("Starting canister upgrade")
-					const path = yield* Path.Path
-					// TODO: can I pass in the task itself as a type parameter to get automatic type inference?
-					// To avoid having to use "as"
-					const { appDir, iceDir } = taskCtx
-					const identity = taskCtx.roles.deployer.identity
-					const { replica, args, depResults } = taskCtx
-					const taskArgs = args as UpgradeTaskArgs
-					const { taskPath } = taskCtx
-					const canisterName = taskPath
-						.split(":")
-						.slice(0, -1)
-						.join(":")
-
-					const {
-						canisterId,
-						wasm: wasmPath,
-						candid,
-						// TODO: support raw args
-						args: rawUpgradeArgs,
-					} = taskArgs
-
-					yield* Effect.logDebug("Starting upgrade args generation")
-
-					let initArgs = [] as unknown as U
-					yield* Effect.logDebug("Executing upgrade args function")
-
-					// TODO:
-					// const didJSPath =
-					const didJSPath = path.join(
-						appDir,
-						iceDir,
-						"canisters",
-						canisterName,
-						`${canisterName}.did.js`,
-					)
-
-					// TODO: should it catch errors?
-					// TODO: handle different modes
-					const deps = Record.map(
-						depResults,
-						(dep) => dep.result,
-					) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-					const upgradeResult = upgradeArgsFn({
-						ctx: taskCtx,
-						deps,
-					})
-					if (upgradeResult instanceof Promise) {
-						initArgs = yield* Effect.tryPromise({
-							try: () => upgradeResult,
-							catch: (e) =>
-								new TaskError({
-									message: `Upgrade args function failed for: ${canisterName},
-							typeof upgradeArgsFn: ${typeof upgradeArgsFn},
-							 typeof upgradeResult: ${typeof upgradeResult}
-							 error: ${e},
-							 upgradeArgsFn: ${upgradeArgsFn},
-							 upgradeResult: ${upgradeResult},
-							 `,
-								}),
-						})
-					} else {
-						initArgs = upgradeResult
-					}
-					yield* Effect.logDebug(
-						"upgradeArgsFn effect result:",
-						upgradeResult,
-					)
-					yield* Effect.logDebug("Upgrade args generated", {
-						args: initArgs,
-					})
-
-					const canisterDID = yield* Effect.tryPromise({
-						try: () =>
-							import(didJSPath) as Promise<CanisterDidModule>,
-						catch: (e) => {
-							return new TaskError({
-								message: "Failed to load canisterDID",
-							})
-						},
-					})
-					yield* Effect.logDebug("Loaded canisterDID", {
-						canisterDID,
-					})
-
-					yield* Effect.logDebug("Encoding args", {
-						upgradeArgs: initArgs,
-						canisterDID,
-					})
-
-					// TODO: do we accept simple objects as well?
-					const encodedArgs = customEncode
-						? yield* Effect.tryPromise({
-								try: () => customEncode(initArgs),
-								catch: (error) => {
-									return new TaskError({
-										message: `customEncode failed, error: ${error}`,
-									})
-								},
-							})
-						: // TODO: encodeUpgradeArgs
-							yield* encodeUpgradeArgs(
-								initArgs as unknown[],
-								canisterDID,
-							)
-
-					yield* Effect.logDebug("Loaded canister ID", {
-						canisterId,
-					})
-					const fs = yield* FileSystem.FileSystem
-
-					const canisterInfo = yield* replica.getCanisterInfo({
-						canisterId,
-						identity,
-					})
-					yield* Effect.logDebug("canisterInfo", canisterInfo)
-					// TODO:
-					// they can return the values we need perhaps? instead of reading from fs
-					// we need the wasm blob and candid DIDjs / idlFactory?
-					const wasmContent = yield* fs.readFile(wasmPath)
-					const wasm = new Uint8Array(wasmContent)
-					const maxSize = 3670016
-					yield* Effect.logDebug(
-						`Upgrading code for ${canisterId} at ${wasmPath}`,
-					)
-					yield* replica.installCode({
-						canisterId,
-						wasm,
-						encodedArgs,
-						identity,
-						mode: "upgrade",
-					})
-					yield* Effect.logDebug(`Code upgraded for ${canisterId}`)
-					yield* Effect.logDebug(
-						`Canister ${canisterName} upgraded successfully`,
-					)
-					const actor = yield* replica.createActor<_SERVICE>({
-						canisterId,
-						canisterDID,
-						identity,
-					})
-					return {
-						args: initArgs,
-						encodedArgs,
-						canisterId,
-						canisterName,
-						mode: "upgrade" as const,
-						// TODO: plugin which transforms upgrade tasks?
-						// actor: proxyActor(canisterName, actor),
-						actor,
-					}
-				})(),
-			),
-		description: "Upgrade canister code",
-		tags: [Tags.CANISTER, Tags.CUSTOM, Tags.UPGRADE],
-		// TODO: add network?
-		// TODO: pocket-ic could be restarted?
-		computeCacheKey: (input) => {
-			const upgradeInput = {
-				argFnHash: hashConfig(input.upgradeArgsFn),
-				depsHash: hashJson(input.depCacheKeys),
-				canisterId: input.canisterId,
-				network: input.network,
-			}
-			const cacheKey = hashJson(upgradeInput)
-			return cacheKey
-		},
-		input: (taskCtx) =>
-			builderRuntime.runPromise(
-				Effect.fn("task_input")(function* () {
-					const { args } = taskCtx
-					const { taskPath, depResults } = taskCtx
-					const taskArgs = args as {
-						args: string
-					}
-					const canisterName = taskPath
-						.split(":")
-						.slice(0, -1)
-						.join(":")
-					const dependencies = depResults as {
-						[K in keyof P]: {
-							result: TaskReturnValue<P[K]>
-							cacheKey: string | undefined
-						}
-					}
-					const depCacheKeys = Record.map(
-						dependencies,
-						(dep) => dep.cacheKey,
-					)
-					const maybeCanisterId = yield* loadCanisterId(
-						taskCtx,
-						taskPath,
-					)
-					if (Option.isNone(maybeCanisterId)) {
-						yield* Effect.logDebug(
-							`Canister ${canisterName} is not installed`,
-							maybeCanisterId,
-						)
-						return yield* Effect.fail(
-							new TaskError({
-								message: `Canister ${canisterName} is not installed`,
-							}),
-						)
-					}
-					const canisterId = maybeCanisterId.value
-
-					const { currentNetwork } = taskCtx
-
-					// const taskRegistry = yield* TaskRegistry
-					// TODO: we need a separate cache for this?
-					const input = {
-						canisterId,
-						canisterName,
-						network: currentNetwork,
-						// TODO: remove?
-						taskPath,
-						///////////////
-						depCacheKeys,
-						upgradeArgsFn,
-					}
-					return input
-				})(),
-			),
-		revalidate: (taskCtx, { input }) =>
-			builderRuntime.runPromise(
-				Effect.fn("task_revalidate")(function* () {
-					const {
-						replica,
-						roles: { deployer },
-					} = taskCtx
-					const info = yield* replica.getCanisterInfo({
-						canisterId: input.canisterId,
-						identity: deployer.identity,
-					})
-					if (
-						info.status === "not_found" ||
-						info.module_hash.length === 0
-					) {
-						return true
-					}
-					return false
-				})(),
-			),
-		encodingFormat: "string",
-
-		encode: (taskCtx, result, input) =>
-			builderRuntime.runPromise(
-				Effect.fn("task_encode")(function* () {
-					yield* Effect.logDebug("encoding:", result)
-					if (customEncode) {
-						return yield* encodeWithBigInt({
-							canisterId: result.canisterId,
-							canisterName: result.canisterName,
-							mode: result.mode,
-							encodedArgs: uint8ArrayToJsonString(
-								result.encodedArgs,
-							),
-							args: result.args,
-						})
-					}
-					return yield* encodeWithBigInt({
-						canisterId: result.canisterId,
-						canisterName: result.canisterName,
-						encodedArgs: uint8ArrayToJsonString(result.encodedArgs),
-						args: result.args,
-					})
-				})(),
-			),
-		decode: (taskCtx, value, input) =>
-			builderRuntime.runPromise(
-				Effect.fn("task_decode")(function* () {
-					const {
-						canisterId,
-						canisterName,
-						mode,
-						encodedArgs: encodedArgsString,
-						args: upgradeArgs,
-					} = (yield* decodeWithBigInt(value as string)) as {
-						canisterId: string
-						canisterName: string
-						mode: InstallModes
-						encodedArgs: string
-						args: U
-					}
-					const encodedArgs =
-						jsonStringToUint8Array(encodedArgsString)
-					const {
-						replica,
-						roles: {
-							deployer: { identity },
-						},
-					} = taskCtx
-					const { appDir, iceDir, args } = taskCtx
-					const taskArgs = args as UpgradeTaskArgs
-					const path = yield* Path.Path
-					const didJSPath = path.join(
-						appDir,
-						iceDir,
-						"canisters",
-						canisterName,
-						`${canisterName}.did.js`,
-					)
-					// TODO: we should create a service that caches these?
-					// expensive to import every time
-					const canisterDID = yield* Effect.tryPromise({
-						try: () =>
-							import(didJSPath) as Promise<CanisterDidModule>,
-						catch: (e) =>
-							new TaskError({
-								message: "Failed to load canisterDID",
-							}),
-					})
-					const actor = yield* replica.createActor<_SERVICE>({
-						canisterId,
-						canisterDID,
-						identity,
-					})
-					const decoded = {
-						canisterId,
-						canisterName,
-						mode,
-						actor,
-						// TODO: plugin which transforms upgrade tasks?
-						// actor: proxyActor(canisterName, actor),
-						encodedArgs,
-						args: upgradeArgs,
-					}
-					return decoded
-				})(),
-			),
-	}
+	} satisfies InstallTask<_SERVICE, I, U>
 }
 
 export const linkChildren = <A extends Record<string, Task>>(

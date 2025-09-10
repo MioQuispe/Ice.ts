@@ -320,6 +320,7 @@ export const picReplicaImpl = Effect.gen(function* () {
 					}
 				},
 				catch: (error) => {
+                    // TODO: ?? success anyway?
 					return new CanisterStatusError({
 						message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
 					})

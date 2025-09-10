@@ -82,24 +82,6 @@ export type TaskParamsToArgs<T extends Task> = BuildArgs<
 	NonNullable<T["params"]>
 > // NonNullable in case params can be undefined
 
-// export type TaskParamsToArgs<T extends Task> = {
-// 	[K in keyof T["params"] as T["params"][K] extends
-// 		| { isOptional: false }
-// 		| { default: unknown }
-// 		? K
-// 		: never]: T["params"][K] extends TaskParam
-// 		? StandardSchemaV1.InferOutput<T["params"][K]["type"]>
-// 		: never
-// } & {
-// 	[K in keyof T["params"] as T["params"][K] extends
-// 		| { isOptional: false }
-// 		| { default: unknown }
-// 		? never
-// 		: K]?: T["params"][K] extends TaskParam
-// 		? StandardSchemaV1.InferOutput<T["params"][K]["type"]>
-// 		: never
-// }
-
 export type TaskSuccess<T extends Task> = [T] extends [
 	Task<infer _A, infer _D, infer _P>,
 ]

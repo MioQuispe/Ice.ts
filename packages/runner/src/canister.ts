@@ -49,14 +49,12 @@ export const generateDIDJS = (taskCtx: TaskCtxShape, canisterName: string, didPa
 		const didJSString = didc.did_to_js(didString)
 		const didTSString = didc.did_to_ts(didString)
 		const didJSPath = path.join(
-			appDir,
 			iceDir,
 			"canisters",
 			canisterName,
 			`${canisterName}.did.js`,
 		)
 		const didTSPath = path.join(
-			appDir,
 			iceDir,
 			"canisters",
 			canisterName,

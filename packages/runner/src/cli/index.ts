@@ -64,6 +64,7 @@ import {
 	makeTelemetryLayer,
 	TelemetryConfig,
 } from "../services/telemetryConfig.js"
+import { DeploymentsService } from "../services/deployments.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -180,7 +181,8 @@ export const makeCliRuntime = ({
 	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
 	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
 
-	// TODO: fix. provide iceDir
+	// TODO: create the directory if it doesn't exist
+    // do we need iceDir at all? maybe yes, because we want a finalizer?
 	const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
 		Layer.provide(NodeContext.layer),
 	)
@@ -192,6 +194,17 @@ export const makeCliRuntime = ({
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
+	const DeploymentsLayer = DeploymentsService.Live.pipe(
+		// Layer.provide(NodeContext.layer),
+		// Layer.provide(KVStorageLayer),
+		Layer.provide(
+			// TODO: creates the directory if it doesn't exist
+			// do we need iceDir at all?
+			layerFileSystem(".ice/deployments").pipe(
+				Layer.provide(NodeContext.layer),
+			),
+		),
+	)
 
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(DefaultReplicaService),
@@ -214,6 +227,7 @@ export const makeCliRuntime = ({
 			Layer.provide(telemetryConfigLayer),
 			Layer.provide(KVStorageLayer),
 			Layer.provide(InFlightLayer),
+			Layer.provide(DeploymentsLayer),
 		),
 		InFlightLayer,
 		IceDirLayer,

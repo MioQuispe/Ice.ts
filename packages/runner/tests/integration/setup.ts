@@ -56,6 +56,7 @@ import fs from "node:fs"
 import { IceDir } from "../../src/services/iceDir.js"
 import { InFlight } from "../../src/services/inFlight.js"
 import { runTask, runTasks } from "../../src/tasks/run.js"
+import { DeploymentsService } from "../../src/services/deployments.js"
 
 const DefaultReplicaService = Layer.effect(DefaultReplica, picReplicaImpl).pipe(
 	Layer.provide(NodeContext.layer),
@@ -120,6 +121,7 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
+		DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
 		// TaskRuntimeLayer.pipe(
 		// 	Layer.provide(NodeContext.layer),
 		// 	Layer.provide(iceDirLayer),
@@ -150,6 +152,7 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		// taskLayer,
 		// TODO: generic storage?
 		CanisterIdsLayer,
+		DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
 		configLayer,
 		telemetryLayer,
 		Logger.pretty,
@@ -157,15 +160,15 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 	)
 	const builderRuntime = ManagedRuntime.make(builderLayer)
 
-	const custom = ((...args) =>
+	const custom = ((config: Parameters<typeof customCanister>[0]) =>
 		makeCustomCanister(
-			builderRuntime,
-			...args,
+			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<unknown, unknown>,
+			config,
 		)) as unknown as typeof customCanister
-	const motoko = ((...args) =>
+	const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
 		makeMotokoCanister(
-			builderRuntime,
-			...args,
+			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<unknown, unknown>,
+			config,
 		)) as unknown as typeof motokoCanister
 
 	return {
@@ -197,8 +200,12 @@ export const makeTaskRunner = (taskTree: TaskTree) =>
 		} as const
 		const config = {} satisfies Partial<ICEConfig>
 		const ICEConfig = ICEConfigService.Test(globalArgs, taskTree, config)
+        const KVStorageLayer = layerMemory
+        const IceDirLayer = IceDir.Test({ iceDirName: ".ice_test" })
 		const { runtime } = yield* makeTaskRuntime().pipe(
 			Effect.provide(ICEConfig),
+            // Effect.provide(DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer))),
+            // Effect.provide(IceDirLayer),
 		)
 		const ChildTaskRunner = Layer.succeed(TaskRuntime, {
 			runtime,

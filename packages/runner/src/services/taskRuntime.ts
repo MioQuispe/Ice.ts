@@ -44,6 +44,7 @@ import { runTask, runTasks } from "../tasks/run.js"
 import { OtelTracer } from "@effect/opentelemetry/Tracer"
 import { Resource } from "@effect/opentelemetry/Resource"
 import { PlatformError } from "@effect/platform/Error"
+import { DeploymentsService } from "./deployments.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -125,6 +126,8 @@ export const makeTaskRuntime = () =>
 
 		const CanisterIds = yield* CanisterIdsService
 		const CanisterIdsLayer = Layer.succeed(CanisterIdsService, CanisterIds)
+        const Deployments = yield* DeploymentsService
+        const DeploymentsLayer = Layer.succeed(DeploymentsService, Deployments)
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
 		const taskRuntime = ManagedRuntime.make(
@@ -148,6 +151,7 @@ export const makeTaskRuntime = () =>
 				KVStorageLayer,
 				configLayer,
 				NodeContext.layer,
+				DeploymentsLayer,
 			),
 		)
 
