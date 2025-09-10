@@ -182,7 +182,7 @@ describe("custom builder", () => {
 		const taskTree = {
 			test_canister,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-1")
 		// const result = await runtime.runPromise()
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -208,7 +208,7 @@ describe("custom builder", () => {
 			test_canister22: test_canister22,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test_2")
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/custom-builder-2")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -273,7 +273,7 @@ describe("custom builder", () => {
 			canister2,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-3")
 
 		// Deploy both canisters
 		const results = await runtime.runPromise(
@@ -331,7 +331,7 @@ describe("custom builder", () => {
 			main_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-4")
 
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -358,7 +358,7 @@ describe("custom builder", () => {
 			failing_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-5")
 
 		await expect(
 			runtime.runPromise(
@@ -419,7 +419,7 @@ describe("custom builder", () => {
 			canister3,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-6")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -484,7 +484,7 @@ describe("custom builder", () => {
 			canister3.children.deploy,
 		]
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-7")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -523,7 +523,7 @@ describe("custom builder", () => {
 			dynamic_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-8")
 
 		// First run with configVersion = 1
 		const firstResult = await runtime.runPromise(
@@ -568,7 +568,7 @@ describe("custom builder", () => {
 		}
 
 		// Test with install mode
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test_install_mode")
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-9")
 
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -597,7 +597,7 @@ describe("custom builder", () => {
 			test_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-10")
 
 		// First deploy the canister
 		await runtime.runPromise(
@@ -640,7 +640,7 @@ describe("custom builder", () => {
 			test_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-11")
 
 		// Deploy the canister first
 		await runtime.runPromise(
@@ -683,7 +683,7 @@ describe("custom builder", () => {
 		const taskTree = {
 			test_canister,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-12")
 
 		const res = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -765,7 +765,7 @@ describe("custom builder", () => {
 			dependent_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-13")
 
 		await expect(
 			runtime.runPromise(
@@ -840,7 +840,7 @@ describe("custom builder", () => {
 			branching_convergence_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-14")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {

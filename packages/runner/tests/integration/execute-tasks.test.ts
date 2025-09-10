@@ -38,7 +38,7 @@ describe("executeTasks", () => {
 		const b = task().make()
 		const c = task().deps({ one: a, two: b }).make()
 		const tasks = [a, b, c]
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test_2")
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-1")
 		const taskTree = {
 			a,
 			b,
@@ -121,7 +121,7 @@ describe("executeTasks", () => {
 			t4: tasks[3]!,
 			t5: tasks[4]!,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-2")
 		const max = await runtime.runPromise(
 			Effect.gen(function* () {
 				const { runTask, runTasks } = yield* makeTaskRunner(taskTree)
@@ -182,7 +182,7 @@ describe("executeTasks", () => {
 			root: trackingTasks[3]!,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-3")
 		await runtime.runPromise(
 			Effect.gen(function* () {
 				const { runTasks } = yield* makeTaskRunner(taskTree)
@@ -234,7 +234,7 @@ describe("executeTasks", () => {
 			bottom: trackingTasks[3]!,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-4")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -274,7 +274,7 @@ describe("executeTasks", () => {
 		}
 		const tasks = [failingTask, dependentTask]
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-5")
 
 		// The execution should fail when the dependency fails
 		await expect(
@@ -340,7 +340,7 @@ describe("executeTasks", () => {
 
 		const tasks = [cachedRoot, trackingNonCached, cachedLeaf]
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-6")
 
 		// First run - all should execute
 		const firstResults = await runtime.runPromise(
@@ -399,7 +399,7 @@ describe("executeTasks", () => {
 		}
 		const tasks = [dynamicCachedTask]
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-7")
 
 		// First run with cacheKeyCounter = 0
 		const firstResults = await runtime.runPromise(
@@ -471,7 +471,7 @@ describe("executeTasks", () => {
 		}
 		const tasks = [root, branch1, branch2, leaf]
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-8")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -517,7 +517,7 @@ describe("executeTasks", () => {
 			tasks.map((task) => [task.description, task]),
 		)
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-9")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -590,7 +590,7 @@ describe("executeTasks", () => {
 			trackingTasks.map((task) => [task.description, task]),
 		)
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-10")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
@@ -648,7 +648,7 @@ describe("executeTasks", () => {
 			dependent_task: dependentTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-11")
 
 		const results = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -708,7 +708,7 @@ describe("executeTasks", () => {
 			dynamic_caller: dynamicTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-12")
 
 		const results = await runtime.runPromise(
 			Effect.gen(function* () {
@@ -764,7 +764,7 @@ describe("executeTasks", () => {
 			binary_cached: binaryCachedTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-13")
 		const tasks = [stringCachedTask, binaryCachedTask]
 
 		// First run - should cache both
@@ -851,7 +851,7 @@ describe("executeTasks", () => {
 			level6,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-14")
 
 		await expect(
 			runtime.runPromise(
@@ -930,7 +930,7 @@ describe("executeTasks", () => {
 			chain2Leaf,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-15")
 
 		// First run - all should execute
 		const firstResults = await runtime.runPromise(
@@ -1064,7 +1064,7 @@ describe("executeTasks", () => {
 			convergence,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv()
+		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-16")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {

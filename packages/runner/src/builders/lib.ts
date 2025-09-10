@@ -670,10 +670,12 @@ export type InstallArgsTask<
 			installArgs: {
 				raw: I
 				encoded: Uint8Array<ArrayBufferLike>
+				fn: Function
 			}
 			upgradeArgs: {
 				raw: U
 				encoded: Uint8Array<ArrayBufferLike>
+				fn: Function
 			}
 			// mode: InstallModes
 			// encodedArgs: Uint8Array<ArrayBufferLike>
@@ -1233,8 +1235,8 @@ export const resolveMode = (
 		)
 		const { installArgs, upgradeArgs } = depResults["install_args"]
 			?.result as TaskSuccess<InstallArgsTask>
-		const installArgsHash = hashUint8(installArgs.encoded)
-		const upgradeArgsHash = hashUint8(upgradeArgs.encoded)
+		const installArgsHash = hashConfig(installArgs.fn)
+		const upgradeArgsHash = hashConfig(upgradeArgs.fn)
 
 		// // const mode =
 		// // 	resolvedMode === "reinstall" ? "install" : resolvedMode
@@ -1256,8 +1258,9 @@ export const resolveMode = (
 						) {
 							return "upgrade"
 						}
-						// TODO: This one is changed, but it causes OTHER ISSUES
-						return "install"
+						// unchanged args: prefer upgrade over install (idempotent)
+                        // but this breaks second run where it should use install cache
+						return "upgrade"
 					},
 					onNone: () => "reinstall",
 				})
@@ -1634,10 +1637,12 @@ export const makeInstallArgsTask = <
 						installArgs: {
 							raw: installArgsResult,
 							encoded: encodedInstallArgs,
+                            fn: installArgs.fn,
 						},
 						upgradeArgs: {
 							raw: upgradeArgsResult,
 							encoded: encodedUpgradeArgs,
+                            fn: upgradeArgs.fn,
 						},
 						// args: installArgs,
 						// encodedArgs,
@@ -1725,7 +1730,7 @@ export const makeInstallArgsTask = <
 		decode: (taskCtx, value, input) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
-					const { canisterName, installArgs, upgradeArgs } =
+					const { canisterName, installArgs: decodedInstallArgs, upgradeArgs: decodedUpgradeArgs } =
 						(yield* decodeWithBigInt(value as string)) as {
 							canisterName: string
 							installArgs: {
@@ -1738,10 +1743,10 @@ export const makeInstallArgsTask = <
 							}
 						}
 					const encodedInstallArgs = jsonStringToUint8Array(
-						installArgs.encoded,
+						decodedInstallArgs.encoded,
 					)
 					const encodedUpgradeArgs = jsonStringToUint8Array(
-						upgradeArgs.encoded,
+						decodedUpgradeArgs.encoded,
 					)
 					const {
 						replica,
@@ -1761,12 +1766,14 @@ export const makeInstallArgsTask = <
 					const decoded = {
 						canisterName,
 						installArgs: {
-							raw: installArgs.raw,
+							raw: decodedInstallArgs.raw,
 							encoded: encodedInstallArgs,
+                            fn: installArgs.fn,
 						},
 						upgradeArgs: {
-							raw: upgradeArgs.raw,
+							raw: decodedUpgradeArgs.raw,
 							encoded: encodedUpgradeArgs,
+                            fn: upgradeArgs.fn,
 						},
 					}
 					return decoded
@@ -1920,8 +1927,8 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						canisterName,
 						network: taskCtx.currentNetwork,
 						deployment: {
-							installArgsHash: hashUint8(installArgs.encoded),
-							upgradeArgsHash: hashUint8(upgradeArgs.encoded),
+							installArgsHash: hashConfig(installArgs.fn),
+							upgradeArgsHash: hashConfig(upgradeArgs.fn),
 							wasmHash: hashUint8(wasm),
 							mode,
 							updatedAt: Date.now(),
@@ -1954,25 +1961,19 @@ export const makeInstallTask = <_SERVICE, I, U>(
 		// TODO: add network?
 		// TODO: pocket-ic could be restarted?
 		computeCacheKey: (input) => {
-			// TODO: input.mode causes cache miss. but should reuse install cache
-			// on 2nd run? TODO: determine in inputs?
+			// Mode-aware arg hashing to avoid invalidating cache on unrelated arg fns
 			const argsDigest =
-				input.mode === "install" || input.mode === "reinstall"
-					? "install:" + input.installArgsDigest
-					: "upgrade:" + input.upgradeArgsDigest
+				input.mode === "upgrade"
+					? "upgrade:" + input.upgradeArgsDigest
+					: "install:" + input.installArgsDigest
 			const keyInput = {
 				depsHash: hashJson(input.depCacheKeys),
 				canisterId: input.canisterId,
 				network: input.network,
 				wasmDigest: input.wasmDigest.sha256,
-				// TODO: mode="upgrade" just returns cached. but should upgrade?
-				// installArgsDigest: input.installArgsDigest,
-				// upgradeArgsDigest: input.upgradeArgsDigest,
-				// mode: input.mode === "reinstall" ? "install" : input.mode,
 				argsDigest,
 			}
-			const cacheKey = hashJson(keyInput)
-			return cacheKey
+			return hashJson(keyInput)
 		},
 		input: (taskCtx) =>
 			builderRuntime.runPromise(
@@ -2031,8 +2032,8 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						"install_args"
 					]?.result as TaskSuccess<InstallArgsTask<_SERVICE, I, U>>
 
-					const installArgsDigest = hashUint8(installArgs.encoded)
-					const upgradeArgsDigest = hashUint8(upgradeArgs.encoded)
+					const installArgsDigest = hashConfig(installArgs.fn)
+					const upgradeArgsDigest = hashConfig(upgradeArgs.fn)
 					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
 					const mode = yield* resolveMode(taskCtx, canisterId)
 					const input = {

@@ -100,7 +100,7 @@ describe("deployments & caching decision table", () => {
 		scenarios.map((s, idx) => [idx + 1, s]) as Array<[number, Scenario]>,
 	)("scenario #%s: %o", async (idx, s) => {
 		const { runtime, telemetryExporter, customCanister } = makeTestEnv(
-			`.ice_deploy/deploy_${idx}`,
+			`.ice_test/deploy_${idx}`,
 		)
 
 		const wasm = path.resolve(
