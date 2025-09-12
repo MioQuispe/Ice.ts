@@ -83,6 +83,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| DefaultConfig
 			| Moc
 			| CanisterIdsService
+			| DeploymentsService
 			| ICEConfigService
 			| TelemetryConfig
 			| InFlight

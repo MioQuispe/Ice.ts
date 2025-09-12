@@ -7,9 +7,11 @@ import {
 	Layer,
 	Logger,
 	ManagedRuntime,
+	Option,
 } from "effect"
 import { type ReplicaService } from "../services/replica.js"
 import {
+	CanisterIds,
 	ProgressUpdate,
 	TaskParamsToArgs,
 	TaskRuntimeError,
@@ -21,78 +23,9 @@ import { ICEConfigService } from "./iceConfig.js"
 import { TaskRuntime } from "./taskRuntime.js"
 import { runTask } from "../tasks/run.js"
 import { IceDir } from "./iceDir.js"
+import { Deployment, DeploymentsService } from "./deployments.js"
+import { CanisterIdsService } from "./canisterIds.js"
 
-// export type TaskParamsToArgs<T extends Task> = {
-// 	[K in keyof T["params"] as T["params"][K] extends { isOptional: true }
-// 		? never
-// 		: K]: T["params"][K] extends TaskParam
-// 		? StandardSchemaV1.InferOutput<T["params"][K]["type"]>
-// 		: never
-// } & {
-// 	[K in keyof T["params"] as T["params"][K] extends { isOptional: true }
-// 		? K
-// 		: never]?: T["params"][K] extends TaskParam
-// 		? StandardSchemaV1.InferOutput<T["params"][K]["type"]>
-// 		: never
-// }
-
-// previous one:
-// export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
-// 	readonly taskTree: TaskTree
-// 	readonly users: {
-// 		[name: string]: {
-// 			identity: SignIdentity
-// 			// agent: HttpAgent
-// 			principal: string
-// 			accountId: string
-// 			// TODO: neurons?
-// 		}
-// 	}
-// 	readonly roles: {
-// 		deployer: ICEUser
-// 		minter: ICEUser
-// 		controller: ICEUser
-// 		treasury: ICEUser
-// 		[name: string]: {
-// 			identity: SignIdentity
-// 			principal: string
-// 			accountId: string
-// 		}
-// 	}
-// 	readonly replica: ReplicaService
-
-// 	readonly runTask: {
-// 		<T extends Task>(
-// 			task: T,
-// 		): Promise<TaskSuccess<T>>
-// 		<T extends Task>(
-// 			task: T,
-// 			args: TaskParamsToArgs<T>,
-// 		): Promise<TaskSuccess<T>>
-// 	}
-
-// 	readonly currentNetwork: string
-// 	readonly networks: {
-// 		[key: string]: {
-// 			replica: ReplicaService
-// 			host: string
-// 			port: number
-// 			// subnet: Subnet?
-// 		}
-// 	}
-// 	readonly args: A
-// 	readonly taskPath: string
-// 	readonly appDir: string
-// 	readonly iceDir: string
-// 	readonly depResults: Record<
-// 		string,
-// 		{
-// 			cacheKey: string | undefined
-// 			result: unknown
-// 		}
-// 	>
-// }
-// export class TaskCtx extends Context.Tag("TaskCtx")<TaskCtx, TaskCtxShape>() {}
 export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	readonly taskTree: TaskTree
 	readonly users: {
@@ -145,9 +78,45 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 			result: unknown
 		}
 	>
+	readonly deployments: {
+		// readonly canisterIds: CanisterIds
+		/**
+		 * Retrieves the current in-memory canister IDs.
+		 */
+		get: (
+			canisterName: string,
+			network: string,
+		) => Promise<Deployment | undefined>
+		/**
+		 * Updates the canister ID for a specific canister and network.
+		 */
+		set: (params: {
+			canisterName: string
+			network: string
+			deployment: Deployment
+		}) => Promise<void>
+	}
+	canisterIds: {
+		// readonly canisterIds: CanisterIds
+		/**
+		 * Retrieves the current in-memory canister IDs.
+		 */
+		getCanisterIds: () => Promise<CanisterIds>
+		/**
+		 * Updates the canister ID for a specific canister and network.
+		 */
+		setCanisterId: (params: {
+			canisterName: string
+			network: string
+			canisterId: string
+		}) => Promise<void>
+		/**
+		 * Removes the canister ID for the given canister name.
+		 */
+		removeCanisterId: (canisterName: string) => Promise<void>
+	}
 }
 
-// TODO: service....
 export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	taskPath: string,
 	task: Task,
@@ -206,10 +175,12 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 		runtime,
 	})
+	const Deployments = yield* DeploymentsService
+	const CanisterIds = yield* CanisterIdsService
 	return {
 		...defaultConfig,
 		taskPath,
-        // TODO: add caching?
+		// TODO: add caching?
 		// TODO: wrap with proxy?
 		// TODO: needs to use same runtime
 		// runTask: asyncRunTask,
@@ -217,8 +188,6 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 			task: T,
 			args?: TaskParamsToArgs<T>,
 		): Promise<TaskSuccess<T>> => {
-			// const resolvedArgs = args ?? ({} as TaskParamsToArgs<T>)
-			// console.log("resolvedArgs:", resolvedArgs, args)
 			const result = await runtime.runPromise(
 				runTask(task, args, progressCb).pipe(
 					Effect.provide(ChildTaskRuntimeLayer),
@@ -237,12 +206,37 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 			...currentUsers,
 		},
 		roles: resolvedRoles,
-		// TODO: taskArgs
-		// what format? we need to check the task itself
 		args: argsMap,
 		depResults,
 		appDir,
 		iceDir,
-	}
+		deployments: {
+			get: async (canisterName, network) => {
+				const result = await runtime.runPromise(
+					Deployments.get(canisterName, network),
+				)
+				return Option.isSome(result) ? result.value : undefined
+			},
+			set: async (params) => {
+				await runtime.runPromise(Deployments.set(params))
+			},
+		},
+		canisterIds: {
+			getCanisterIds: async () => {
+				const result = await runtime.runPromise(
+					CanisterIds.getCanisterIds(),
+				)
+				return result
+			},
+			setCanisterId: async (params) => {
+				await runtime.runPromise(CanisterIds.setCanisterId(params))
+			},
+			removeCanisterId: async (canisterName) => {
+				await runtime.runPromise(
+					CanisterIds.removeCanisterId(canisterName),
+				)
+			},
+		},
+	} satisfies TaskCtxShape
 })
 // static Test = {}

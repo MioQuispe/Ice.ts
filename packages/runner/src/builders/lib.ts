@@ -20,7 +20,6 @@ import { readFileSync, realpathSync } from "node:fs"
 import { stat } from "node:fs/promises"
 import { NodeContext } from "@effect/platform-node"
 import { encodeArgs, encodeUpgradeArgs } from "../canister.js"
-import { CanisterIdsService } from "../services/canisterIds.js"
 import {
 	CanisterStatus,
 	type CanisterStatusResult,
@@ -45,7 +44,6 @@ import { configLayer } from "../services/config.js"
 import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
-import { DeploymentsService } from "../services/deployments.js"
 import { layerFileSystem } from "@effect/platform/KeyValueStore"
 
 const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
@@ -55,27 +53,9 @@ const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 const baseLayer = Layer.mergeAll(
 	NodeContext.layer,
 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-	// taskLayer,
-	// TODO: generic storage?
-	CanisterIdsService.Live.pipe(
-		Layer.provide(NodeContext.layer),
-		Layer.provide(configLayer),
-		Layer.provide(IceDirLayer),
-	),
-	DeploymentsService.Live.pipe(
-		Layer.provide(
-			layerFileSystem(".ice/deployments").pipe(
-				Layer.provide(NodeContext.layer),
-			),
-		),
-	),
-	// CanisterIdsService.Test,
 	configLayer,
+	// TODO: ??
 	// telemetryLayer,
-	// DefaultsLayer,
-	// TaskArgsLayer,
-	// ICEConfigLayer,
-	// TaskCtxLayer,
 	Logger.pretty,
 	Logger.minimumLogLevel(LogLevel.Debug),
 )
@@ -90,8 +70,13 @@ export const loadCanisterId = (taskCtx: TaskCtxShape, taskPath: string) =>
 	Effect.gen(function* () {
 		const { currentNetwork } = taskCtx
 		const canisterName = taskPath.split(":").slice(0, -1).join(":")
-		const canisterIdsService = yield* CanisterIdsService
-		const canisterIds = yield* canisterIdsService.getCanisterIds()
+		// const canisterIdsService = yield* CanisterIdsService
+		const canisterIds = yield* Effect.tryPromise({
+			try: () => taskCtx.canisterIds.getCanisterIds(),
+			catch: (error) => {
+				return new TaskError({ message: String(error) })
+			},
+		})
 		const canisterId = canisterIds[canisterName]?.[currentNetwork]
 		if (canisterId) {
 			return Option.some(canisterId as string)
@@ -241,15 +226,21 @@ export const makeCreateTask = <Config extends CreateConfig>(
 				Effect.fn("task_effect")(function* () {
 					const path = yield* Path.Path
 					const fs = yield* FileSystem.FileSystem
-					const canisterIdsService = yield* CanisterIdsService
+					// const canisterIdsService = yield* CanisterIdsService
 					const currentNetwork = taskCtx.currentNetwork
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
 						.slice(0, -1)
 						.join(":")
-					const storedCanisterIds =
-						yield* canisterIdsService.getCanisterIds()
+					const storedCanisterIds = yield* Effect.tryPromise({
+						try: () => taskCtx.canisterIds.getCanisterIds(),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					// const storedCanisterIds =
+					// 	yield* canisterIdsService.getCanisterIds()
 					const storedCanisterId =
 						storedCanisterIds[canisterName]?.[currentNetwork]
 					yield* Effect.logDebug("makeCreateTask", {
@@ -317,10 +308,16 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						canisterId,
 					)
 					// TODO: integrate with cache?
-					yield* canisterIdsService.setCanisterId({
-						canisterName,
-						network: taskCtx.currentNetwork,
-						canisterId,
+					yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.canisterIds.setCanisterId({
+								canisterName,
+								network: taskCtx.currentNetwork,
+								canisterId,
+							}),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
 					})
 					const outDir = path.join(iceDir, "canisters", canisterName)
 					yield* fs.makeDirectory(outDir, { recursive: true })
@@ -387,10 +384,15 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					// 	taskCtx,
 					// 	canisterConfigOrFn,
 					// )
-					const canisterIdsService = yield* CanisterIdsService
+					const storedCanisterIds = yield* Effect.tryPromise({
+						try: () => taskCtx.canisterIds.getCanisterIds(),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
 					const configCanisterId = canisterConfig?.canisterId
-					const storedCanisterIds =
-						yield* canisterIdsService.getCanisterIds()
+					// const storedCanisterIds =
+					// 	yield* canisterIdsService.getCanisterIds()
 					const storedCanisterId =
 						storedCanisterIds[canisterName]?.[currentNetwork]
 					// TODO: handle changes to configCanisterId
@@ -718,7 +720,8 @@ export type InstallTask<
 			network: string
 			canisterId: string
 			// canisterName: string
-			mode: InstallModes
+			computedMode: "upgrade" | "install"
+			resolvedMode: InstallModes
 			// computeKeyMode?: "install" | "upgrade"
 			depCacheKeys: Record<string, string | undefined>
 			wasmDigest: FileDigest
@@ -1096,8 +1099,14 @@ export const makeRemoveTask = (
 						canisterId,
 						identity,
 					})
-					const canisterIdsService = yield* CanisterIdsService
-					yield* canisterIdsService.removeCanisterId(canisterName)
+					yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.canisterIds.removeCanisterId(canisterName),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					// yield* canisterIdsService.removeCanisterId(canisterName)
 					yield* Effect.logDebug(`Removed canister ${canisterName}`)
 				})(),
 			),
@@ -1132,9 +1141,14 @@ export const makeCanisterStatusTask = (
 						.split(":")
 						.slice(0, -1)
 						.join(":")
-					const canisterIdsService = yield* CanisterIdsService
-					const canisterIdsMap =
-						yield* canisterIdsService.getCanisterIds()
+					const canisterIdsMap = yield* Effect.tryPromise({
+						try: () => taskCtx.canisterIds.getCanisterIds(),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					// const canisterIdsMap =
+					// 	yield* canisterIdsService.getCanisterIds()
 					// TODO: if deleted doesnt exist
 					const canisterIds = canisterIdsMap[canisterName]
 					if (!canisterIds) {
@@ -1200,8 +1214,13 @@ export const resolveMode = (
 		const requestedMode = taskArgs.mode
 		const wasmPath = taskArgs.wasm
 		const canisterName = taskPath.split(":").slice(0, -1).join(":")
-		const canisterIdsService = yield* CanisterIdsService
-		const canisterIdsMap = yield* canisterIdsService.getCanisterIds()
+		const canisterIdsMap = yield* Effect.tryPromise({
+			try: () => taskCtx.canisterIds.getCanisterIds(),
+			catch: (error) => {
+				return new TaskError({ message: String(error) })
+			},
+		})
+		// const canisterIdsMap = yield* canisterIdsService.getCanisterIds()
 		const canisterId =
 			canisterIdsMap[canisterName]?.[currentNetwork] ?? configCanisterId
 		// TODO: use Option.Option?
@@ -1228,11 +1247,19 @@ export const resolveMode = (
 			canisterInfo.status === CanisterStatus.NOT_FOUND ||
 			canisterInfo.module_hash.length === 0
 
-		const Deployments = yield* DeploymentsService
-		const lastDeployment = yield* Deployments.get(
-			canisterName,
-			currentNetwork,
+		const lastDeployment = Option.fromNullable(
+			yield* Effect.tryPromise({
+				try: () =>
+					taskCtx.deployments.get(canisterName, currentNetwork),
+				catch: (error) => {
+					return new TaskError({ message: String(error) })
+				},
+			}),
 		)
+		// // const lastDeployment = yield* Deployments.get(
+		// 	canisterName,
+		// 	currentNetwork,
+		// )
 		const { installArgs, upgradeArgs } = depResults["install_args"]
 			?.result as TaskSuccess<InstallArgsTask>
 		const installArgsHash = hashConfig(installArgs.fn)
@@ -1248,6 +1275,10 @@ export const resolveMode = (
 			} else {
 				mode = Option.match(lastDeployment, {
 					onSome: (lastDeployment) => {
+						// TODO: fix, this seems like a bad way to do it
+						console.log("lastDeployment", lastDeployment)
+						console.log("installArgsHash", installArgsHash)
+						console.log("upgradeArgsHash", upgradeArgsHash)
 						if (
 							lastDeployment.installArgsHash !== installArgsHash
 						) {
@@ -1259,8 +1290,11 @@ export const resolveMode = (
 							return "upgrade"
 						}
 						// unchanged args: prefer upgrade over install (idempotent)
-                        // but this breaks second run where it should use install cache
-						return "upgrade"
+						// but this breaks second run where it should use install cache
+						// return "upgrade"
+						return lastDeployment.mode === "upgrade"
+							? "upgrade"
+							: "install"
 					},
 					onNone: () => "reinstall",
 				})
@@ -1637,12 +1671,12 @@ export const makeInstallArgsTask = <
 						installArgs: {
 							raw: installArgsResult,
 							encoded: encodedInstallArgs,
-                            fn: installArgs.fn,
+							fn: installArgs.fn,
 						},
 						upgradeArgs: {
 							raw: upgradeArgsResult,
 							encoded: encodedUpgradeArgs,
-                            fn: upgradeArgs.fn,
+							fn: upgradeArgs.fn,
 						},
 						// args: installArgs,
 						// encodedArgs,
@@ -1656,14 +1690,17 @@ export const makeInstallArgsTask = <
 		// TODO: add network?
 		// TODO: pocket-ic could be restarted?
 		computeCacheKey: (input) => {
-			const installInput = {
-				installArgsFnHash: hashConfig(input.installArgsFn),
-				upgradeArgsFnHash: hashConfig(input.upgradeArgsFn),
+			// Only depend on the relevant args function by mode to avoid unrelated invalidations
+			const argsFnHash =
+				input.mode === "upgrade"
+					? hashConfig(input.upgradeArgsFn)
+					: hashConfig(input.installArgsFn)
+			const keyInput = {
+				argsFnHash,
 				depsHash: hashJson(input.depCacheKeys),
 				network: input.network,
 			}
-			const cacheKey = hashJson(installInput)
-			return cacheKey
+			return hashJson(keyInput)
 		},
 		input: (taskCtx) =>
 			builderRuntime.runPromise(
@@ -1730,18 +1767,21 @@ export const makeInstallArgsTask = <
 		decode: (taskCtx, value, input) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
-					const { canisterName, installArgs: decodedInstallArgs, upgradeArgs: decodedUpgradeArgs } =
-						(yield* decodeWithBigInt(value as string)) as {
-							canisterName: string
-							installArgs: {
-								raw: I
-								encoded: string
-							}
-							upgradeArgs: {
-								raw: U
-								encoded: string
-							}
+					const {
+						canisterName,
+						installArgs: decodedInstallArgs,
+						upgradeArgs: decodedUpgradeArgs,
+					} = (yield* decodeWithBigInt(value as string)) as {
+						canisterName: string
+						installArgs: {
+							raw: I
+							encoded: string
 						}
+						upgradeArgs: {
+							raw: U
+							encoded: string
+						}
+					}
 					const encodedInstallArgs = jsonStringToUint8Array(
 						decodedInstallArgs.encoded,
 					)
@@ -1768,12 +1808,12 @@ export const makeInstallArgsTask = <
 						installArgs: {
 							raw: decodedInstallArgs.raw,
 							encoded: encodedInstallArgs,
-                            fn: installArgs.fn,
+							fn: installArgs.fn,
 						},
 						upgradeArgs: {
 							raw: decodedUpgradeArgs.raw,
 							encoded: encodedUpgradeArgs,
-                            fn: upgradeArgs.fn,
+							fn: upgradeArgs.fn,
 						},
 					}
 					return decoded
@@ -1835,6 +1875,9 @@ export const makeInstallTask = <_SERVICE, I, U>(
 
 					// TODO: cache somehow?
 					const mode = yield* resolveMode(taskCtx, canisterId)
+					yield* Effect.logDebug("Resolved mode in install effect", {
+						mode,
+					})
 					const initArgs =
 						mode === "install" || mode === "reinstall"
 							? installArgs
@@ -1922,16 +1965,22 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						identity,
 						mode,
 					})
-					const Deployments = yield* DeploymentsService
-					yield* Deployments.set({
-						canisterName,
-						network: taskCtx.currentNetwork,
-						deployment: {
-							installArgsHash: hashConfig(installArgs.fn),
-							upgradeArgsHash: hashConfig(upgradeArgs.fn),
-							wasmHash: hashUint8(wasm),
-							mode,
-							updatedAt: Date.now(),
+					// const Deployments = yield* DeploymentsService
+					yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.deployments.set({
+								canisterName,
+								network: taskCtx.currentNetwork,
+								deployment: {
+									installArgsHash: hashConfig(installArgs.fn),
+									upgradeArgsHash: hashConfig(upgradeArgs.fn),
+									wasmHash: hashUint8(wasm),
+									mode,
+									updatedAt: Date.now(),
+								},
+							}),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
 						},
 					})
 					yield* Effect.logDebug(`Code installed for ${canisterId}`)
@@ -1961,16 +2010,25 @@ export const makeInstallTask = <_SERVICE, I, U>(
 		// TODO: add network?
 		// TODO: pocket-ic could be restarted?
 		computeCacheKey: (input) => {
-			// Mode-aware arg hashing to avoid invalidating cache on unrelated arg fns
+			// // Mode-aware arg hashing to avoid invalidating cache on unrelated arg fns
+			// // If upgrade and install digests are identical (no-op init changes), normalize to install
+			// const sameArgs = input.upgradeArgsDigest === input.installArgsDigest
+			// const argsDigest = sameArgs
+			// ? ("install:" + input.installArgsDigest)
+			// : (input.mode === "upgrade"
+			// 	? "upgrade:" + input.upgradeArgsDigest
+			// 	: "install:" + input.installArgsDigest)
+
 			const argsDigest =
-				input.mode === "upgrade"
-					? "upgrade:" + input.upgradeArgsDigest
-					: "install:" + input.installArgsDigest
+				input.computedMode === "upgrade"
+					? input.upgradeArgsDigest
+					: input.installArgsDigest
 			const keyInput = {
 				depsHash: hashJson(input.depCacheKeys),
 				canisterId: input.canisterId,
 				network: input.network,
 				wasmDigest: input.wasmDigest.sha256,
+				mode: input.computedMode,
 				argsDigest,
 			}
 			return hashJson(keyInput)
@@ -1995,13 +2053,12 @@ export const makeInstallTask = <_SERVICE, I, U>(
 							cacheKey: string | undefined
 						}
 					}
-					const depCacheKeys = Record.map(
+					const filteredDeps = Record.filter(
 						dependencies,
-						// Record.filter(
-						// 	dependencies,
-						// 	// causes issues for mode selection due to argsDigest
-						// 	(dep, key) => key !== "install_args",
-						// ),
+						(_dep, key) => key !== "install_args",
+					)
+					const depCacheKeys = Record.map(
+						filteredDeps,
 						(dep) => dep.cacheKey,
 					)
 					const maybeCanisterId = yield* loadCanisterId(
@@ -2035,12 +2092,22 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const installArgsDigest = hashConfig(installArgs.fn)
 					const upgradeArgsDigest = hashConfig(upgradeArgs.fn)
 					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
-					const mode = yield* resolveMode(taskCtx, canisterId)
+					const resolvedMode = yield* resolveMode(taskCtx, canisterId)
+					const computedMode =
+						resolvedMode === "upgrade"
+							? ("upgrade" as const)
+							: ("install" as const)
+					// annotate span so tests can differentiate cache hits
+					yield* Effect.annotateCurrentSpan({
+						resolvedMode,
+						cacheKeyMode: computedMode,
+					})
 					const input = {
 						canisterId,
 						// canisterName,
 						network: currentNetwork,
-						mode,
+						computedMode,
+						resolvedMode,
 						wasmDigest,
 						depCacheKeys,
 						installArgsDigest,
@@ -2056,7 +2123,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						replica,
 						roles: { deployer },
 					} = taskCtx
-					if (input.mode === "reinstall") {
+					if (input.resolvedMode === "reinstall") {
 						return true
 					}
 					const info = yield* replica.getCanisterInfo({
@@ -2122,6 +2189,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					)
 					// TODO: we should create a service that caches these?
 					// expensive to import every time
+					// or task? return from bindings task?
 					const canisterDID = yield* Effect.tryPromise({
 						try: () =>
 							import(didJSPath) as Promise<CanisterDidModule>,
@@ -2136,7 +2204,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						canisterDID,
 						identity,
 					})
+					// // Always reflect the CURRENT resolved mode rather than the cached one
+					// const currentMode = input.mode
 					const decoded = {
+						// mode: currentMode,
 						mode,
 						canisterId,
 						canisterName,

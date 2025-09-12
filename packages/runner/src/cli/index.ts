@@ -196,14 +196,14 @@ export const makeCliRuntime = ({
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
 	const DeploymentsLayer = DeploymentsService.Live.pipe(
 		// Layer.provide(NodeContext.layer),
-		// Layer.provide(KVStorageLayer),
-		Layer.provide(
-			// TODO: creates the directory if it doesn't exist
-			// do we need iceDir at all?
-			layerFileSystem(".ice/deployments").pipe(
-				Layer.provide(NodeContext.layer),
-			),
-		),
+		Layer.provide(KVStorageLayer),
+		// Layer.provide(
+		// 	// TODO: creates the directory if it doesn't exist
+		// 	// do we need iceDir at all?
+		// 	layerFileSystem(".ice/deployments").pipe(
+		// 		Layer.provide(NodeContext.layer),
+		// 	),
+		// ),
 	)
 
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
@@ -229,6 +229,7 @@ export const makeCliRuntime = ({
 			Layer.provide(InFlightLayer),
 			Layer.provide(DeploymentsLayer),
 		),
+        DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
 		DefaultReplicaService,
