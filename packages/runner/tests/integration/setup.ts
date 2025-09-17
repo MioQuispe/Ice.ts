@@ -12,6 +12,8 @@ import {
 	Metric,
 	Tracer,
 	ConfigProvider,
+	Option,
+	ConfigError,
 } from "effect"
 import { CanisterIdsService } from "../../src/services/canisterIds.js"
 import { DefaultConfig } from "../../src/services/defaultConfig.js"
@@ -37,15 +39,12 @@ import {
 	makeMotokoCanister,
 	motokoCanister,
 } from "../../src/builders/index.js"
-import {
-	makeTaskRuntime,
-	TaskRuntime,
-	TaskRuntimeLive,
-} from "../../src/services/taskRuntime.js"
+import { makeTaskLayer, TaskRuntime } from "../../src/services/taskRuntime.js"
 import {
 	InMemorySpanExporter,
 	BatchSpanProcessor,
 	SimpleSpanProcessor,
+    SpanExporter,
 } from "@opentelemetry/sdk-trace-base"
 // import { configLayer } from "../../src/services/config.js"
 import {
@@ -85,6 +84,7 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 	const telemetryExporter = new InMemorySpanExporter()
 	const telemetryConfig = {
 		resource: { serviceName: "ice" },
+		// spanProcessor: new SimpleSpanProcessor(telemetryExporter),
 		spanProcessor: new SimpleSpanProcessor(telemetryExporter),
 		shutdownTimeout: undefined,
 		metricReader: undefined,
@@ -115,7 +115,22 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		Layer.provide(NodeContext.layer),
 		Layer.provide(iceDirLayer),
 	)
-	const sharedLayer = Layer.mergeAll(
+	// const sharedLayer = Layer.mergeAll(
+	// 	// DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
+	// 	// CanisterIdsLayer,
+	// 	configLayer,
+	// 	telemetryLayer,
+	// 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+	// 	Logger.pretty,
+	// 	Logger.minimumLogLevel(LogLevel.Debug),
+	// 	telemetryConfigLayer,
+	// )
+	const testLayer = Layer.mergeAll(
+		DefaultConfigLayer,
+		TaskRegistry.Live.pipe(
+			Layer.provide(NodeContext.layer),
+			Layer.provide(KVStorageLayer),
+		),
 		DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
 		CanisterIdsLayer,
 		configLayer,
@@ -124,14 +139,6 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		Logger.pretty,
 		Logger.minimumLogLevel(LogLevel.Debug),
 		telemetryConfigLayer,
-	)
-	const testLayer = Layer.mergeAll(
-		DefaultConfigLayer,
-		TaskRegistry.Live.pipe(
-			Layer.provide(NodeContext.layer),
-			Layer.provide(KVStorageLayer),
-		),
-		DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
 		// TaskRuntimeLayer.pipe(
 		// 	Layer.provide(NodeContext.layer),
 		// 	Layer.provide(iceDirLayer),
@@ -155,11 +162,16 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		// telemetryLayer,
 		// telemetryConfigLayer,
 
-		sharedLayer,
+		// sharedLayer,
 	)
 
 	const builderLayer = Layer.mergeAll(
-		sharedLayer,
+		configLayer,
+		telemetryLayer,
+		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+		Logger.pretty,
+		Logger.minimumLogLevel(LogLevel.Debug),
+		telemetryConfigLayer,
 		// NodeContext.layer,
 		// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		// // taskLayer,
@@ -200,143 +212,131 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 }
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
-export const makeTestEnvEffect = (iceDirName: string = ".ice_test") =>
-	Effect.gen(function* () {
-		const globalArgs = {
-			network: "local",
-			logLevel: LogLevel.Debug,
-		} as const
-		const config = {} satisfies Partial<ICEConfig>
+export const makeTestEnvEffect = (iceDirName: string = ".ice_test") => {
+	const globalArgs = {
+		network: "local",
+		logLevel: LogLevel.Debug,
+	} as const
+	const config = {} satisfies Partial<ICEConfig>
 
-		const DefaultConfigLayer = DefaultConfig.Live.pipe(
-			Layer.provide(DefaultReplicaService),
-		)
-		const telemetryExporter = new InMemorySpanExporter()
-		const telemetryConfig = {
-			resource: { serviceName: "ice" },
-			spanProcessor: new SimpleSpanProcessor(telemetryExporter),
-			shutdownTimeout: undefined,
-			metricReader: undefined,
-			logRecordProcessor: undefined,
-		}
+	const DefaultConfigLayer = DefaultConfig.Live.pipe(
+		Layer.provide(DefaultReplicaService),
+	)
 
-		const telemetryConfigLayer = Layer.succeed(
-			TelemetryConfig,
-			telemetryConfig,
-		)
-		const telemetryLayer = makeTelemetryLayer(telemetryConfig)
-		const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
-		const KVStorageLayer = layerMemory
+    // TODO: find out cleaner way to do this
+	const telemetryExporter = new InMemorySpanExporter()
+    telemetryExporter.shutdown = async () => {}
+	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
+    spanProcessor.shutdown = async () => {}
 
-		// separate for each test?
-		const configMap = new Map([
-			["APP_DIR", fs.realpathSync(process.cwd())],
-			// ["ICE_DIR_NAME", iceDir],
-		])
-		const configLayer = Layer.setConfigProvider(
-			ConfigProvider.fromMap(configMap),
-		)
+	const telemetryConfig = {
+		resource: { serviceName: "ice" },
+		spanProcessor,
+		// telemetryExporter,
+		shutdownTimeout: undefined,
+		metricReader: undefined,
+		logRecordProcessor: undefined,
+	}
 
-		const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
+	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
+	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+	// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
+	const KVStorageLayer = layerMemory
+
+	// separate for each test?
+	const configMap = new Map([
+		["APP_DIR", fs.realpathSync(process.cwd())],
+		// ["ICE_DIR_NAME", iceDir],
+	])
+	const configLayer = Layer.setConfigProvider(
+		ConfigProvider.fromMap(configMap),
+	)
+
+	const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(configLayer),
+	)
+
+	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
+
+	const testLayer = Layer.mergeAll(
+		// ICEConfigLayer,
+		DefaultConfigLayer,
+		// DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
+		CanisterIdsService.Test.pipe(
 			Layer.provide(NodeContext.layer),
-			Layer.provide(configLayer),
-		)
+			Layer.provide(iceDirLayer),
+		),
+		configLayer,
+		telemetryConfigLayer,
+		telemetryLayer,
+		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+		Logger.pretty,
+		Logger.minimumLogLevel(LogLevel.Debug),
+		NodeContext.layer,
+		KVStorageLayer,
+		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
+		InFlightLayer,
+		iceDirLayer,
+		DefaultReplicaService,
+	)
 
-		const InFlightLayer = InFlight.Live.pipe(
-			Layer.provide(NodeContext.layer),
-		)
+	const builderLayer = Layer.mergeAll(
+		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+		configLayer,
+		Logger.pretty,
+		Logger.minimumLogLevel(LogLevel.Info),
+		NodeContext.layer,
+		telemetryConfigLayer,
+		telemetryLayer,
+	)
+	const builderRuntime = ManagedRuntime.make(builderLayer)
 
-		// const canisterIdsMemo = yield* Layer.memoize(
-		// 	CanisterIdsService.Test.pipe(
-		// 		Layer.provide(NodeContext.layer),
-		// 		Layer.provide(iceDirLayer),
-		// 	),
-		// )
-		// const deploymentsLayerMemo = yield* Layer.memoize(
-		// 	DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
-		// )
-		// const CanisterIdsLayer = CanisterIdsService.Test.pipe(
-		// 	Layer.provide(NodeContext.layer),
-		// 	Layer.provide(iceDirLayer),
-		// )
-		// const sharedLayer = Layer.mergeAll(
-		// 	// configLayer,
-		// 	// telemetryLayerMemo,
-		// 	// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		// 	// Logger.pretty,
-		// 	// Logger.minimumLogLevel(LogLevel.Debug),
-		// 	// telemetryConfigLayer,
-		// 	// KVStorageLayer,
-		// 	// NodeContext.layer,
-		// )
-		const testLayer = Layer.mergeAll(
-			DefaultConfigLayer,
-			DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
-			CanisterIdsService.Test.pipe(
-				Layer.provide(NodeContext.layer),
-				Layer.provide(iceDirLayer),
-			),
-			configLayer,
-			telemetryLayerMemo,
-			Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-			Logger.pretty,
-			Logger.minimumLogLevel(LogLevel.Debug),
-			NodeContext.layer,
-			telemetryConfigLayer,
-			KVStorageLayer,
-			// TaskRegistry.Live.pipe(
-			// 	Layer.provide(NodeContext.layer),
-			// 	Layer.provide(KVStorageLayer),
-			// ),
-			// DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
-			InFlightLayer,
-			iceDirLayer,
-			DefaultReplicaService,
-		)
+	const custom = ((config: Parameters<typeof customCanister>[0]) =>
+		makeCustomCanister(
+			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+				unknown,
+				unknown
+			>,
+			config,
+		)) as unknown as typeof customCanister
+	const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
+		makeMotokoCanister(
+			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+				unknown,
+				unknown
+			>,
+			config,
+		)) as unknown as typeof motokoCanister
 
-		const builderLayer = Layer.mergeAll(
-			Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-            configLayer,
-			Logger.pretty,
-			Logger.minimumLogLevel(LogLevel.Debug),
-			NodeContext.layer,
-		)
-		const builderRuntime = ManagedRuntime.make(builderLayer)
-
-		const custom = ((config: Parameters<typeof customCanister>[0]) =>
-			makeCustomCanister(
-				builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-					unknown,
-					unknown
-				>,
-				config,
-			)) as unknown as typeof customCanister
-		const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
-			makeMotokoCanister(
-				builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-					unknown,
-					unknown
-				>,
-				config,
-			)) as unknown as typeof motokoCanister
-
-		return {
-			runtime: ManagedRuntime.make(testLayer),
-			telemetryExporter,
-			customCanister: custom,
-			motokoCanister: motoko,
-			// testLayer,
-			// builderLayer,
-			// sharedLayer,
-		}
-	})
+	return {
+		runtime: ManagedRuntime.make(testLayer),
+		telemetryExporter,
+		customCanister: custom,
+		motokoCanister: motoko,
+		// testLayer,
+		// builderLayer,
+		// sharedLayer,
+	}
+}
 
 export interface TaskRunnerShape {
 	readonly runTask: <T extends Task>(
 		task: T,
 		args?: TaskParamsToArgs<T>,
 		progressCb?: (update: ProgressUpdate<unknown>) => void,
-	) => Effect.Effect<TaskSuccess<T>, TaskRuntimeError>
+	) => Effect.Effect<
+		TaskSuccess<T>,
+		TaskRuntimeError | ConfigError.ConfigError
+	>
+	readonly runTaskUncached: <T extends Task>(
+		task: T,
+		args?: TaskParamsToArgs<T>,
+		progressCb?: (update: ProgressUpdate<unknown>) => void,
+	) => Effect.Effect<
+		TaskSuccess<T>,
+		TaskRuntimeError | ConfigError.ConfigError
+	>
 	readonly runTasks: (
 		tasks: Array<Task & { args: TaskParamsToArgs<Task> }>,
 		progressCb?: (update: ProgressUpdate<unknown>) => void,
@@ -353,22 +353,71 @@ export const makeTaskRunner = (taskTree: TaskTree) =>
 		const ICEConfig = ICEConfigService.Test(globalArgs, taskTree, config)
 		const KVStorageLayer = layerMemory
 		const IceDirLayer = IceDir.Test({ iceDirName: ".ice_test" })
-		const { runtime } = yield* makeTaskRuntime().pipe(
+
+		const { runtime, taskLayer } = yield* makeTaskLayer().pipe(
 			Effect.provide(ICEConfig),
+			// Effect.provide(uncachedLayer),
 			// Effect.provide(DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer))),
 			// Effect.provide(IceDirLayer),
 		)
+		const uncachedLayer = yield* Layer.memoize(
+			Layer.mergeAll(
+				Layer.effect(
+					DeploymentsService,
+					Effect.succeed({
+						get: (_canisterName: string, _network: string) =>
+							Effect.succeed(Option.none()), // not used in seed
+						set: (_: {
+							canisterName: string
+							network: string
+							deployment: unknown
+						}) => Effect.succeed(undefined),
+					}),
+				),
+			),
+		)
+		const { runtime: runtimeUncached, taskLayer: taskLayerUncached } =
+			yield* makeTaskLayer().pipe(
+				Effect.provide(ICEConfig),
+				Effect.provide(uncachedLayer),
+				// Effect.provide(Layer.effect(DeploymentsService, Effect.succeed({
+				// Effect.provide(DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer))),
+				// Effect.provide(IceDirLayer),
+			)
 		const ChildTaskRunner = Layer.succeed(TaskRuntime, {
 			runtime,
+			taskLayer,
 		})
-
+		const ChildTaskRunnerUncached = Layer.succeed(TaskRuntime, {
+			runtime: runtimeUncached,
+			taskLayer: taskLayerUncached,
+		})
 		const impl: TaskRunnerShape = {
 			runTask: (task, args, progressCb = () => {}) =>
+				Effect.gen(function* () {
+					return yield* Effect.tryPromise({
+						try: () =>
+							runtime.runPromise(
+								runTask(task, args, progressCb).pipe(
+									Effect.provide(ChildTaskRunner),
+									// Effect.annotateLogs("caller", "taskCtx.runTask"),
+									// Effect.annotateLogs("taskPath", taskPath),
+								),
+							),
+						catch: (error) => {
+							return new TaskRuntimeError({
+								message: String(error),
+							})
+						},
+					})
+				}),
+			runTaskUncached: (task, args, progressCb = () => {}) =>
 				Effect.tryPromise({
 					try: () =>
-						runtime.runPromise(
+						runtimeUncached.runPromise(
 							runTask(task, args, progressCb).pipe(
-								Effect.provide(ChildTaskRunner),
+								Effect.provide(ChildTaskRunnerUncached),
+								// Effect.provide(uncachedLayer),
 								// Effect.annotateLogs("caller", "taskCtx.runTask"),
 								// Effect.annotateLogs("taskPath", taskPath),
 							),

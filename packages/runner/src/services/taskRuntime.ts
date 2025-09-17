@@ -45,6 +45,8 @@ import { OtelTracer } from "@effect/opentelemetry/Tracer"
 import { Resource } from "@effect/opentelemetry/Resource"
 import { PlatformError } from "@effect/platform/Error"
 import { DeploymentsService } from "./deployments.js"
+import { DfxReplica } from "./dfx.js"
+import { configLayer } from "./config.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -90,10 +92,105 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| IceDir,
 			PlatformError | AgentError | TaskRuntimeError | MocError
 		>
+		taskLayer: Layer.Layer<
+			| OtelTracer
+			| Resource
+			| NodeContext.NodeContext
+			| TaskRegistry
+			| KeyValueStore.KeyValueStore
+			| DefaultReplica
+			| DefaultConfig
+			| Moc
+			| CanisterIdsService
+			| DeploymentsService
+			| ICEConfigService
+			| TelemetryConfig
+			| InFlight
+			| IceDir,
+			PlatformError | AgentError | TaskRuntimeError | MocError
+		>
 	}
 >() {}
 
-export const makeTaskRuntime = () =>
+const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
+
+const DefaultReplicaService = Layer.effect(DefaultReplica, picReplicaImpl).pipe(
+	Layer.provide(NodeContext.layer),
+)
+
+// const DefaultsLayer = Layer
+// 	.mergeAll
+// 	()
+const ICEConfigLayer = ICEConfigService.Live({
+	network: "local",
+	logLevel: logLevelMap.debug,
+}).pipe(Layer.provide(NodeContext.layer))
+
+const telemetryConfig = {
+	resource: { serviceName: "ice" },
+	spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+	shutdownTimeout: undefined,
+	metricReader: undefined,
+	logRecordProcessor: undefined,
+}
+const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
+const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+
+// TODO: create the directory if it doesn't exist
+// do we need iceDir at all? maybe yes, because we want a finalizer?
+const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
+	Layer.provide(NodeContext.layer),
+)
+
+const TaskRegistryLayer = TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer))
+
+const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
+	Layer.provide(NodeContext.layer),
+	Layer.provide(configLayer),
+)
+
+const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
+const DeploymentsLayer = DeploymentsService.Live.pipe(
+	// Layer.provide(NodeContext.layer),
+	Layer.provide(KVStorageLayer),
+	// Layer.provide(
+	// 	// TODO: creates the directory if it doesn't exist
+	// 	// do we need iceDir at all?
+	// 	layerFileSystem(".ice/deployments").pipe(
+	// 		Layer.provide(NodeContext.layer),
+	// 	),
+	// ),
+)
+
+const CanisterIdsLayer = CanisterIdsService.Live.pipe(
+	Layer.provide(NodeContext.layer),
+	Layer.provide(IceDirLayer),
+)
+// export const taskLayer = Layer.mergeAll(
+// 	telemetryLayer,
+// 	NodeContext.layer,
+// 	TaskRegistryLayer,
+// 	DefaultReplicaService,
+// 	DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
+// 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+// 	CanisterIdsLayer,
+// 	// DevTools.layerWebSocket().pipe(
+// 	// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
+// 	// ),
+// 	ICEConfigLayer,
+// 	telemetryConfigLayer,
+// 	InFlightLayer,
+// 	IceDirLayer,
+// 	KVStorageLayer,
+// 	configLayer,
+// 	NodeContext.layer,
+// 	DeploymentsLayer,
+// 	Logger.pretty,
+// 	Logger.minimumLogLevel(logLevelMap.debug),
+// )
+
+// TODO: Layer memoize instead?
+export const makeTaskLayer = () =>
 	Effect.gen(function* () {
 		const appDir = yield* Config.string("APP_DIR")
 		// const iceDir = yield* Config.string("ICE_DIR_NAME")
@@ -115,7 +212,16 @@ export const makeTaskRuntime = () =>
 		const IceDirLayer = Layer.succeed(IceDir, iceDir)
 		// TODO: make it work for tests too
 		const telemetryConfig = yield* TelemetryConfig
+
+
+		// const telemetryConfigLayer = Layer.succeed(
+		// 	TelemetryConfig,
+		// 	telemetryConfig,
+		// )
 		const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+		// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
+
+		// const telemetryLayer = yield* getTelemetryLayer()
 		const telemetryConfigLayer = Layer.succeed(
 			TelemetryConfig,
 			telemetryConfig,
@@ -127,34 +233,45 @@ export const makeTaskRuntime = () =>
 
 		const CanisterIds = yield* CanisterIdsService
 		const CanisterIdsLayer = Layer.succeed(CanisterIdsService, CanisterIds)
-        const Deployments = yield* DeploymentsService
-        const DeploymentsLayer = Layer.succeed(DeploymentsService, Deployments)
+		const Deployments = yield* DeploymentsService
+		const DeploymentsLayer = Layer.succeed(DeploymentsService, Deployments)
+
+		const TaskRegistryService = yield* TaskRegistry
+		const TaskRegistryLayer = Layer.succeed(
+			TaskRegistry,
+			TaskRegistryService,
+		)
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
-		const taskRuntime = ManagedRuntime.make(
-			Layer.mergeAll(
-				telemetryLayer,
-				NodeContext.layer,
-				TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
-				DefaultReplicaService,
-				DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
-				Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-				CanisterIdsLayer,
-				// DevTools.layerWebSocket().pipe(
-				// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
-				// ),
-				ICEConfigLayer,
-				telemetryConfigLayer,
-				Logger.pretty,
-				Logger.minimumLogLevel(ICEConfig.globalArgs.logLevel),
-				InFlightLayer,
-				IceDirLayer,
-				KVStorageLayer,
-				configLayer,
-				NodeContext.layer,
-				DeploymentsLayer,
-			),
+		const taskLayer = Layer.mergeAll(
+			telemetryLayer,
+			NodeContext.layer,
+			TaskRegistryLayer,
+			DefaultReplicaService,
+			DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
+			Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+			CanisterIdsLayer,
+			// DevTools.layerWebSocket().pipe(
+			// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
+			// ),
+			ICEConfigLayer,
+			telemetryConfigLayer,
+			Logger.pretty,
+			Logger.minimumLogLevel(ICEConfig.globalArgs.logLevel),
+			InFlightLayer,
+			IceDirLayer,
+			KVStorageLayer,
+			configLayer,
+			NodeContext.layer,
+			DeploymentsLayer,
 		)
+		const taskRuntime = ManagedRuntime.make(taskLayer)
+		// const ChildTaskRunner = Layer.succeed(TaskRuntime, {
+		// 	runtime: taskRuntime,
+		// 	taskLayer,
+		// })
+
+		// const fullTaskLayer = Layer.mergeAll(taskLayer, ChildTaskRunner)
 
 		// const ChildTaskRunner = Layer.succeed(TaskRunner, {
 		// 	runtime: taskRuntime,
@@ -175,6 +292,8 @@ export const makeTaskRuntime = () =>
 
 		return {
 			runtime: taskRuntime,
+			taskLayer,
+
 			// runTask: <T extends Task>(
 			// 	task: T,
 			// 	args?: TaskParamsToArgs<T>,
@@ -205,5 +324,3 @@ export const makeTaskRuntime = () =>
 			// 	),
 		}
 	})
-
-export const TaskRuntimeLive = () => Layer.effect(TaskRuntime, makeTaskRuntime())

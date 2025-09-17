@@ -55,7 +55,9 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import type { Scope, TaskTree } from "../types/types.js"
 export { Opt } from "../types/types.js"
-import { TaskRuntimeLive, TaskRuntime } from "../services/taskRuntime.js"
+import {
+	makeTaskLayer,
+} from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { IceDir } from "../services/iceDir.js"
 import { runTask, runTasks } from "../tasks/run.js"
@@ -182,11 +184,15 @@ export const makeCliRuntime = ({
 	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
 
 	// TODO: create the directory if it doesn't exist
-    // do we need iceDir at all? maybe yes, because we want a finalizer?
+	// do we need iceDir at all? maybe yes, because we want a finalizer?
 	const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
 		Layer.provide(NodeContext.layer),
 	)
-	const TaskRuntimeLayer = TaskRuntimeLive()
+	// const TaskRuntimeLayer = TaskRuntimeLive()
+
+	const TaskRegistryLayer = TaskRegistry.Live.pipe(
+		Layer.provide(KVStorageLayer),
+	)
 
 	const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 		Layer.provide(NodeContext.layer),
@@ -219,17 +225,19 @@ export const makeCliRuntime = ({
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
-		TaskRuntimeLayer.pipe(
-			Layer.provide(NodeContext.layer),
-			Layer.provide(IceDirLayer),
-			Layer.provide(CanisterIdsLayer),
-			Layer.provide(ICEConfigLayer),
-			Layer.provide(telemetryConfigLayer),
-			Layer.provide(KVStorageLayer),
-			Layer.provide(InFlightLayer),
-			Layer.provide(DeploymentsLayer),
-		),
-        DeploymentsLayer,
+		// TaskRuntimeLayer.pipe(
+		// 	Layer.provide(NodeContext.layer),
+		// 	Layer.provide(IceDirLayer),
+		// 	Layer.provide(CanisterIdsLayer),
+		// 	Layer.provide(ICEConfigLayer),
+		// 	Layer.provide(telemetryConfigLayer),
+		// 	Layer.provide(KVStorageLayer),
+		// 	Layer.provide(InFlightLayer),
+		// 	Layer.provide(DeploymentsLayer),
+		// 	Layer.provide(TaskRegistryLayer),
+		// ),
+		TaskRegistryLayer,
+		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
 		DefaultReplicaService,
@@ -528,7 +536,7 @@ const canistersCreateCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* TaskRuntime
+				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -577,7 +585,7 @@ const canistersBuildCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* TaskRuntime
+				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -626,7 +634,7 @@ const canistersBindingsCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:bindings")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* TaskRuntime
+				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -681,7 +689,7 @@ const canistersInstallCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* TaskRuntime
+				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -733,7 +741,7 @@ const canistersStopCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:stop")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* TaskRuntime
+				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>

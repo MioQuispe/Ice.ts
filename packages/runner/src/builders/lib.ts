@@ -45,6 +45,7 @@ import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
 import { layerFileSystem } from "@effect/platform/KeyValueStore"
+import { DeploymentsService } from "../services/deployments.js"
 
 const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 	Layer.provide(NodeContext.layer),
@@ -1291,12 +1292,16 @@ export const resolveMode = (
 						}
 						// unchanged args: prefer upgrade over install (idempotent)
 						// but this breaks second run where it should use install cache
-						// return "upgrade"
-						return lastDeployment.mode === "upgrade"
-							? "upgrade"
-							: "install"
+						return "upgrade"
+						// return lastDeployment.mode === "upgrade"
+						// 	? "upgrade"
+						// 	: "install"
 					},
-					onNone: () => "reinstall",
+					onNone: () => {
+						// Module present but no history: if current funcs differ, treat as upgrade intent
+						// return upgradeArgsHash !== installArgsHash ? "upgrade" : "reinstall"
+						return "reinstall"
+					},
 				})
 			}
 		} else {
@@ -2097,11 +2102,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						resolvedMode === "upgrade"
 							? ("upgrade" as const)
 							: ("install" as const)
-					// annotate span so tests can differentiate cache hits
-					yield* Effect.annotateCurrentSpan({
-						resolvedMode,
-						cacheKeyMode: computedMode,
-					})
+
 					const input = {
 						canisterId,
 						// canisterName,
@@ -2122,10 +2123,47 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const {
 						replica,
 						roles: { deployer },
+						args,
 					} = taskCtx
 					if (input.resolvedMode === "reinstall") {
 						return true
 					}
+					const canisterName = taskCtx.taskPath.split(":")[0]!
+					// const lastDeployment = yield* DeploymentsService.get(input.canisterName, input.network)
+					const lastDeployment = yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.deployments.get(
+								canisterName,
+								taskCtx.currentNetwork,
+							),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					const installArgsChanged =
+						input.installArgsDigest !==
+						lastDeployment?.installArgsHash
+					const upgradeArgsChanged =
+						input.upgradeArgsDigest !==
+						lastDeployment?.upgradeArgsHash
+					console.log("installArgsChanged", installArgsChanged)
+					console.log("upgradeArgsChanged", upgradeArgsChanged)
+					console.log("input", input)
+					console.log("lastDeployment", lastDeployment)
+					if (
+						input.resolvedMode === "install" &&
+						installArgsChanged
+					) {
+						return true
+					}
+					if (
+						input.resolvedMode === "upgrade" &&
+						upgradeArgsChanged
+					) {
+						return true
+					}
+					// const taskArgs = args as InstallTaskArgs
+					// const requestedMode = taskArgs.mode
 					const info = yield* replica.getCanisterInfo({
 						canisterId: input.canisterId,
 						identity: deployer.identity,
@@ -2136,6 +2174,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					) {
 						return true
 					}
+                    console.log("revalidate returned false")
 					return false
 				})(),
 			),

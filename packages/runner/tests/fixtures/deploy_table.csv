@@ -8,7 +8,7 @@ auto,TRUE,TRUE,FALSE,FALSE,FALSE,install,FALSE,OK,"both args changed, but no can
 auto,TRUE,FALSE,TRUE,FALSE,FALSE,install,FALSE,OK,
 auto,FALSE,TRUE,TRUE,FALSE,FALSE,install,FALSE,OK,just install. cant upgrade empty canister
 auto,FALSE,FALSE,FALSE,FALSE,TRUE,install,FALSE,OK,"canister empty, cache not valid"
-auto,FALSE,FALSE,TRUE,TRUE,TRUE,upgrade,TRUE,OK,"canister exists and not empty, but should reuse install cache despite resolvedMode?"
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,latest,TRUE,OK,"canister exists and not empty, but should reuse install cache despite resolvedMode?"
 auto,TRUE,FALSE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,"installArgsFn changed, cant reuse cache, need to reinstall on existing canister"
 auto,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,FALSE,OK,"upgradeArgsFn changed, cant reuse cache, need to upgrade"
 auto,TRUE,TRUE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,"both changed, install takes priority, but canister already exists -> so need to reinstall"

@@ -36,6 +36,7 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 			network: string
 			deployment: Deployment
 		}) => Effect.Effect<void, PlatformError>
+		serviceType: string
 	}
 >() {
 	static readonly Live = Layer.scoped(
@@ -55,6 +56,11 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 						const deployment = yield* kv.get(
 							`${canisterName}:${network}`,
 						)
+						yield* Effect.logInfo("get deployment", {
+							canisterName,
+							network,
+							deployment,
+						})
 						const parsedDeployment = Option.map(
 							deployment,
 							(v) => JSON.parse(v) as unknown as Deployment,
@@ -69,7 +75,13 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 							`${canisterName}:${network}`,
 							JSON.stringify(deployment),
 						)
+						yield* Effect.logInfo("Deployment set successfully", {
+							canisterName,
+							network,
+							deployment,
+						})
 					}),
+				serviceType: "Live",
 			}
 		}),
 	)

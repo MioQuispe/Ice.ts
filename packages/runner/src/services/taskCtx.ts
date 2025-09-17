@@ -20,7 +20,7 @@ import {
 import type { ICEUser, Task, TaskTree } from "../types/types.js"
 import { DefaultConfig, InitializedDefaultConfig } from "./defaultConfig.js"
 import { ICEConfigService } from "./iceConfig.js"
-import { TaskRuntime } from "./taskRuntime.js"
+import { makeTaskLayer, TaskRuntime } from "./taskRuntime.js"
 import { runTask } from "../tasks/run.js"
 import { IceDir } from "./iceDir.js"
 import { Deployment, DeploymentsService } from "./deployments.js"
@@ -130,7 +130,9 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	>,
 	progressCb: (update: ProgressUpdate<unknown>) => void,
 ) {
-	const { runtime } = yield* TaskRuntime
+	const parentSpan = yield* Effect.currentSpan
+	const { taskLayer } = yield* makeTaskLayer()
+	const runtime = ManagedRuntime.make(taskLayer)
 	const defaultConfig = yield* DefaultConfig
 	const appDir = yield* Config.string("APP_DIR")
 	const { path: iceDir } = yield* IceDir
@@ -174,6 +176,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	// Pass down the same runtime to the child task
 	const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 		runtime,
+		taskLayer,
 	})
 	const Deployments = yield* DeploymentsService
 	const CanisterIds = yield* CanisterIdsService
@@ -193,6 +196,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.annotateLogs("caller", "taskCtx.runTask"),
 					Effect.annotateLogs("taskPath", taskPath),
+					Effect.withParentSpan(parentSpan),
 				),
 			)
 			return result

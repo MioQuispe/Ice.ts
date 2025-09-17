@@ -624,7 +624,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							}
 						}
 
-                        // we want to do it after deduping
+						// we want to do it after deduping
 						yield* cachedTaskCount(Effect.succeed(1))
 
 						const inFlightDef = yield* Deferred.make<
@@ -653,8 +653,15 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						const cacheHit =
 							!revalidate && (yield* taskRegistry.has(cacheKey))
 
+						const hasCacheKey = yield* taskRegistry.has(cacheKey)
+						// annotate span so tests can differentiate cache hits
 						yield* Effect.annotateCurrentSpan({
+							taskPath,
+							...(input ? input : {}),
 							cacheHit: cacheHit,
+							hasCacheKey: hasCacheKey,
+							cacheKey: cacheKey,
+							revalidate: revalidate,
 						})
 
 						if (cacheHit) {
@@ -668,7 +675,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								encodingFormat,
 							)
 							yield* Effect.annotateCurrentSpan({
-								decoding: Option.isSome(maybeResult),
+								decoding: !!Option.isSome(maybeResult),
 							})
 							if (Option.isSome(maybeResult)) {
 								const encodedResult = maybeResult.value

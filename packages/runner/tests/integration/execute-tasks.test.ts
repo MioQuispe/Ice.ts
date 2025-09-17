@@ -11,8 +11,6 @@ import {
 import { CachedTask, ICEConfig, Task, TaskTree } from "../../src/types/types.js"
 import { makeCachedTask, makeTaskRunner, makeTestEnv } from "./setup.js"
 import { runTask, runTasks } from "../../src/tasks/run.js"
-import { TaskRuntime, TaskRuntimeLive } from "../../src/services/taskRuntime.js"
-import { TaskRunner, TaskRunnerLive } from "../../src/services/taskRunner.js"
 
 describe("executeTasks", () => {
 	// const testLayer = (() => {
