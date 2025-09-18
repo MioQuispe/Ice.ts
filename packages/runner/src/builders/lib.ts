@@ -1277,9 +1277,6 @@ export const resolveMode = (
 				mode = Option.match(lastDeployment, {
 					onSome: (lastDeployment) => {
 						// TODO: fix, this seems like a bad way to do it
-						console.log("lastDeployment", lastDeployment)
-						console.log("installArgsHash", installArgsHash)
-						console.log("upgradeArgsHash", upgradeArgsHash)
 						if (
 							lastDeployment.installArgsHash !== installArgsHash
 						) {
@@ -2128,7 +2125,11 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					if (input.resolvedMode === "reinstall") {
 						return true
 					}
-					const canisterName = taskCtx.taskPath.split(":")[0]!
+					// const canisterName = taskCtx.taskPath.split(":")[0]!
+                    const canisterName = taskCtx.taskPath
+                    .split(":")
+                    .slice(0, -1)
+                    .join(":")
 					// const lastDeployment = yield* DeploymentsService.get(input.canisterName, input.network)
 					const lastDeployment = yield* Effect.tryPromise({
 						try: () =>
@@ -2146,10 +2147,6 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const upgradeArgsChanged =
 						input.upgradeArgsDigest !==
 						lastDeployment?.upgradeArgsHash
-					console.log("installArgsChanged", installArgsChanged)
-					console.log("upgradeArgsChanged", upgradeArgsChanged)
-					console.log("input", input)
-					console.log("lastDeployment", lastDeployment)
 					if (
 						input.resolvedMode === "install" &&
 						installArgsChanged
@@ -2174,7 +2171,6 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					) {
 						return true
 					}
-                    console.log("revalidate returned false")
 					return false
 				})(),
 			),
