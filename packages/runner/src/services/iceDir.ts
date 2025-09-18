@@ -42,18 +42,23 @@ export class IceDir extends Context.Tag("IceDir")<
 				// const dirExists = yield* fs.exists(iceDirPath)
 				// if (!dirExists) {
 				yield* fs.makeDirectory(iceDirPath, { recursive: true })
-				// }
-				yield* Effect.addFinalizer(() =>
-					fs
-						.remove(iceDirPath, { recursive: true, force: true })
-						.pipe(
-							Effect.catchAll((error) =>
-								Effect.logError(
-									"Failed to remove ice dir",
-									error,
-								),
-							),
-						),
+				yield* Effect.addFinalizer((exit) =>
+					Effect.gen(function* () {
+						const result = yield* fs
+							.remove(iceDirPath, {
+								recursive: true,
+								force: true,
+							})
+							.pipe(
+								Effect.catchAll((error) => {
+									return Effect.logError(
+										"Failed to remove ice dir",
+										error,
+									)
+								}),
+							)
+						return
+					}),
 				)
 				return {
 					path: iceDirPath,

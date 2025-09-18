@@ -1,6 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
-import { describe, it, expect } from "vitest"
+import { describe, it, expect, afterAll } from "vitest"
 import { Effect, Layer, LogLevel, ManagedRuntime } from "effect"
 // Reuse same env helper as other integration tests
 import { makeTestEnv, makeTestEnvEffect } from "./setup.js"
@@ -15,7 +15,6 @@ import { CanisterScopeSimple } from "../../src/index.js"
 import { CachedTask, Task } from "../../src/types/types.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { layerMemory } from "@effect/platform/KeyValueStore"
-import { IceDir } from "../../src/services/iceDir.js"
 import { makeTaskLayer } from "../../src/services/taskRuntime.js"
 import { TaskRuntime } from "../../src/services/taskRuntime.js"
 import { TaskRunnerShape } from "./setup.js"
@@ -37,9 +36,11 @@ type Scenario = {
 	installCacheExists: boolean
 	upgradeCacheExists: boolean
 	resolvedMode: "install" | "reinstall" | "upgrade" | "latest"
-	cacheUsed: "install" | "upgrade" | undefined
+	cacheUsed: "install" | "upgrade" | "latest" | undefined
+	lastDeployment: "install" | "upgrade" | undefined
 	expectedOutcome: "OK" | "ERROR!"
 	notes: string | undefined
+	lineNumber: number
 }
 
 const toBool = (v: string): boolean => v.trim().toUpperCase() === "TRUE"
@@ -103,8 +104,14 @@ const parseCsv = (txt: string): Scenario[] => {
 			resolvedMode: (get(raw, "resolvedMode") || "install") as
 				| "install"
 				| "reinstall"
-				| "upgrade",
+				| "upgrade"
+				| "latest",
 			cacheUsed: (get(raw, "cacheUsed") || undefined) as
+				| "install"
+				| "upgrade"
+				| "latest"
+				| undefined,
+			lastDeployment: (get(raw, "lastDeployment") || undefined) as
 				| "install"
 				| "upgrade"
 				| undefined,
@@ -113,6 +120,7 @@ const parseCsv = (txt: string): Scenario[] => {
 				"!",
 			) as "OK" | "ERROR!",
 			notes: get(raw, "notes") || undefined,
+			lineNumber: i + 1,
 		}
 		rows.push(scenario)
 	}
@@ -122,11 +130,14 @@ const parseCsv = (txt: string): Scenario[] => {
 const csvPath = path.resolve(__dirname, "../fixtures/deploytable.csv")
 const csv = fs.readFileSync(csvPath, "utf8")
 const scenarios = parseCsv(csv)
+// const scenarios = [parseCsv(csv)[24]!]
 
 describe("deployments & caching decision table", () => {
 	it.each(
-		scenarios.map((s, idx) => [idx + 1, s]) as Array<[number, Scenario]>,
-	)("scenario #%s: %o", async (idx, s) => {
+		scenarios.map((s, idx) => [idx + 1, s, s.lineNumber]) as Array<
+			[number, Scenario, number]
+		>,
+	)("scenario #%s: %o. line number: %s", async (idx, s, lineNumber) => {
 		const { runtime, telemetryExporter, customCanister } =
 			makeTestEnvEffect(`.ice_test/deploy_${idx}`)
 
@@ -208,7 +219,6 @@ describe("deployments & caching decision table", () => {
 						.upgradeArgs(seedUpgradeArgs)
 						.make()
 
-					// TODO: tasktree?
 					const scenario_canister = customCanister({ wasm, candid })
 						.installArgs(installArgsFn)
 						.upgradeArgs(upgradeArgsFn)
@@ -317,12 +327,59 @@ describe("deployments & caching decision table", () => {
 									{
 										mode: "upgrade" as const,
 									},
+								).pipe(Effect.provide(taskLayerSeedUpgrade))
+							}
+
+							if (s.lastDeployment === "install") {
+								const {
+									taskLayer: taskLayerSeedLastDeployment,
+								} = yield* makeTaskLayer()
+									// inject layer at call site
+									.pipe(
+										Effect.provide(ICEConfigSeed),
+										Effect.provide(DeploymentsLayer),
+									)
+								yield* runTask(
+									(s.installCacheExists
+										? seed_canister
+										: stripCanisterCache(seed_canister)
+									).children.deploy,
+									{
+										mode: "reinstall" as const,
+									},
 								).pipe(
-									Effect.provide(
-										taskLayerSeedUpgrade,
-									),
+									Effect.provide(taskLayerSeedLastDeployment),
 								)
 							}
+
+							// if (s.lastDeployment) {
+							// 	const cacheExists =
+							// 		s.lastDeployment === "upgrade"
+							// 			? s.upgradeCacheExists
+							// 			: s.installCacheExists
+							// 	const {
+							// 		taskLayer: taskLayerSeedLastDeployment,
+							// 	} = yield* makeTaskLayer()
+							// 		// inject layer at call site
+							// 		.pipe(
+							// 			Effect.provide(ICEConfigSeed),
+							// 			Effect.provide(DeploymentsLayer),
+							// 		)
+							// 	yield* runTask(
+							// 		(cacheExists
+							// 			? seed_canister
+							// 			: stripCanisterCache(seed_canister)
+							// 		).children.deploy,
+							// 		{
+							// 			mode:
+							// 				s.lastDeployment === "upgrade"
+							// 					? "upgrade"
+							// 					: "reinstall",
+							// 		},
+							// 	).pipe(
+							// 		Effect.provide(taskLayerSeedLastDeployment),
+							// 	)
+							// }
 						} else {
 							// Only create canister; no module installed
 							seededCanisterId = yield* runTask(
@@ -418,7 +475,10 @@ describe("deployments & caching decision table", () => {
 					).pipe(Effect.provide(taskLayerScenario))
 
 					// // Support special value "latest" in CSV: interpret as last recorded deployment mode
-					const { resolvedMode } = yield* Effect.gen(function* () {
+					const {
+						// resolvedMode,
+						lastDeployment,
+					} = yield* Effect.gen(function* () {
 						const Deployments = yield* DeploymentsService
 						const maybeLastDep = yield* Deployments.get(
 							canisterKey,
@@ -431,12 +491,17 @@ describe("deployments & caching decision table", () => {
 							Deployments: Deployments.serviceType,
 						})
 						const lastDep = Option.getOrThrow(maybeLastDep)
-						const resolvedMode = lastDep.mode
-						return { resolvedMode }
+						// // TODO: wrong
+						// const resolvedMode = lastDep.mode
+						return {
+							// resolvedMode,
+							lastDeployment: lastDep,
+						}
 					}).pipe(Effect.provide(taskLayerScenario))
 					return {
 						result,
-						resolvedMode,
+						// resolvedMode,
+						lastDeployment,
 						beforeInstallCacheHits,
 						beforeUpgradeCacheHits,
 					}
@@ -450,7 +515,8 @@ describe("deployments & caching decision table", () => {
 
 		const {
 			result,
-			resolvedMode,
+			// resolvedMode,
+			lastDeployment,
 			beforeInstallCacheHits,
 			beforeUpgradeCacheHits,
 		} = await runMain()
@@ -458,9 +524,26 @@ describe("deployments & caching decision table", () => {
 			canisterId: expect.any(String),
 			canisterName: expect.any(String),
 		})
+		const resolvedModeSpans = telemetryExporter
+			.getFinishedSpans()
+			.filter(
+				(sp) =>
+					sp.name === "task_execute_effect" &&
+					sp.attributes?.["taskPath"] === `${canisterKey}:install`,
+			)
+		const resolvedMode =
+			resolvedModeSpans[resolvedModeSpans.length - 1]?.attributes?.[
+				"resolvedMode"
+			]
+
+        // console.log("resolvedModeSpans", resolvedModeSpans)
+        // console.log("resolvedMode", resolvedMode)
 
 		if (s.resolvedMode === "latest") {
-			expect(["install", "upgrade"]).toContain(resolvedMode)
+			// this makes the test pass but may cause false positives
+			// expect(["install", "upgrade"]).toContain(resolvedMode)
+			// TODO: tests dont specify which deployment is the latest
+			expect(lastDeployment?.mode).toBe(s.resolvedMode)
 		} else {
 			expect(resolvedMode).toBe(s.resolvedMode)
 		}
@@ -493,8 +576,21 @@ describe("deployments & caching decision table", () => {
 		} else if (s.cacheUsed === "upgrade") {
 			expect(upgradeHitsThisRun > 0).toBe(true)
 			expect(installHitsThisRun > 0).toBe(false)
+		} else if (s.cacheUsed === "latest") {
+			const latestMode = lastDeployment?.mode
+			expect(installHitsThisRun > 0).toBe(latestMode === "install")
+			expect(upgradeHitsThisRun > 0).toBe(latestMode === "upgrade")
 		} else {
 			expect(installHitsThisRun + upgradeHitsThisRun > 0).toBe(false)
 		}
+
+		await runtime.dispose()
+	})
+	afterAll(async () => {
+		const appDir = fs.realpathSync(process.cwd())
+		const result = await fs.promises.rmdir(
+			path.resolve(appDir, "./.ice_test"),
+			{ recursive: true },
+		)
 	})
 })

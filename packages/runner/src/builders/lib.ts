@@ -1292,15 +1292,15 @@ export const resolveMode = (
 						}
 						// unchanged args: prefer upgrade over install (idempotent)
 						// but this breaks second run where it should use install cache
-						return "upgrade"
-						// return lastDeployment.mode === "upgrade"
-						// 	? "upgrade"
-						// 	: "install"
+						// return "upgrade"
+						return lastDeployment.mode === "upgrade"
+							? "upgrade"
+							: "install"
 					},
 					onNone: () => {
 						// Module present but no history: if current funcs differ, treat as upgrade intent
-						// return upgradeArgsHash !== installArgsHash ? "upgrade" : "reinstall"
-						return "reinstall"
+						return upgradeArgsHash !== installArgsHash ? "upgrade" : "reinstall"
+						// return "reinstall"
 					},
 				})
 			}
