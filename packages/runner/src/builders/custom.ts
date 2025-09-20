@@ -186,7 +186,7 @@ export const makeCustomDeployTask = <_SERVICE>(
 					const taskArgs = args as DeployTaskArgs
 					// const mode = yield* resolveMode()
 
-					yield* Effect.logDebug("deploy taskArgs:", taskArgs)
+					// yield* Effect.logDebug("deploy taskArgs:", taskArgs)
 					const result = yield* Effect.all(
 						[
 							Effect.gen(function* () {
@@ -264,7 +264,7 @@ export const makeCustomDeployTask = <_SERVICE>(
 						canisterId,
 						wasmPath,
 						mode: taskArgs.mode,
-						result: JSON.stringify(result),
+						// result: JSON.stringify(result),
 					})
 					const taskResult = yield* Effect.tryPromise({
 						try: () =>

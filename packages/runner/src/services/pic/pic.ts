@@ -1,4 +1,4 @@
-import { Effect, Layer, Context, Data, Config, Ref } from "effect"
+import { Effect, Layer, Context, Data, Config, Ref, Schedule } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { Principal } from "@dfinity/principal"
 import {
@@ -124,7 +124,17 @@ export const picReplicaImpl = Effect.gen(function* () {
 			new AgentError({
 				message: `Failed to create custom pocket-ic client: ${error instanceof Error ? error.message : String(error)}`,
 			}),
-	})
+	}).pipe(
+		Effect.retry(
+			Schedule.intersect(
+				Schedule.union(
+					Schedule.exponential("10 millis"),
+					Schedule.spaced("1 second"),
+				),
+				Schedule.recurs(10),
+			),
+		),
+	)
 	// Needed because the constructor is set as private, but we need to instantiate it this way
 	// @ts-ignore
 	const pic: PocketIc = new PocketIc(customPocketIcClient)
@@ -320,7 +330,7 @@ export const picReplicaImpl = Effect.gen(function* () {
 					}
 				},
 				catch: (error) => {
-                    // TODO: ?? success anyway?
+					// TODO: ?? success anyway?
 					return new CanisterStatusError({
 						message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
 					})

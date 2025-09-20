@@ -56,7 +56,7 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 						const deployment = yield* kv.get(
 							`${canisterName}:${network}`,
 						)
-						yield* Effect.logInfo("get deployment", {
+						yield* Effect.logDebug("get deployment", {
 							canisterName,
 							network,
 							deployment,
@@ -75,7 +75,7 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 							`${canisterName}:${network}`,
 							JSON.stringify(deployment),
 						)
-						yield* Effect.logInfo("Deployment set successfully", {
+						yield* Effect.logDebug("Deployment set successfully", {
 							canisterName,
 							network,
 							deployment,

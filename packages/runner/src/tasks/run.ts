@@ -61,7 +61,6 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 		// 		error,
 		// 	})
 		// }),
-		Effect.annotateLogs("caller", "runTask"),
 		Effect.annotateLogs("taskPath", taskPath),
 	)
 	yield* Effect.logDebug("Tasks executed")

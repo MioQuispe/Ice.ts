@@ -58,7 +58,7 @@ const baseLayer = Layer.mergeAll(
 	// TODO: ??
 	// telemetryLayer,
 	Logger.pretty,
-	Logger.minimumLogLevel(LogLevel.Debug),
+	Logger.minimumLogLevel(LogLevel.Info),
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
 
@@ -1296,7 +1296,9 @@ export const resolveMode = (
 					},
 					onNone: () => {
 						// Module present but no history: if current funcs differ, treat as upgrade intent
-						return upgradeArgsHash !== installArgsHash ? "upgrade" : "reinstall"
+						return upgradeArgsHash !== installArgsHash
+							? "upgrade"
+							: "reinstall"
 						// return "reinstall"
 					},
 				})
@@ -1613,10 +1615,13 @@ export const makeInstallArgsTask = <
 						upgradeArgsResult = upgradeFnResult
 					}
 
-					yield* Effect.logDebug("Install args generated", {
-						installArgsResult,
-						upgradeArgsResult,
-					})
+					yield* Effect.logDebug(
+						"Install args generated",
+						//     {
+						// 	installArgsResult,
+						// 	upgradeArgsResult,
+						// }
+					)
 
 					const canisterDID = yield* Effect.tryPromise({
 						try: () =>
@@ -1627,10 +1632,13 @@ export const makeInstallArgsTask = <
 							})
 						},
 					})
-					yield* Effect.logDebug("Encoding args install args", {
-						installArgsResult,
-						canisterDID,
-					})
+					yield* Effect.logDebug(
+						"Encoding args install args",
+						//     {
+						// 	installArgsResult,
+						// 	canisterDID,
+						// }
+					)
 					// TODO: do we accept simple objects as well?
 					// let encodedArgs
 					const encodedInstallArgs = installArgs.customEncode
@@ -1903,9 +1911,12 @@ export const makeInstallTask = <_SERVICE, I, U>(
 							})
 						},
 					})
-					yield* Effect.logDebug("Loaded canisterDID", {
-						canisterDID,
-					})
+					yield* Effect.logDebug(
+						"Loaded canisterDID",
+						//     {
+						// 	canisterDID,
+						// }
+					)
 					const fs = yield* FileSystem.FileSystem
 
 					// TODO:
@@ -2126,10 +2137,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						return true
 					}
 					// const canisterName = taskCtx.taskPath.split(":")[0]!
-                    const canisterName = taskCtx.taskPath
-                    .split(":")
-                    .slice(0, -1)
-                    .join(":")
+					const canisterName = taskCtx.taskPath
+						.split(":")
+						.slice(0, -1)
+						.join(":")
 					// const lastDeployment = yield* DeploymentsService.get(input.canisterName, input.network)
 					const lastDeployment = yield* Effect.tryPromise({
 						try: () =>
@@ -2179,7 +2190,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 		encode: (taskCtx, result, input) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
-					yield* Effect.logDebug("encoding:", result)
+					yield* Effect.logDebug(
+						"encoding task result",
+						//  result
+					)
 					return yield* encodeWithBigInt({
 						canisterId: result.canisterId,
 						canisterName: result.canisterName,

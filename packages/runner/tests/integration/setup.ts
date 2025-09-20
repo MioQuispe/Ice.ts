@@ -44,7 +44,7 @@ import {
 	InMemorySpanExporter,
 	BatchSpanProcessor,
 	SimpleSpanProcessor,
-    SpanExporter,
+	SpanExporter,
 } from "@opentelemetry/sdk-trace-base"
 // import { configLayer } from "../../src/services/config.js"
 import {
@@ -212,22 +212,31 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 }
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
-export const makeTestEnvEffect = (iceDirName: string = ".ice_test") => {
-	const globalArgs = {
+export const makeTestEnvEffect = (
+	iceDirName: string = ".ice_test",
+	globalArgs: {
+		network: string
+		logLevel: LogLevel.LogLevel
+	} = {
 		network: "local",
 		logLevel: LogLevel.Debug,
-	} as const
+	} as const,
+) => {
+	// const globalArgs = {
+	// 	network: "local",
+	// 	logLevel: LogLevel.Debug,
+	// } as const
 	const config = {} satisfies Partial<ICEConfig>
 
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(DefaultReplicaService),
 	)
 
-    // TODO: find out cleaner way to do this
+	// TODO: find out cleaner way to do this
 	const telemetryExporter = new InMemorySpanExporter()
-    telemetryExporter.shutdown = async () => {}
+	telemetryExporter.shutdown = async () => {}
 	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
-    spanProcessor.shutdown = async () => {}
+	spanProcessor.shutdown = async () => {}
 
 	const telemetryConfig = {
 		resource: { serviceName: "ice" },
@@ -272,7 +281,7 @@ export const makeTestEnvEffect = (iceDirName: string = ".ice_test") => {
 		telemetryLayer,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		Logger.pretty,
-		Logger.minimumLogLevel(LogLevel.Debug),
+		Logger.minimumLogLevel(globalArgs.logLevel),
 		NodeContext.layer,
 		KVStorageLayer,
 		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
@@ -285,7 +294,7 @@ export const makeTestEnvEffect = (iceDirName: string = ".ice_test") => {
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		configLayer,
 		Logger.pretty,
-		Logger.minimumLogLevel(LogLevel.Info),
+		Logger.minimumLogLevel(globalArgs.logLevel),
 		NodeContext.layer,
 		telemetryConfigLayer,
 		telemetryLayer,

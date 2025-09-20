@@ -180,7 +180,7 @@ export type CachedTask<
 	A = unknown,
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
-	Input = unknown,
+	Input = Record<string, unknown>,
 	// TODO:
 	E = unknown,
 	R = unknown,

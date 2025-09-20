@@ -55,9 +55,7 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import type { Scope, TaskTree } from "../types/types.js"
 export { Opt } from "../types/types.js"
-import {
-	makeTaskLayer,
-} from "../services/taskRuntime.js"
+import { makeTaskLayer, TaskRuntime } from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { IceDir } from "../services/iceDir.js"
 import { runTask, runTasks } from "../tasks/run.js"
@@ -88,6 +86,7 @@ export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
 	yield* Effect.logDebug("Task found", taskPath)
 	return yield* runTask(task, argsMap, progressCb).pipe(
 		Effect.annotateLogs("caller", "runTaskByPath"),
+        Effect.withConcurrency("unbounded"),
 	)
 })
 
@@ -378,7 +377,13 @@ const runCommand = defineCommand({
 			globalArgs,
 		}).runPromise(
 			Effect.gen(function* () {
+				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
 				yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.tap((result) =>
 						Effect.gen(function* () {
 							const count = yield* Metric.value(totalTaskCount)
@@ -446,6 +451,11 @@ const deployRun = async ({
 	// TODO: convert to task
 	const program = Effect.fn("deploy")(function* () {
 		const { taskTree } = yield* ICEConfigService
+		const { runtime, taskLayer } = yield* makeTaskLayer()
+		const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+			runtime,
+			taskLayer,
+		})
 		const tasksWithPath = (yield* filterNodes(
 			taskTree,
 			(node) =>
@@ -483,7 +493,10 @@ const deployRun = async ({
 				s.message(`Completed ${update.taskPath}`)
 				// console.log(`Completed ${update.taskPath}`)
 			}
-		}).pipe(Effect.annotateLogs("caller", "deployRun"))
+		}).pipe(
+			Effect.provide(ChildTaskRuntimeLayer),
+			Effect.annotateLogs("caller", "deployRun"),
+		)
 
 		const count = yield* Metric.value(totalTaskCount)
 		const cachedCount = yield* Metric.value(cachedTaskCount)
@@ -531,12 +544,16 @@ const canistersCreateCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
+				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
 				const s = p.spinner()
 				s.start("Creating all canisters")
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* makeTaskLayer()
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -555,7 +572,10 @@ const canistersCreateCommand = defineCommand({
 					if (update.status === "completed") {
 						s.message(`Completed ${update.taskPath}`)
 					}
-				}).pipe(Effect.annotateLogs("caller", "canistersCreateCommand"))
+				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.annotateLogs("caller", "canistersCreateCommand"),
+				)
 				s.stop("Finished creating all canisters")
 			}),
 		)
@@ -585,7 +605,11 @@ const canistersBuildCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -604,7 +628,10 @@ const canistersBuildCommand = defineCommand({
 					if (update.status === "completed") {
 						s.message(`Completed ${update.taskPath}`)
 					}
-				}).pipe(Effect.annotateLogs("caller", "canistersBuildCommand"))
+				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.annotateLogs("caller", "canistersBuildCommand"),
+				)
 				s.stop("Finished building all canisters")
 			}),
 		)
@@ -634,7 +661,11 @@ const canistersBindingsCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:bindings")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -656,6 +687,7 @@ const canistersBindingsCommand = defineCommand({
 						s.message(`Completed ${update.taskPath}`)
 					}
 				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.annotateLogs("caller", "canistersBindingsCommand"),
 				)
 
@@ -689,7 +721,11 @@ const canistersInstallCommand = defineCommand({
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
 				const tasksWithPath = (yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -709,6 +745,7 @@ const canistersInstallCommand = defineCommand({
 						s.message(`Completed ${update.taskPath}`)
 					}
 				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.annotateLogs("caller", "canistersInstallCommand"),
 				)
 
@@ -1023,6 +1060,11 @@ const canisterCommand = defineCommand({
 			}).runPromise(
 				Effect.gen(function* () {
 					const { taskTree } = yield* ICEConfigService
+					const { runtime, taskLayer } = yield* makeTaskLayer()
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime,
+						taskLayer,
+					})
 					const canisterScopesWithPath = yield* filterNodes(
 						taskTree,
 						(node) =>
@@ -1088,6 +1130,7 @@ const canisterCommand = defineCommand({
 							}
 						},
 					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
 						Effect.annotateLogs(
 							"caller",
 							"canistersCanisterCommand",
@@ -1135,6 +1178,11 @@ const taskCommand = defineCommand({
 			}).runPromise(
 				Effect.gen(function* () {
 					const { taskTree } = yield* ICEConfigService
+					const { runtime, taskLayer } = yield* makeTaskLayer()
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime,
+						taskLayer,
+					})
 					const tasksWithPath = yield* filterNodes(
 						taskTree,
 						(node) =>
@@ -1176,6 +1224,7 @@ const taskCommand = defineCommand({
 							}
 						},
 					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
 						Effect.annotateLogs("caller", "canistersTaskCommand"),
 					)
 					s.stop(`Completed ${task}`)

@@ -131,8 +131,8 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	progressCb: (update: ProgressUpdate<unknown>) => void,
 ) {
 	const parentSpan = yield* Effect.currentSpan
-	const { taskLayer } = yield* makeTaskLayer()
-	const runtime = ManagedRuntime.make(taskLayer)
+	// const { taskLayer } = yield* makeTaskLayer()
+	// const runtime = ManagedRuntime.make(taskLayer)
 	const defaultConfig = yield* DefaultConfig
 	const appDir = yield* Config.string("APP_DIR")
 	const { path: iceDir } = yield* IceDir
@@ -174,6 +174,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 
 	// TODO: telemetry
 	// Pass down the same runtime to the child task
+	const { runtime, taskLayer } = yield* TaskRuntime
 	const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 		runtime,
 		taskLayer,
@@ -183,9 +184,8 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	return {
 		...defaultConfig,
 		taskPath,
-		// TODO: add caching?
+		// TODO: add caching options?
 		// TODO: wrap with proxy?
-		// TODO: needs to use same runtime
 		// runTask: asyncRunTask,
 		runTask: async <T extends Task>(
 			task: T,
@@ -194,9 +194,9 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 			const result = await runtime.runPromise(
 				runTask(task, args, progressCb).pipe(
 					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.annotateLogs("caller", "taskCtx.runTask"),
 					Effect.annotateLogs("taskPath", taskPath),
 					Effect.withParentSpan(parentSpan),
+					Effect.withConcurrency("unbounded"),
 				),
 			)
 			return result

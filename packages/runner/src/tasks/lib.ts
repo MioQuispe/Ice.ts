@@ -548,6 +548,12 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 	}
 	const taskEffects = EffectArray.map(tasks, (task) =>
 		Effect.fn("task_execute_effect")(function* () {
+			const taskPath = yield* getTaskPathById(task.id)
+			yield* Effect.annotateCurrentSpan({
+				taskPath,
+				dependencies: Object.keys(task.dependencies),
+			})
+			progressCb({ taskId: task.id, taskPath, status: "starting" })
 			const dependencyResults: Record<
 				string,
 				{
@@ -564,17 +570,11 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					dependencyResults[dependencyName] = depResult
 				}
 			}
-			const taskPath = yield* getTaskPathById(task.id)
-			yield* Effect.annotateCurrentSpan({
-				taskPath,
-			})
-			progressCb({ taskId: task.id, taskPath, status: "starting" })
 
-			// TODO: no cliTaskArgs for child tasks
 			const argsMap = yield* resolveArgsMap(task)
 
 			yield* Effect.annotateCurrentSpan({
-				argsMap,
+				args: argsMap,
 			})
 			const taskCtx = yield* makeTaskCtx(
 				taskPath,
@@ -587,7 +587,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			const maybeCachedTask = isCachedTask(task)
 
 			yield* Effect.annotateCurrentSpan({
-				isCached: Option.isSome(maybeCachedTask),
+				hasCaching: Option.isSome(maybeCachedTask),
 			})
 			return yield* Option.match(maybeCachedTask, {
 				onSome: (cachedTask) =>
@@ -601,10 +601,26 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								})
 							},
 						})
+						yield* Effect.annotateCurrentSpan({
+                            // installTask specific:
+							...("computedMode" in input
+								? { 
+                                    computedMode: input["computedMode"],
+                                    resolvedMode: input["resolvedMode"]
+                                }
+								: {}),
+						})
 
 						let cacheKey: string = cachedTask.computeCacheKey(input)
 
+						yield* Effect.annotateCurrentSpan({
+							cacheKey: cacheKey,
+						})
+
 						const maybeInflight = yield* inflightTasks.get(cacheKey)
+						yield* Effect.annotateCurrentSpan({
+							inflight: Option.isSome(maybeInflight),
+						})
 
 						if (Option.isSome(maybeInflight)) {
 							const inflight = maybeInflight.value
@@ -649,6 +665,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 										},
 									})
 								: false
+						yield* Effect.annotateCurrentSpan({
+							revalidate: revalidate,
+						})
 
 						const cacheHit =
 							!revalidate && (yield* taskRegistry.has(cacheKey))
@@ -656,12 +675,8 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						const hasCacheKey = yield* taskRegistry.has(cacheKey)
 						// annotate span so tests can differentiate cache hits
 						yield* Effect.annotateCurrentSpan({
-							taskPath,
-							...(input ? input : {}),
 							cacheHit: cacheHit,
 							hasCacheKey: hasCacheKey,
-							cacheKey: cacheKey,
-							revalidate: revalidate,
 						})
 
 						if (cacheHit) {
@@ -675,7 +690,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								encodingFormat,
 							)
 							yield* Effect.annotateCurrentSpan({
-								decoding: !!Option.isSome(maybeResult),
+								decodedResult: Option.isSome(maybeResult),
 							})
 							if (Option.isSome(maybeResult)) {
 								const encodedResult = maybeResult.value
@@ -697,7 +712,8 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 											error,
 										})
 									},
-								})
+								}).pipe(Effect.withSpan("cached_task_decode"))
+
 								const result = decodedResult
 								yield* Effect.logDebug(
 									"decoded result:",
@@ -730,12 +746,12 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 										error,
 									})
 								},
-							})
-							// TODO: fix. maybe not json stringify?
-							yield* Effect.annotateCurrentSpan({
-								encoding: result,
-							})
-							yield* Effect.logDebug("encoding result:", result)
+							}).pipe(Effect.withSpan("cached_task_effect"))
+
+							yield* Effect.logDebug(
+								"encoding task effect result",
+								// result,
+							)
 							const encodedResult = yield* Effect.tryPromise({
 								try: () =>
 									cachedTask.encode(taskCtx, result, input),
@@ -745,13 +761,14 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 										error,
 									})
 								},
-							})
+							}).pipe(Effect.withSpan("cached_task_encode"))
+
 							yield* Effect.logDebug(
 								"encoded result",
 								"with type:",
 								typeof encodedResult,
-								"with value:",
-								encodedResult,
+								// "with value:",
+								// encodedResult,
 							)
 							yield* taskRegistry.set(cacheKey, encodedResult)
 							yield* Deferred.succeed(inFlightDef, result)
@@ -767,6 +784,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				onNone: () =>
 					Effect.gen(function* () {
 						yield* uncachedTaskCount(Effect.succeed(1))
+
 						const result = yield* Effect.tryPromise({
 							try: () => task.effect(taskCtx),
 							catch: (error) => {
@@ -775,7 +793,8 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 									error,
 								})
 							},
-						})
+						}).pipe(Effect.withSpan("uncached_task_effect"))
+
 						return {
 							cacheKey: undefined,
 							result,
@@ -801,9 +820,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						result: taskResult.result,
 					})
 
-					yield* Effect.annotateCurrentSpan({
-						result: taskResult.result,
-					})
+					// yield* Effect.annotateCurrentSpan({
+					// 	result: taskResult.result,
+					// })
 					// TODO: dont set for deduplicated tasks?
 					yield* totalTaskCount(Effect.succeed(1))
 					return taskResult
