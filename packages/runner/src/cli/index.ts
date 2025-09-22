@@ -29,6 +29,7 @@ import {
 	TaskRuntimeError,
 	TaskArgsParseError,
 	resolveArg,
+    inflightTaskCount,
 } from "../tasks/lib.js"
 import type { PositionalParam, NamedParam, Task } from "../types/types.js"
 import { task } from "../builders/task.js"
@@ -51,7 +52,12 @@ import { Moc } from "../services/moc.js"
 import { picReplicaImpl } from "../services/pic/pic.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type { ICEConfig, ICECtx } from "../types/types.js"
-import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
+import {
+	BatchSpanProcessor,
+	InMemorySpanExporter,
+	SimpleSpanProcessor,
+	SpanExporter,
+} from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import type { Scope, TaskTree } from "../types/types.js"
 export { Opt } from "../types/types.js"
@@ -86,7 +92,7 @@ export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
 	yield* Effect.logDebug("Task found", taskPath)
 	return yield* runTask(task, argsMap, progressCb).pipe(
 		Effect.annotateLogs("caller", "runTaskByPath"),
-        Effect.withConcurrency("unbounded"),
+		Effect.withConcurrency("unbounded"),
 	)
 })
 
@@ -147,10 +153,12 @@ const logLevelMap = {
 type MakeCliRuntimeArgs = {
 	globalArgs: { network: string; logLevel: string }
 	// fix type
+	telemetryExporter?: SpanExporter
 }
 
 export const makeCliRuntime = ({
 	globalArgs: rawGlobalArgs,
+	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
 	const globalArgs = GlobalArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
@@ -172,9 +180,12 @@ export const makeCliRuntime = ({
 		logLevel: logLevelMap[globalArgs.logLevel],
 	}).pipe(Layer.provide(NodeContext.layer))
 
+	// const telemetryExporter = new OTLPTraceExporter()
+	// const spanProcessor = new BatchSpanProcessor(telemetryExporter)
+	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
 	const telemetryConfig = {
 		resource: { serviceName: "ice" },
-		spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
+		spanProcessor,
 		shutdownTimeout: undefined,
 		metricReader: undefined,
 		logRecordProcessor: undefined,
@@ -373,8 +384,10 @@ const runCommand = defineCommand({
 			positionalArgs,
 			namedArgs,
 		}
+		const telemetryExporter = new OTLPTraceExporter()
 		await makeCliRuntime({
 			globalArgs,
+			telemetryExporter,
 		}).runPromise(
 			Effect.gen(function* () {
 				const { runtime, taskLayer } = yield* makeTaskLayer()
@@ -392,18 +405,6 @@ const runCommand = defineCommand({
 							const uncachedCount =
 								yield* Metric.value(uncachedTaskCount)
 							const hitCount = yield* Metric.value(cacheHitCount)
-							console.log(
-								"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! task metrics:",
-								"total:",
-								count,
-								"cached:",
-								cachedCount,
-								"uncached:",
-								uncachedCount,
-								"cache hits:",
-								hitCount,
-								"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
-							)
 						}),
 					),
 				)
@@ -448,6 +449,7 @@ const deployRun = async ({
 		network,
 		logLevel,
 	}
+	const telemetryExporter = new InMemorySpanExporter()
 	// TODO: convert to task
 	const program = Effect.fn("deploy")(function* () {
 		const { taskTree } = yield* ICEConfigService
@@ -502,18 +504,81 @@ const deployRun = async ({
 		const cachedCount = yield* Metric.value(cachedTaskCount)
 		const uncachedCount = yield* Metric.value(uncachedTaskCount)
 		const hitCount = yield* Metric.value(cacheHitCount)
-		console.log(
-			"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! task metrics:",
-			"total:",
-			count.count,
-			"cached:",
-			cachedCount.count,
-			"uncached:",
-			uncachedCount.count,
-			"cache hits:",
-			hitCount.count,
-			"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",
+		const inflightCount = yield* Metric.value(inflightTaskCount)
+
+		// TODO: ?? what is happening
+		const spans = telemetryExporter.getFinishedSpans()
+		const taskExecuteEffects = spans.filter(
+			(span) => span.name === "task_execute_effect",
 		)
+		const uncachedTasks = taskExecuteEffects.filter(
+			(span) => span.attributes?.["hasCaching"] === false,
+		)
+		const cachedTasks = taskExecuteEffects.filter(
+			(span) => span.attributes?.["hasCaching"] === true,
+		)
+		const cacheHits = taskExecuteEffects.filter(
+			(span) => span.attributes?.["cacheHit"] === true,
+		)
+        const cacheMisses = taskExecuteEffects.filter(
+			(span) => span.attributes?.["cacheHit"] === false,
+		)
+		const revalidates = taskExecuteEffects.filter(
+			(span) => span.attributes?.["revalidate"] === true,
+		)
+		const inflightTasks = taskExecuteEffects.filter(
+			(span) => span.attributes?.["inflight"] === true,
+		)
+		// console.log("spans", spans)
+
+		// TODO: get spans
+		yield* Effect.logDebug(
+			[
+				"",
+				"",
+				"*** Task Metrics ***",
+				"",
+				`total: ${count.count}`,
+				`cached: ${cachedCount.count}`,
+				`uncached: ${uncachedCount.count}`,
+				`cache hits: ${hitCount.count}`,
+				`deduped inflight tasks: ${inflightCount.count}`,
+				"",
+				"************************",
+				"",
+				"",
+				"*** Task Details ***",
+				"",
+				`uncached tasks:`,
+				"",
+				`${uncachedTasks.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+				"",
+				`cached tasks:`,
+				"",
+				`${cachedTasks.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+				"",
+				`cache hits:`,
+				"",
+				`${cacheHits.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+                `cache misses:`,
+                `${cacheMisses.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+				"",
+				`revalidates:`,
+				"",
+				`${revalidates.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+				"",
+				`deduped inflight tasks:`,
+				"",
+				`${inflightTasks.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+			].join("\n"),
+		)
+		// telemetryExporter.reset()
 	})()
 	// .pipe(
 	// 	// TODO: Task has any as error type
@@ -521,6 +586,7 @@ const deployRun = async ({
 	// )
 	await makeCliRuntime({
 		globalArgs,
+		telemetryExporter,
 	}).runPromise(program)
 	s.stop("Deployed all canisters")
 }

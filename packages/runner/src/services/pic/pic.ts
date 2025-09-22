@@ -316,7 +316,6 @@ export const picReplicaImpl = Effect.gen(function* () {
 								throw new Error("Unknown canister status")
 						}
 					} catch (error) {
-						console.log("pic.ts status error", error)
 						if (
 							error instanceof Error &&
 							(error.message.includes(
@@ -584,6 +583,8 @@ export const picReplicaImpl = Effect.gen(function* () {
 						}),
 				})
 			}),
+		// getCanisterStatus: yield* Effect.cachedFunction(getCanisterStatus),
+		// getCanisterInfo: yield* Effect.cachedFunction(getCanisterInfo),
 		getCanisterStatus,
 		getCanisterInfo,
 		createActor: <_SERVICE>({

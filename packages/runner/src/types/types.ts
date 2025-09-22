@@ -186,22 +186,23 @@ export type CachedTask<
 	R = unknown,
 > = Task<A, D, P> & {
 	input: (taskCtx: TaskCtxShape) => Promise<Input> // optional input
+	computeCacheKey: (input: Input) => string
 	revalidate?: (
 		taskCtx: TaskCtxShape,
 		args: { input: Input },
 	) => Promise<boolean>
+	// TODO: rename to codec and create adapters for zod etc.
+	encodingFormat: "string" | "uint8array"
 	encode: (
 		taskCtx: TaskCtxShape,
 		value: A,
 		input: Input,
 	) => Promise<string | Uint8Array<ArrayBufferLike>>
-	encodingFormat: "string" | "uint8array"
 	decode: (
 		taskCtx: TaskCtxShape,
 		value: string | Uint8Array<ArrayBufferLike>,
 		input: Input,
 	) => Promise<A>
-	computeCacheKey: (input: Input) => string
 }
 
 // TODO: just use namespaces instead

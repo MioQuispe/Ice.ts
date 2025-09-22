@@ -1,20 +1,21 @@
 import { KeyValueStore } from "@effect/platform"
 import { PlatformError } from "@effect/platform/Error"
 import { Context, Effect, Layer, Option, Deferred } from "effect"
+import { TaskExecResult } from "../tasks/lib.js"
 
 export class InFlight extends Context.Tag("InFlight")<
 	InFlight,
 	{
 		readonly set: (
 			cacheKey: string,
-			result: Deferred.Deferred<unknown, unknown>,
+			result: Deferred.Deferred<TaskExecResult<unknown>, unknown>,
 		) => Effect.Effect<void, PlatformError>
 		readonly remove: (
 			cacheKey: string,
 		) => Effect.Effect<void, PlatformError>
 		readonly get: (
 			cacheKey: string,
-		) => Effect.Effect<Option.Option<Deferred.Deferred<unknown, unknown>>, PlatformError>
+		) => Effect.Effect<Option.Option<Deferred.Deferred<TaskExecResult<unknown>, unknown>>, PlatformError>
 		readonly has: (
 			cacheKey: string,
 		) => Effect.Effect<boolean, PlatformError>
@@ -27,7 +28,7 @@ export class InFlight extends Context.Tag("InFlight")<
 			// const inflight = yield* KeyValueStore.KeyValueStore
 			const inflight = new Map<
 				string,
-				Deferred.Deferred<unknown, unknown>
+				Deferred.Deferred<TaskExecResult<unknown>, unknown>
 			>()
 			// const store = kv.forSchema
 			// TODO: cant use symbol as key. use taskPath?

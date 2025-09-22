@@ -16,7 +16,9 @@ export class TaskRegistry extends Context.Tag("TaskRegistry")<
 			Option.Option<string | Uint8Array<ArrayBufferLike>>,
 			PlatformError
 		>
-		readonly has: (cacheKey: string) => Effect.Effect<boolean, PlatformError>
+		readonly has: (
+			cacheKey: string,
+		) => Effect.Effect<boolean, PlatformError>
 	}
 >() {
 	static Live = Layer.effect(
@@ -25,6 +27,8 @@ export class TaskRegistry extends Context.Tag("TaskRegistry")<
 			// TODO: persist certain task results?
 			// const kv = new Map<string, unknown>()
 			// TODO: cant use symbol as key. use taskPath?
+
+            // TODO: use built-in Cache from effect?
 			const kv = yield* KeyValueStore.KeyValueStore
 			return {
 				set: (cacheKey, result) =>
@@ -37,11 +41,18 @@ export class TaskRegistry extends Context.Tag("TaskRegistry")<
 						//     return Effect.fail(error)
 						//   },
 						// })
-						yield* Effect.logDebug("writing to cache:", cacheKey, result)
+						yield* Effect.logDebug(
+							"writing to cache:",
+							cacheKey,
+							// , result
+						)
 						yield* kv.set(cacheKey, result)
 						// kv.set(cacheKey, result)
 					}),
-				get: (cacheKey: string, format: "string" | "uint8array" = "string") =>
+				get: (
+					cacheKey: string,
+					format: "string" | "uint8array" = "string",
+				) =>
 					Effect.gen(function* () {
 						// return yield* kv.get(cacheKey)
 						if (format === "uint8array") {

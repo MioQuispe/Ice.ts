@@ -35,6 +35,7 @@ import type {
 } from "../types/types.js"
 import { makeTaskCtx, type TaskCtxShape } from "../services/taskCtx.js"
 import { InFlight } from "../services/inFlight.js"
+import { hashJson } from "../builders/lib.js"
 
 export type ParamsToArgs<
 	Params extends Record<string, NamedParam | PositionalParam>,
@@ -421,6 +422,13 @@ export class TaskRuntimeError extends Data.TaggedError("TaskRuntimeError")<{
 	error?: unknown
 }> {}
 
+export type TaskExecResult<A> = {
+	cacheKey?: string
+	result: A
+	taskId: symbol
+	taskPath: string
+}
+
 export const isCachedTask = match
 	.in<Task | CachedTask>()
 	.case(
@@ -511,6 +519,10 @@ export const cachedTaskCount = Metric.counter("cached_task_count", {
 	description: "Number of cached tasks executed",
 	// labelNames: ["task_name"],
 }).pipe(Metric.withConstantInput(1))
+export const inflightTaskCount = Metric.counter("inflight_task_count", {
+	description: "Number of inflight tasks deduped",
+	// labelNames: ["task_name"],
+}).pipe(Metric.withConstantInput(1))
 export const cacheHitCount = Metric.counter("cache_hit_count", {
 	description: "Number of cache hits",
 	// labelNames: ["task_name"],
@@ -533,14 +545,14 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 	const deferredMap = new Map<
 		symbol,
 		Deferred.Deferred<{
-			cacheKey: string | undefined
+			cacheKey?: string
 			result: unknown
 		}>
 		// unknown
 	>()
 	for (const task of tasks) {
 		const deferred = yield* Deferred.make<{
-			cacheKey: string | undefined
+			cacheKey?: string
 			result: unknown
 		}>()
 		// unknown
@@ -548,16 +560,43 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 	}
 	const taskEffects = EffectArray.map(tasks, (task) =>
 		Effect.fn("task_execute_effect")(function* () {
+			yield* Effect.logDebug("starting task effect")
 			const taskPath = yield* getTaskPathById(task.id)
 			yield* Effect.annotateCurrentSpan({
 				taskPath,
 				dependencies: Object.keys(task.dependencies),
 			})
 			progressCb({ taskId: task.id, taskPath, status: "starting" })
+
+			// TODO: not sure if this is correct
+			const inflightKey = hashJson({
+				taskPath: taskPath,
+				taskArgs: task.args,
+			})
+			const maybeInflight = yield* inflightTasks.get(inflightKey)
+			yield* Effect.annotateCurrentSpan({
+				inflight: Option.isSome(maybeInflight),
+			})
+
+			if (Option.isSome(maybeInflight)) {
+				const inflight = maybeInflight.value
+				const taskResult = yield* Deferred.await(inflight).pipe(
+					Effect.catchAll((error) => {
+						return new TaskRuntimeError({
+							message: "Error awaiting inflight task",
+							error,
+						})
+					}),
+				)
+				console.log("inflight task found", taskPath)
+				yield* inflightTaskCount(Effect.succeed(1))
+				return taskResult
+			}
+
 			const dependencyResults: Record<
 				string,
 				{
-					cacheKey: string | undefined
+					cacheKey?: string
 					result: unknown
 				}
 			> = {}
@@ -570,9 +609,10 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					dependencyResults[dependencyName] = depResult
 				}
 			}
+			yield* Effect.logDebug("resolved dependencies")
 
 			const argsMap = yield* resolveArgsMap(task)
-
+			yield* Effect.logDebug("resolved args map", argsMap)
 			yield* Effect.annotateCurrentSpan({
 				args: argsMap,
 			})
@@ -583,6 +623,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				dependencyResults,
 				progressCb,
 			)
+			yield* Effect.logDebug("made task ctx")
 
 			const maybeCachedTask = isCachedTask(task)
 
@@ -592,6 +633,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			return yield* Option.match(maybeCachedTask, {
 				onSome: (cachedTask) =>
 					Effect.gen(function* () {
+						yield* Effect.logDebug("getting cached task input")
 						const input = yield* Effect.tryPromise({
 							try: () => cachedTask.input(taskCtx),
 							catch: (error) => {
@@ -602,52 +644,30 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							},
 						})
 						yield* Effect.annotateCurrentSpan({
-                            // installTask specific:
+							input: true,
+							// installTask specific:
 							...("computedMode" in input
-								? { 
-                                    computedMode: input["computedMode"],
-                                    resolvedMode: input["resolvedMode"]
-                                }
+								? {
+										computedMode: input["computedMode"],
+										resolvedMode: input["resolvedMode"],
+									}
 								: {}),
 						})
-
+						yield* Effect.logDebug("computing cache key")
 						let cacheKey: string = cachedTask.computeCacheKey(input)
 
 						yield* Effect.annotateCurrentSpan({
 							cacheKey: cacheKey,
 						})
 
-						const maybeInflight = yield* inflightTasks.get(cacheKey)
-						yield* Effect.annotateCurrentSpan({
-							inflight: Option.isSome(maybeInflight),
-						})
-
-						if (Option.isSome(maybeInflight)) {
-							const inflight = maybeInflight.value
-							const result = yield* Deferred.await(inflight).pipe(
-								Effect.catchAll((error) => {
-									return new TaskRuntimeError({
-										message: "Error awaiting inflight task",
-										error,
-									})
-								}),
-							)
-							return {
-								cacheKey,
-								result,
-								taskId: task.id,
-								taskPath,
-							}
-						}
-
 						// we want to do it after deduping
 						yield* cachedTaskCount(Effect.succeed(1))
 
 						const inFlightDef = yield* Deferred.make<
-							unknown,
+							TaskExecResult<unknown>,
 							unknown
 						>()
-						yield* inflightTasks.set(cacheKey, inFlightDef)
+						yield* inflightTasks.set(inflightKey, inFlightDef)
 
 						const revalidate =
 							"revalidate" in cachedTask
@@ -673,6 +693,15 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							!revalidate && (yield* taskRegistry.has(cacheKey))
 
 						const hasCacheKey = yield* taskRegistry.has(cacheKey)
+
+						yield* Effect.logDebug(
+							"cacheHit",
+							cacheHit,
+							"hasCacheKey",
+							hasCacheKey,
+							"revalidate",
+							revalidate,
+						)
 						// annotate span so tests can differentiate cache hits
 						yield* Effect.annotateCurrentSpan({
 							cacheHit: cacheHit,
@@ -695,8 +724,8 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							if (Option.isSome(maybeResult)) {
 								const encodedResult = maybeResult.value
 								yield* Effect.logDebug(
-									"decoding result:",
-									encodedResult,
+									"decoding result",
+									// encodedResult,
 								)
 								const decodedResult = yield* Effect.tryPromise({
 									try: () =>
@@ -716,17 +745,18 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 
 								const result = decodedResult
 								yield* Effect.logDebug(
-									"decoded result:",
-									decodedResult,
+									"decoded result",
+									// decodedResult,
 								)
-								yield* Deferred.succeed(inFlightDef, result)
-								yield* inflightTasks.remove(cacheKey)
-								return {
+								const taskResult = {
 									cacheKey,
 									result,
 									taskId: task.id,
 									taskPath,
-								}
+								} satisfies TaskExecResult<unknown>
+								yield* Deferred.succeed(inFlightDef, taskResult)
+								yield* inflightTasks.remove(inflightKey)
+								return taskResult
 							} else {
 								// TODO: reading cache failed, why would this happen?
 								// get rid of this and just throw?
@@ -738,6 +768,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								)
 							}
 						} else {
+							yield* Effect.logDebug(
+								"executing cached task effect",
+							)
 							const result = yield* Effect.tryPromise({
 								try: () => cachedTask.effect(taskCtx),
 								catch: (error) => {
@@ -771,20 +804,21 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								// encodedResult,
 							)
 							yield* taskRegistry.set(cacheKey, encodedResult)
-							yield* Deferred.succeed(inFlightDef, result)
-							yield* inflightTasks.remove(cacheKey)
-							return {
+							yield* inflightTasks.remove(inflightKey)
+							const taskResult = {
 								cacheKey,
 								result,
 								taskId: task.id,
 								taskPath,
-							}
+							} satisfies TaskExecResult<unknown>
+							yield* Deferred.succeed(inFlightDef, taskResult)
+							return taskResult
 						}
 					}),
 				onNone: () =>
 					Effect.gen(function* () {
 						yield* uncachedTaskCount(Effect.succeed(1))
-
+						yield* Effect.logDebug("executing uncached task effect")
 						const result = yield* Effect.tryPromise({
 							try: () => task.effect(taskCtx),
 							catch: (error) => {
@@ -796,11 +830,11 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						}).pipe(Effect.withSpan("uncached_task_effect"))
 
 						return {
-							cacheKey: undefined,
+							// cacheKey: undefined,
 							result,
 							taskId: task.id,
 							taskPath,
-						}
+						} satisfies TaskExecResult<unknown>
 					}),
 			})
 		})().pipe(
@@ -824,6 +858,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					// 	result: taskResult.result,
 					// })
 					// TODO: dont set for deduplicated tasks?
+					console.log("total task completed", taskResult.taskPath)
 					yield* totalTaskCount(Effect.succeed(1))
 					return taskResult
 				}),

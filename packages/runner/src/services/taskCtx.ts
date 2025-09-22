@@ -74,7 +74,7 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	readonly depResults: Record<
 		string,
 		{
-			cacheKey: string | undefined
+			cacheKey?: string
 			result: unknown
 		}
 	>
@@ -124,7 +124,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	depResults: Record<
 		string,
 		{
-			cacheKey: string | undefined
+			cacheKey?: string
 			result: unknown
 		}
 	>,

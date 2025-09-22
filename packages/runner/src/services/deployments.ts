@@ -56,11 +56,11 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 						const deployment = yield* kv.get(
 							`${canisterName}:${network}`,
 						)
-						yield* Effect.logDebug("get deployment", {
-							canisterName,
-							network,
-							deployment,
-						})
+						// yield* Effect.logDebug("get deployment", {
+						// 	canisterName,
+						// 	network,
+						// 	deployment,
+						// })
 						const parsedDeployment = Option.map(
 							deployment,
 							(v) => JSON.parse(v) as unknown as Deployment,
