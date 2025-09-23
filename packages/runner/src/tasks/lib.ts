@@ -2,6 +2,7 @@ import type { SignIdentity } from "@dfinity/agent"
 import { StandardSchemaV1 } from "@standard-schema/spec"
 import { match, type } from "arktype"
 import {
+	Cause,
 	Config,
 	Context,
 	Data,
@@ -14,6 +15,7 @@ import {
 	Metric,
 	Option,
 	pipe,
+	Schema,
 } from "effect"
 import {
 	DefaultConfig,
@@ -35,7 +37,9 @@ import type {
 } from "../types/types.js"
 import { makeTaskCtx, type TaskCtxShape } from "../services/taskCtx.js"
 import { InFlight } from "../services/inFlight.js"
-import { hashJson } from "../builders/lib.js"
+import { hashJson, TaskCancelled, isTaskCancelled } from "../builders/lib.js"
+import { FiberFailure } from "effect/Runtime"
+import { Failure, isFailure } from "effect/Exit"
 
 export type ParamsToArgs<
 	Params extends Record<string, NamedParam | PositionalParam>,
@@ -408,7 +412,7 @@ export const topologicalSortTasks = (
 	return sortedTasks
 }
 
-export type ProgressStatus = "starting" | "completed"
+export type ProgressStatus = "starting" | "completed" | "cancelled"
 export type ProgressUpdate<A> = {
 	taskId: symbol
 	taskPath: string
@@ -424,7 +428,7 @@ export class TaskRuntimeError extends Data.TaggedError("TaskRuntimeError")<{
 
 export type TaskExecResult<A> = {
 	cacheKey?: string
-	result: A
+	result: A | TaskCancelled
 	taskId: symbol
 	taskPath: string
 }
@@ -511,6 +515,33 @@ export const logDetailedError = (
 		)
 	})
 
+const unwrapTaggedFromCause = (
+	cause: any,
+	tag: string,
+): unknown | undefined => {
+	if (!cause || typeof cause !== "object") return undefined
+	switch (cause._tag) {
+		case "Fail":
+			return cause.error && cause.error._tag === tag
+				? cause.error
+				: undefined
+		case "Die":
+			return cause.defect && cause.defect._tag === tag
+				? cause.defect
+				: undefined
+		case "Sequential":
+		case "Parallel":
+			return (
+				unwrapTaggedFromCause(cause.left, tag) ??
+				unwrapTaggedFromCause(cause.right, tag)
+			)
+		case "Traced":
+			return unwrapTaggedFromCause(cause.cause, tag)
+		default:
+			return undefined
+	}
+}
+
 export const totalTaskCount = Metric.counter("total_task_count", {
 	description: "Number of tasks executed",
 	// labelNames: ["task_name"],
@@ -529,6 +560,14 @@ export const cacheHitCount = Metric.counter("cache_hit_count", {
 }).pipe(Metric.withConstantInput(1))
 export const uncachedTaskCount = Metric.counter("uncached_task_count", {
 	description: "Number of uncached tasks executed",
+	// labelNames: ["task_name"],
+}).pipe(Metric.withConstantInput(1))
+export const cancelledTaskCount = Metric.counter("cancelled_task_count", {
+	description: "Number of cancelled tasks executed",
+	// labelNames: ["task_name"],
+}).pipe(Metric.withConstantInput(1))
+export const completedTaskCount = Metric.counter("completed_task_count", {
+	description: "Number of completed tasks executed",
 	// labelNames: ["task_name"],
 }).pipe(Metric.withConstantInput(1))
 
@@ -573,6 +612,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				taskPath: taskPath,
 				taskArgs: task.args,
 			})
+
 			const maybeInflight = yield* inflightTasks.get(inflightKey)
 			yield* Effect.annotateCurrentSpan({
 				inflight: Option.isSome(maybeInflight),
@@ -588,10 +628,14 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						})
 					}),
 				)
-				console.log("inflight task found", taskPath)
 				yield* inflightTaskCount(Effect.succeed(1))
 				return taskResult
 			}
+			const inFlightDef = yield* Deferred.make<
+				TaskExecResult<unknown>,
+				unknown
+			>()
+			yield* inflightTasks.set(inflightKey, inFlightDef)
 
 			const dependencyResults: Record<
 				string,
@@ -634,7 +678,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				onSome: (cachedTask) =>
 					Effect.gen(function* () {
 						yield* Effect.logDebug("getting cached task input")
-						const input = yield* Effect.tryPromise({
+						const maybeInput = yield* Effect.tryPromise({
 							try: () => cachedTask.input(taskCtx),
 							catch: (error) => {
 								return new TaskRuntimeError({
@@ -643,6 +687,20 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								})
 							},
 						})
+						if (isTaskCancelled(maybeInput)) {
+							yield* cancelledTaskCount(Effect.succeed(1))
+							yield* Effect.annotateCurrentSpan({
+								cancelled: true,
+							})
+							return {
+								result: maybeInput as TaskCancelled,
+								taskId: task.id,
+								taskPath,
+							} satisfies TaskExecResult<TaskCancelled>
+						}
+						// TODO: fucking shit inference
+						const input = maybeInput as Record<string, unknown>
+
 						yield* Effect.annotateCurrentSpan({
 							input: true,
 							// installTask specific:
@@ -662,12 +720,6 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 
 						// we want to do it after deduping
 						yield* cachedTaskCount(Effect.succeed(1))
-
-						const inFlightDef = yield* Deferred.make<
-							TaskExecResult<unknown>,
-							unknown
-						>()
-						yield* inflightTasks.set(inflightKey, inFlightDef)
 
 						const revalidate =
 							"revalidate" in cachedTask
@@ -840,6 +892,16 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 		})().pipe(
 			Effect.flatMap((taskResult) =>
 				Effect.gen(function* () {
+					// TODO: dont set for deduplicated tasks?
+					yield* totalTaskCount(Effect.succeed(1))
+					if (isTaskCancelled(taskResult)) {
+						progressCb({
+							taskId: task.id,
+							taskPath: taskResult.taskPath,
+							status: "cancelled",
+						})
+						return taskResult
+					}
 					// TODO: updates from the task effect? pass in cb?
 					const currentDeferred = deferredMap.get(taskResult.taskId)
 					if (currentDeferred) {
@@ -857,9 +919,6 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					// yield* Effect.annotateCurrentSpan({
 					// 	result: taskResult.result,
 					// })
-					// TODO: dont set for deduplicated tasks?
-					console.log("total task completed", taskResult.taskPath)
-					yield* totalTaskCount(Effect.succeed(1))
 					return taskResult
 				}),
 			),

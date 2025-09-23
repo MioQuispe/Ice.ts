@@ -283,6 +283,7 @@ export const makeMotokoDeployTask = <
 								canisterId,
 								candid: candidPath,
 								wasm: wasmPath,
+								forceReinstall: taskArgs.forceReinstall,
 							}),
 						catch: (error) => {
 							return new TaskError({

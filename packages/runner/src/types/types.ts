@@ -17,7 +17,7 @@ import {
 	type TaskNotFoundError,
 	type TaskRuntimeError,
 } from "../tasks/lib.js"
-import { TaskError } from "../builders/lib.js"
+import { TaskCancelled, TaskError } from "../builders/lib.js"
 import { PlatformError } from "@effect/platform/Error"
 import { DeploymentError } from "../canister.js"
 import { Schema as S } from "effect"
@@ -121,24 +121,6 @@ export interface PositionalParam<T = unknown> extends TaskParam<T> {
 	isFlag: false
 }
 
-// TODO: separate per task...
-export type TaskErrors =
-	| TaskError
-	| PlatformError
-	| DeploymentError
-	| AgentError
-	| TaskNotFoundError
-	| ICEConfigError
-	| ConfigError.ConfigError
-	| CanisterStatusError
-	| CanisterStopError
-	| CanisterDeleteError
-	| CanisterCreateError
-	| CanisterInstallError
-	| MocError
-	| TaskRuntimeError
-	| TaskArgsParseError
-
 export interface Task<
 	out A = unknown,
 	D extends Record<string, Task> = {},
@@ -146,7 +128,7 @@ export interface Task<
 > {
 	_tag: "task"
 	readonly id: symbol // assigned by the builder
-	effect: (ctx: TaskCtxShape) => Promise<A>
+	effect: (ctx: TaskCtxShape) => Promise<A | TaskCancelled>
 	description: string
 	tags: Array<string | symbol>
 	dependsOn: D
@@ -185,7 +167,7 @@ export type CachedTask<
 	E = unknown,
 	R = unknown,
 > = Task<A, D, P> & {
-	input: (taskCtx: TaskCtxShape) => Promise<Input> // optional input
+	input: (taskCtx: TaskCtxShape) => Promise<Input | TaskCancelled> // optional input
 	computeCacheKey: (input: Input) => string
 	revalidate?: (
 		taskCtx: TaskCtxShape,

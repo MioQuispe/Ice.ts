@@ -15,6 +15,7 @@ import {
 	LogLevel,
 	ConfigProvider,
 	Context,
+	Match,
 } from "effect"
 import { readFileSync, realpathSync } from "node:fs"
 import { stat } from "node:fs/promises"
@@ -46,6 +47,10 @@ import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
 import { layerFileSystem } from "@effect/platform/KeyValueStore"
 import { DeploymentsService } from "../services/deployments.js"
+import { confirm } from "@clack/prompts"
+import { Schema } from "effect"
+
+// Schema.TaggedError
 
 const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 	Layer.provide(NodeContext.layer),
@@ -58,7 +63,7 @@ const baseLayer = Layer.mergeAll(
 	// TODO: ??
 	// telemetryLayer,
 	Logger.pretty,
-	Logger.minimumLogLevel(LogLevel.Info),
+	Logger.minimumLogLevel(LogLevel.Debug),
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
 
@@ -66,6 +71,26 @@ export class TaskError extends Data.TaggedError("TaskError")<{
 	message?: string
 	op?: string
 }> {}
+
+export class TaskCancelled extends Schema.TaggedError<TaskCancelled>()(
+	"TaskCancelled",
+	{
+		message: Schema.optional(Schema.String),
+	},
+) {}
+// Schema.tag
+// const parsed = Schema.parse(t, error)
+export const isTaskCancelled = Match.type<unknown>().pipe(
+	Match.when(
+		// fucking bullshit. shit library
+		// Match.tag("TaskCancelled"),
+		{ _tag: "TaskCancelled" },
+		(taskCancelled) => {
+			return taskCancelled as TaskCancelled
+		},
+	),
+	Match.orElse(() => false as const),
+)
 
 export const loadCanisterId = (taskCtx: TaskCtxShape, taskPath: string) =>
 	Effect.gen(function* () {
@@ -1393,6 +1418,17 @@ export const installParams = {
 			return new Uint8Array(Buffer.from(value))
 		},
 	},
+	forceReinstall: {
+		type: type("boolean"),
+		description: "Force reinstall the canister",
+		isFlag: true as const,
+		isOptional: true as const,
+		isVariadic: false as const,
+		default: false as const,
+		name: "forceReinstall",
+		aliases: ["f"],
+		parse: (value: string) => !!value as unknown as boolean,
+	},
 	// TODO: provide defaults. just read from fs by canister name
 	// should we allow passing in wasm bytes?
 	wasm: {
@@ -2106,6 +2142,26 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const upgradeArgsDigest = hashConfig(upgradeArgs.fn)
 					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
 					const resolvedMode = yield* resolveMode(taskCtx, canisterId)
+					if (
+						resolvedMode === "reinstall" &&
+						!taskArgs.forceReinstall
+					) {
+						const confirmResult = yield* Effect.tryPromise({
+							try: () =>
+								taskCtx.prompts.confirm({
+									message: `Are you sure you want to reinstall the canister (${canisterName})? This will wipe all state.`,
+									initialValue: false,
+								}),
+							catch: (error) => {
+								return new TaskError({ message: String(error) })
+							},
+						})
+						if (!confirmResult) {
+							return new TaskCancelled({
+								message: "Reinstall cancelled",
+							})
+						}
+					}
 					const computedMode =
 						resolvedMode === "upgrade"
 							? ("upgrade" as const)

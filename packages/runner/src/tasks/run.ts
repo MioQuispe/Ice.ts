@@ -12,6 +12,7 @@ import {
 	topologicalSortTasks,
 	ParamsToArgs,
 } from "./lib.js"
+import { isTaskCancelled, TaskCancelled } from "../builders/lib.js"
 
 export interface RunTaskOptions {
 	forceRun?: boolean
@@ -106,10 +107,10 @@ export const runTasks = Effect.fn("run_tasks")(function* <T extends Task>(
 	const taskEffects = yield* makeTaskEffects(sortedTasks, progressCb)
 	const results = yield* Effect.all(taskEffects, {
 		concurrency: "inherit",
-	}).pipe(
-        Effect.annotateLogs("caller", "runTasks"),
-    )
+	})
 	yield* Effect.logDebug("Tasks executed")
-	// TODO: get all input task results
-	return results.map((r) => r.result) as Array<TaskSuccess<T>>
+	// const cancelledResults = results.filter((r) => isTaskCancelled(r.result))
+	const finishedResults = results.filter((r) => !isTaskCancelled(r.result))
+
+	return finishedResults.map((r) => r.result) as Array<TaskSuccess<T>>
 })

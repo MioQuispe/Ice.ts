@@ -25,6 +25,8 @@ import { runTask } from "../tasks/run.js"
 import { IceDir } from "./iceDir.js"
 import { Deployment, DeploymentsService } from "./deployments.js"
 import { CanisterIdsService } from "./canisterIds.js"
+import { PromptsService } from "./prompts.js"
+import { ConfirmOptions } from "@clack/prompts"
 
 export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	readonly taskTree: TaskTree
@@ -96,7 +98,7 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 			deployment: Deployment
 		}) => Promise<void>
 	}
-	canisterIds: {
+	readonly canisterIds: {
 		// readonly canisterIds: CanisterIds
 		/**
 		 * Retrieves the current in-memory canister IDs.
@@ -114,6 +116,9 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 		 * Removes the canister ID for the given canister name.
 		 */
 		removeCanisterId: (canisterName: string) => Promise<void>
+	}
+	readonly prompts: {
+		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
 	}
 }
 
@@ -181,6 +186,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 	})
 	const Deployments = yield* DeploymentsService
 	const CanisterIds = yield* CanisterIdsService
+	const Prompts = yield* PromptsService
 	return {
 		...defaultConfig,
 		taskPath,
@@ -239,6 +245,12 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 				await runtime.runPromise(
 					CanisterIds.removeCanisterId(canisterName),
 				)
+			},
+		},
+		prompts: {
+			confirm: async (confirmOptions) => {
+				const result = await runtime.runPromise(Prompts.confirm(confirmOptions))
+				return result
 			},
 		},
 	} satisfies TaskCtxShape

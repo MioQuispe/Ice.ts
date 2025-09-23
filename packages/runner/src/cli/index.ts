@@ -30,6 +30,7 @@ import {
 	TaskArgsParseError,
 	resolveArg,
     inflightTaskCount,
+    cancelledTaskCount,
 } from "../tasks/lib.js"
 import type { PositionalParam, NamedParam, Task } from "../types/types.js"
 import { task } from "../builders/task.js"
@@ -71,6 +72,7 @@ import {
 	TelemetryConfig,
 } from "../services/telemetryConfig.js"
 import { DeploymentsService } from "../services/deployments.js"
+import { PromptsService } from "../services/prompts.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -235,6 +237,7 @@ export const makeCliRuntime = ({
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
+		PromptsService.Live,
 		// TaskRuntimeLayer.pipe(
 		// 	Layer.provide(NodeContext.layer),
 		// 	Layer.provide(IceDirLayer),
@@ -505,6 +508,7 @@ const deployRun = async ({
 		const uncachedCount = yield* Metric.value(uncachedTaskCount)
 		const hitCount = yield* Metric.value(cacheHitCount)
 		const inflightCount = yield* Metric.value(inflightTaskCount)
+        const cancelledCount = yield* Metric.value(cancelledTaskCount)
 
 		// TODO: ?? what is happening
 		const spans = telemetryExporter.getFinishedSpans()
@@ -529,6 +533,12 @@ const deployRun = async ({
 		const inflightTasks = taskExecuteEffects.filter(
 			(span) => span.attributes?.["inflight"] === true,
 		)
+        const cancelledTasks = taskExecuteEffects.filter(
+			(span) => span.attributes?.["cancelled"] === true,
+		)
+        const completedTasks = taskExecuteEffects.filter(
+			(span) => span.attributes?.["cancelled"] === false,
+		)
 		// console.log("spans", spans)
 
 		// TODO: get spans
@@ -543,6 +553,8 @@ const deployRun = async ({
 				`uncached: ${uncachedCount.count}`,
 				`cache hits: ${hitCount.count}`,
 				`deduped inflight tasks: ${inflightCount.count}`,
+                // `completed: ${completedTasks.count}`,
+				`cancelled: ${cancelledCount.count}`,
 				"",
 				"************************",
 				"",
@@ -575,6 +587,11 @@ const deployRun = async ({
 				`deduped inflight tasks:`,
 				"",
 				`${inflightTasks.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
+				`cancelled tasks:`,
+				"",
+				`${cancelledTasks.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				"",
 				"",
 			].join("\n"),
 		)

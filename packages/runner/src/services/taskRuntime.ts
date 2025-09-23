@@ -47,6 +47,7 @@ import { PlatformError } from "@effect/platform/Error"
 import { DeploymentsService } from "./deployments.js"
 import { DfxReplica } from "./dfx.js"
 import { configLayer } from "./config.js"
+import { PromptsService } from "./prompts.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -89,7 +90,8 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| ICEConfigService
 			| TelemetryConfig
 			| InFlight
-			| IceDir,
+			| IceDir
+			| PromptsService,
 			PlatformError | AgentError | TaskRuntimeError | MocError
 		>
 		taskLayer: Layer.Layer<
@@ -235,6 +237,8 @@ export const makeTaskLayer = () =>
 		const CanisterIdsLayer = Layer.succeed(CanisterIdsService, CanisterIds)
 		const Deployments = yield* DeploymentsService
 		const DeploymentsLayer = Layer.succeed(DeploymentsService, Deployments)
+		const Prompts = yield* PromptsService
+		const PromptsLayer = Layer.succeed(PromptsService, Prompts)
 
 		const TaskRegistryService = yield* TaskRegistry
 		const TaskRegistryLayer = Layer.succeed(
@@ -264,6 +268,7 @@ export const makeTaskLayer = () =>
 			configLayer,
 			NodeContext.layer,
 			DeploymentsLayer,
+			PromptsLayer,
 		)
 		const taskRuntime = ManagedRuntime.make(taskLayer)
 		// const ChildTaskRunner = Layer.succeed(TaskRuntime, {

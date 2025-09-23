@@ -97,6 +97,17 @@ export const deployParams = {
 		aliases: ["m"],
 		parse: (value: string) => value as InstallModes,
 	},
+	forceReinstall: {
+		type: type("boolean"),
+		description: "Force reinstall the canister",
+		isFlag: true as const,
+		isOptional: true as const,
+		isVariadic: false as const,
+		default: false as const,
+		name: "forceReinstall",
+		aliases: ["f"],
+		parse: (value: string) => !!value as unknown as boolean,
+	},
 	args: {
 		// TODO: maybe not Uint8Array?
 		type: type("TypedArray.Uint8"),
@@ -272,6 +283,7 @@ export const makeCustomDeployTask = <_SERVICE>(
 								mode: taskArgs.mode,
 								canisterId,
 								wasm: wasmPath,
+								forceReinstall: taskArgs.forceReinstall,
 							}),
 						catch: (error) => {
 							return new TaskError({
@@ -451,7 +463,9 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 						iceDir,
 						"canisters",
 						canisterName,
-						isGzipped ? `${canisterName}.wasm.gz` : `${canisterName}.wasm`,
+						isGzipped
+							? `${canisterName}.wasm.gz`
+							: `${canisterName}.wasm`,
 					)
 					yield* Effect.logDebug(
 						"Reading wasm file",
@@ -602,7 +616,7 @@ export class CustomCanisterBuilder<
 		this.#upgradeArgs = upgradeArgs
 	}
 
-    // TODO: does nothing? what do we even use it for?
+	// TODO: does nothing? what do we even use it for?
 	create(
 		canisterConfigOrFn:
 			| Config
@@ -637,7 +651,7 @@ export class CustomCanisterBuilder<
 		)
 	}
 
-    // TODO: does nothing? what do we even use it for?
+	// TODO: does nothing? what do we even use it for?
 	build(
 		canisterConfigOrFn:
 			| Config
@@ -947,9 +961,7 @@ export const makeCustomCanister = <
 			// upgrade: makeUpgradeTask<U, {}, {}, _SERVICE>(builderRuntime),
 			stop: makeStopTask(builderRuntime),
 			remove: makeRemoveTask(builderRuntime),
-			deploy: makeCustomDeployTask<_SERVICE>(
-				builderRuntime,
-			),
+			deploy: makeCustomDeployTask<_SERVICE>(builderRuntime),
 			status: makeCanisterStatusTask(builderRuntime, [Tags.CUSTOM]),
 		},
 	} satisfies CustomCanisterScope<_SERVICE, I, U, {}, {}>
