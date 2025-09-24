@@ -43,23 +43,45 @@ import { Failure, isFailure } from "effect/Exit"
 
 export type ParamsToArgs<
 	Params extends Record<string, NamedParam | PositionalParam>,
-> = {
-	[K in keyof Params as Params[K] extends
-		| { isOptional: false }
-		| { default: unknown }
+> = [keyof Params] extends [never]
+	? Record<string, never>
+	: {
+			[K in keyof Params as Params[K] extends { isOptional: false }
+				? K
+				: never]: ParamOutput<Params[K]>
+		} & {
+			[K in keyof Params as Params[K] extends { isOptional: false }
+				? never
+				: K]?: ParamOutput<Params[K]>
+		}
+
+// Resolved args for use inside task effects: defaults are applied at runtime,
+// so any param with a default is treated as present and non-undefined.
+type HasDefault<P> = P extends { default: any } ? true : false
+
+type ResolvedParamOutput<P> = HasDefault<P> extends true
+	? NonNullable<ParamOutput<P>>
+	: P extends { isOptional: false }
+		? ParamOutput<P>
+		: ParamOutput<P> | undefined
+
+type ResolvedRequiredKeys<P> = {
+	[K in keyof P]: P[K] extends { isOptional: false }
 		? K
-		: never]: Params[K] extends TaskParam
-		? StandardSchemaV1.InferOutput<Params[K]["type"]>
-		: never
-} & {
-	[K in keyof Params as Params[K] extends
-		| { isOptional: false }
-		| { default: unknown }
-		? never
-		: K]?: Params[K] extends TaskParam
-		? StandardSchemaV1.InferOutput<Params[K]["type"]>
-		: never
-}
+		: HasDefault<P[K]> extends true
+			? K
+			: never
+}[keyof P]
+
+type ResolvedOptionalKeys<P> = Exclude<keyof P, ResolvedRequiredKeys<P>>
+
+export type ResolvedParamsToArgs<
+	Params extends Record<string, NamedParam | PositionalParam>,
+> = [keyof Params] extends [never]
+	? Record<string, never>
+	: { [K in ResolvedRequiredKeys<Params>]: ResolvedParamOutput<Params[K]> } & {
+			[K in ResolvedOptionalKeys<Params>]?: ResolvedParamOutput<Params[K]>
+		}
 
 // value type for a TaskParam
 type ParamOutput<P> = P extends TaskParam
@@ -68,7 +90,7 @@ type ParamOutput<P> = P extends TaskParam
 
 // required vs optional (your rules)
 type RequiredKeys<P> = {
-	[K in keyof P]: P[K] extends { isOptional: false } | { default: unknown }
+	[K in keyof P]: P[K] extends { isOptional: false }
 		? K
 		: never
 }[keyof P]
@@ -83,9 +105,13 @@ type BuildArgs<P extends object> = [keyof P] extends [never]
 		}
 
 // Final: exact args for a Task's params
-export type TaskParamsToArgs<T extends Task> = BuildArgs<
+export type TaskParamsToArgs<T extends Task> = ParamsToArgs<
 	NonNullable<T["params"]>
-> // NonNullable in case params can be undefined
+> // preserve optionality solely via isOptional flag
+
+export type TaskResolvedArgs<T extends Task> = ResolvedParamsToArgs<
+	NonNullable<T["params"]>
+>
 
 export type TaskSuccess<T extends Task> = [T] extends [
 	Task<infer _A, infer _D, infer _P>,

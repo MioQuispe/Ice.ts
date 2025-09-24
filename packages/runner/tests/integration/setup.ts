@@ -56,6 +56,8 @@ import { IceDir } from "../../src/services/iceDir.js"
 import { InFlight } from "../../src/services/inFlight.js"
 import { runTask, runTasks } from "../../src/tasks/run.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
+import { BuilderLayer } from "../../src/builders/lib.js"
+import { PromptsService } from "../../src/services/prompts.js"
 
 const DefaultReplicaService = Layer.effect(DefaultReplica, picReplicaImpl).pipe(
 	Layer.provide(NodeContext.layer),
@@ -172,7 +174,7 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		Logger.pretty,
 		Logger.minimumLogLevel(LogLevel.Debug),
 		telemetryConfigLayer,
-		// NodeContext.layer,
+		NodeContext.layer,
 		// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		// // taskLayer,
 		// // TODO: generic storage?
@@ -182,23 +184,25 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		// telemetryLayer,
 		// Logger.pretty,
 		// Logger.minimumLogLevel(LogLevel.Debug),
-	)
+	) satisfies BuilderLayer
 	const builderRuntime = ManagedRuntime.make(builderLayer)
 
 	const custom = ((config: Parameters<typeof customCanister>[0]) =>
 		makeCustomCanister(
-			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-				unknown,
-				unknown
-			>,
+			builderLayer,
+			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+			// 	unknown,
+			// 	unknown
+			// >,
 			config,
 		)) as unknown as typeof customCanister
 	const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
 		makeMotokoCanister(
-			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-				unknown,
-				unknown
-			>,
+			builderLayer,
+			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+			// 	unknown,
+			// 	unknown
+			// >,
 			config,
 		)) as unknown as typeof motokoCanister
 
@@ -267,6 +271,7 @@ export const makeTestEnvEffect = (
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
+    const PromptsLayer = PromptsService.Live.pipe(Layer.provide(NodeContext.layer))
 
 	const testLayer = Layer.mergeAll(
 		// ICEConfigLayer,
@@ -288,6 +293,7 @@ export const makeTestEnvEffect = (
 		InFlightLayer,
 		iceDirLayer,
 		DefaultReplicaService,
+		PromptsLayer,
 	)
 
 	const builderLayer = Layer.mergeAll(
@@ -303,18 +309,20 @@ export const makeTestEnvEffect = (
 
 	const custom = ((config: Parameters<typeof customCanister>[0]) =>
 		makeCustomCanister(
-			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-				unknown,
-				unknown
-			>,
+			builderLayer,
+			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+			// 	unknown,
+			// 	unknown
+			// >,
 			config,
 		)) as unknown as typeof customCanister
 	const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
 		makeMotokoCanister(
-			builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-				unknown,
-				unknown
-			>,
+			builderLayer,
+			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
+			// 	unknown,
+			// 	unknown
+			// >,
 			config,
 		)) as unknown as typeof motokoCanister
 
@@ -381,6 +389,7 @@ export const makeTaskRunner = (taskTree: TaskTree) =>
 							network: string
 							deployment: unknown
 						}) => Effect.succeed(undefined),
+						serviceType: "NoOp",
 					}),
 				),
 			),
@@ -469,7 +478,7 @@ export const makeCachedTask = (task: Task, key: string) => {
 		...task,
 		// effect: async () => value,
 		computeCacheKey: () => key, // ← always the same key
-		input: () => Promise.resolve(undefined),
+		input: () => Promise.resolve({} as Record<string, unknown>),
 		encode: async (taskCtx, v) => v as string,
 		decode: async (taskCtx, v) => v as string,
 		encodingFormat: "string",

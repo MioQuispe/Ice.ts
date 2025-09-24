@@ -47,6 +47,7 @@ import { PlatformError } from "@effect/platform/Error"
 import { DeploymentsService } from "./deployments.js"
 import { DfxReplica } from "./dfx.js"
 import { configLayer } from "./config.js"
+import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
@@ -187,7 +188,6 @@ const CanisterIdsLayer = CanisterIdsService.Live.pipe(
 // 	configLayer,
 // 	NodeContext.layer,
 // 	DeploymentsLayer,
-// 	Logger.pretty,
 // 	Logger.minimumLogLevel(logLevelMap.debug),
 // )
 
@@ -258,9 +258,9 @@ export const makeTaskLayer = () =>
 			// DevTools.layerWebSocket().pipe(
 			// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
 			// ),
-			ICEConfigLayer,
-			telemetryConfigLayer,
-			Logger.pretty,
+            ICEConfigLayer,
+            telemetryConfigLayer,
+            ClackLoggingLive, // single-writer clack logger
 			Logger.minimumLogLevel(ICEConfig.globalArgs.logLevel),
 			InFlightLayer,
 			IceDirLayer,

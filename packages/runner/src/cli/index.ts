@@ -29,8 +29,8 @@ import {
 	TaskRuntimeError,
 	TaskArgsParseError,
 	resolveArg,
-    inflightTaskCount,
-    cancelledTaskCount,
+	inflightTaskCount,
+	cancelledTaskCount,
 } from "../tasks/lib.js"
 import type { PositionalParam, NamedParam, Task } from "../types/types.js"
 import { task } from "../builders/task.js"
@@ -73,6 +73,7 @@ import {
 } from "../services/telemetryConfig.js"
 import { DeploymentsService } from "../services/deployments.js"
 import { PromptsService } from "../services/prompts.js"
+import { ClackLoggingLive } from "../services/logger.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -255,7 +256,8 @@ export const makeCliRuntime = ({
 		IceDirLayer,
 		DefaultReplicaService,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		Logger.pretty,
+		ClackLoggingLive,
+		// clackLogger,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		CanisterIdsLayer,
 		configLayer,
@@ -278,7 +280,6 @@ export const makeCliRuntime = ({
 	// 			DefaultReplicaService,
 	// 			DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
 	// 			Moc.Live,
-	// 			Logger.pretty,
 	// 			Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 	// 			IceDirLayer,
 	// 		),
@@ -379,10 +380,6 @@ const runCommand = defineCommand({
 			Object.entries(parsedArgs).filter(([name]) => name !== "_"),
 		)
 		const positionalArgs = parsedArgs._
-		const s = p.spinner()
-		s.start(
-			`Running task... ${color.green(color.underline(args.taskPath))}`,
-		)
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
@@ -393,6 +390,11 @@ const runCommand = defineCommand({
 			telemetryExporter,
 		}).runPromise(
 			Effect.gen(function* () {
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start(
+					`Running task... ${color.green(color.underline(args.taskPath))}`,
+				)
 				const { runtime, taskLayer } = yield* makeTaskLayer()
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
@@ -411,9 +413,11 @@ const runCommand = defineCommand({
 						}),
 					),
 				)
+				yield* s.stop(
+					`Finished task: ${color.green(color.underline(args.taskPath))}`,
+				)
 			}),
 		)
-		s.stop(`Finished task: ${color.green(color.underline(args.taskPath))}`)
 	},
 })
 
@@ -445,8 +449,7 @@ const deployRun = async ({
 		namedArgs: Record<string, string>
 	}
 }) => {
-	const s = p.spinner()
-	s.start("Deploying all canisters...")
+	// spinner controlled inside Effect program via PromptsService
 	// TODO: mode
 	const globalArgs = {
 		network,
@@ -456,6 +459,9 @@ const deployRun = async ({
 	// TODO: convert to task
 	const program = Effect.fn("deploy")(function* () {
 		const { taskTree } = yield* ICEConfigService
+		const Prompts = yield* PromptsService
+		const s = yield* Prompts.Spinner()
+		yield* s.start("Deploying all canisters...")
 		const { runtime, taskLayer } = yield* makeTaskLayer()
 		const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 			runtime,
@@ -484,18 +490,20 @@ const deployRun = async ({
 			args: argsMap,
 		}))
 
+		// TODO: FIX. call spinners from inside task/lib.ts ?
 		yield* runTasks(tasksWithArgs, (update) => {
 			if (update.status === "starting") {
 				// const s = p.spinner()
 				// s.start(`Deploying ${update.taskPath}\n`)
 				// spinners.set(update.taskPath, s)
-				s.message(`Running ${update.taskPath}`)
+				// yield * Effect.logInfo(`Running ${update.taskPath}`)
+				// s.message(`Running ${update.taskPath}`)
 				// console.log(`Deploying ${update.taskPath}`)
 			}
 			if (update.status === "completed") {
 				// const s = spinners.get(update.taskPath)
 				// s?.stop(`Completed ${update.taskPath}\n`)
-				s.message(`Completed ${update.taskPath}`)
+				// s.message(`Completed ${update.taskPath}`)
 				// console.log(`Completed ${update.taskPath}`)
 			}
 		}).pipe(
@@ -508,7 +516,7 @@ const deployRun = async ({
 		const uncachedCount = yield* Metric.value(uncachedTaskCount)
 		const hitCount = yield* Metric.value(cacheHitCount)
 		const inflightCount = yield* Metric.value(inflightTaskCount)
-        const cancelledCount = yield* Metric.value(cancelledTaskCount)
+		const cancelledCount = yield* Metric.value(cancelledTaskCount)
 
 		// TODO: ?? what is happening
 		const spans = telemetryExporter.getFinishedSpans()
@@ -524,7 +532,7 @@ const deployRun = async ({
 		const cacheHits = taskExecuteEffects.filter(
 			(span) => span.attributes?.["cacheHit"] === true,
 		)
-        const cacheMisses = taskExecuteEffects.filter(
+		const cacheMisses = taskExecuteEffects.filter(
 			(span) => span.attributes?.["cacheHit"] === false,
 		)
 		const revalidates = taskExecuteEffects.filter(
@@ -533,10 +541,10 @@ const deployRun = async ({
 		const inflightTasks = taskExecuteEffects.filter(
 			(span) => span.attributes?.["inflight"] === true,
 		)
-        const cancelledTasks = taskExecuteEffects.filter(
+		const cancelledTasks = taskExecuteEffects.filter(
 			(span) => span.attributes?.["cancelled"] === true,
 		)
-        const completedTasks = taskExecuteEffects.filter(
+		const completedTasks = taskExecuteEffects.filter(
 			(span) => span.attributes?.["cancelled"] === false,
 		)
 		// console.log("spans", spans)
@@ -553,7 +561,7 @@ const deployRun = async ({
 				`uncached: ${uncachedCount.count}`,
 				`cache hits: ${hitCount.count}`,
 				`deduped inflight tasks: ${inflightCount.count}`,
-                // `completed: ${completedTasks.count}`,
+				// `completed: ${completedTasks.count}`,
 				`cancelled: ${cancelledCount.count}`,
 				"",
 				"************************",
@@ -575,8 +583,8 @@ const deployRun = async ({
 				"",
 				`${cacheHits.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
 				"",
-                `cache misses:`,
-                `${cacheMisses.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
+				`cache misses:`,
+				`${cacheMisses.map((span) => span.attributes?.["taskPath"]).join(", ")}`,
 				"",
 				"",
 				`revalidates:`,
@@ -595,7 +603,7 @@ const deployRun = async ({
 				"",
 			].join("\n"),
 		)
-		// telemetryExporter.reset()
+		yield* s.stop("Deployed all canisters")
 	})()
 	// .pipe(
 	// 	// TODO: Task has any as error type
@@ -605,7 +613,6 @@ const deployRun = async ({
 		globalArgs,
 		telemetryExporter,
 	}).runPromise(program)
-	s.stop("Deployed all canisters")
 }
 
 const canistersCreateCommand = defineCommand({
@@ -632,8 +639,9 @@ const canistersCreateCommand = defineCommand({
 					runtime,
 					taskLayer,
 				})
-				const s = p.spinner()
-				s.start("Creating all canisters")
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Creating all canisters")
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
@@ -659,7 +667,7 @@ const canistersCreateCommand = defineCommand({
 					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.annotateLogs("caller", "canistersCreateCommand"),
 				)
-				s.stop("Finished creating all canisters")
+				yield* s.stop("Finished creating all canisters")
 			}),
 		)
 	},
@@ -683,8 +691,9 @@ const canistersBuildCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const s = p.spinner()
-				s.start("Building all canisters")
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Building all canisters")
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
@@ -715,7 +724,7 @@ const canistersBuildCommand = defineCommand({
 					Effect.provide(ChildTaskRuntimeLayer),
 					Effect.annotateLogs("caller", "canistersBuildCommand"),
 				)
-				s.stop("Finished building all canisters")
+				yield* s.stop("Finished building all canisters")
 			}),
 		)
 	},
@@ -739,8 +748,9 @@ const canistersBindingsCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const s = p.spinner()
-				s.start("Generating bindings for all canisters")
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Generating bindings for all canisters")
 
 				yield* Effect.logDebug("Running canisters:bindings")
 				const { taskTree } = yield* ICEConfigService
@@ -774,7 +784,7 @@ const canistersBindingsCommand = defineCommand({
 					Effect.annotateLogs("caller", "canistersBindingsCommand"),
 				)
 
-				s.stop("Finished generating bindings for all canisters")
+				yield* s.stop("Finished generating bindings for all canisters")
 			}),
 		)
 	},
@@ -799,8 +809,9 @@ const canistersInstallCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const s = p.spinner()
-				s.start("Installing all canisters")
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Installing all canisters")
 
 				yield* Effect.logDebug("Running canisters:create")
 				const { taskTree } = yield* ICEConfigService
@@ -832,7 +843,7 @@ const canistersInstallCommand = defineCommand({
 					Effect.annotateLogs("caller", "canistersInstallCommand"),
 				)
 
-				s.stop("Finished installing all canisters")
+				yield* s.stop("Finished installing all canisters")
 			}),
 		)
 	},
@@ -856,8 +867,9 @@ const canistersStopCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const s = p.spinner()
-				s.start("Stopping all canisters")
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Stopping all canisters")
 
 				yield* Effect.logDebug("Running canisters:stop")
 				const { taskTree } = yield* ICEConfigService
@@ -910,7 +922,7 @@ const canistersStopCommand = defineCommand({
 				// 				}
 				// 			}
 
-				s.stop("Finished stopping all canisters")
+				yield* s.stop("Finished stopping all canisters")
 			}),
 		)
 	},
@@ -1014,7 +1026,7 @@ ${color.underline(right.canisterName)}
 					// 						)
 					// 						.join("\n")
 
-					console.log(statusLog)
+					yield* Effect.logInfo(statusLog)
 				}),
 			)
 		}
@@ -1039,7 +1051,7 @@ const canistersRemoveCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				yield* Console.log("Coming soon...")
+				yield* Effect.logInfo("Coming soon...")
 			}),
 		)
 	},
@@ -1198,8 +1210,9 @@ const canisterCommand = defineCommand({
 						cancel("Operation cancelled.")
 						process.exit(0)
 					}
-					const s = p.spinner()
-					s.start(`Running ${canister}:${action}`)
+					const Prompts = yield* PromptsService
+					const s = yield* Prompts.Spinner()
+					yield* s.start(`Running ${canister}:${action}`)
 					const result = yield* runTaskByPath(
 						`${canister.trimStart().trimEnd()}:${action.trimStart().trimEnd()}`,
 						// TODO: args?
@@ -1219,7 +1232,7 @@ const canisterCommand = defineCommand({
 							"canistersCanisterCommand",
 						),
 					)
-					s.stop(`Completed ${canister}:${action}`)
+					yield* s.stop(`Completed ${canister}:${action}`)
 				}),
 			)
 		}
@@ -1292,8 +1305,9 @@ const taskCommand = defineCommand({
 						cancel("Operation cancelled.")
 						process.exit(0)
 					}
-					const s = p.spinner()
-					s.start(`Running ${task}`)
+					const Prompts = yield* PromptsService
+					const s = yield* Prompts.Spinner()
+					yield* s.start(`Running ${task}`)
 					const result = yield* runTaskByPath(
 						`${task.trimStart().trimEnd()}`,
 						// TODO: args?
@@ -1310,7 +1324,7 @@ const taskCommand = defineCommand({
 						Effect.provide(ChildTaskRuntimeLayer),
 						Effect.annotateLogs("caller", "canistersTaskCommand"),
 					)
-					s.stop(`Completed ${task}`)
+					yield* s.stop(`Completed ${task}`)
 				}),
 			)
 		}
