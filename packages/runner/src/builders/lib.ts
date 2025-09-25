@@ -1,4 +1,4 @@
-import { IDL } from "@dfinity/candid"
+import { IDL } from "@icp-sdk/core/candid"
 import { FileSystem, Path } from "@effect/platform"
 import { sha256 } from "@noble/hashes/sha2"
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils"
@@ -63,8 +63,8 @@ export const baseLayer = Layer.mergeAll(
 	configLayer,
 	// TODO: ??
 	// telemetryLayer,
-	// ClackLoggingLive,
-	Logger.pretty,
+	ClackLoggingLive,
+	// Logger.pretty,
 	// TODO: get logLevel
 	Logger.minimumLogLevel(LogLevel.Debug),
 )
@@ -337,58 +337,48 @@ export const makeCreateTask = <Config extends CreateConfig>(
 								})
 								.pipe(
 									Effect.catchTag(
-										"CanisterCreateError",
+										"CanisterCreateRangeError",
 										(err) => {
-											if (
-												err.message.includes(
-													"not in subnet range",
-												)
-											) {
-												return Effect.gen(function* () {
-													const confirmResult =
-														yield* Effect.tryPromise(
-															{
-																try: () =>
-																	taskCtx.prompts.confirm(
-																		{
-																			// type: "confirm",
-																			message:
-																				"Target canister id is not in subnet range. Do you want to create a new canister?",
-																			initialValue: false,
-																		},
-																	),
-																catch: (
-																	error,
-																) => {
-																	return new TaskError(
-																		{
-																			message:
-																				String(
-																					error,
-																				),
-																		},
-																	)
+											// For testing purposes only
+											// return Effect.fail(err)
+											return Effect.gen(function* () {
+												const confirmResult =
+													yield* Effect.tryPromise({
+														try: () =>
+															taskCtx.prompts.confirm(
+																{
+																	// type: "confirm",
+																	message:
+																		"Target canister id is not in subnet range. Do you want to create a new canister id for it?",
+																	initialValue: true,
 																},
-															},
-														)
-													if (!confirmResult) {
-														return yield* Effect.fail(
-															new TaskCancelled({
-																message:
-																	"Canister creation cancelled",
-															}),
-														)
-													}
-													return yield* replica.createCanister(
-														{
-															canisterId:
-																undefined,
-															identity,
+															),
+														catch: (error) => {
+															return new TaskError(
+																{
+																	message:
+																		String(
+																			error,
+																		),
+																},
+															)
 														},
+													})
+												if (!confirmResult) {
+													return yield* Effect.fail(
+														new TaskCancelled({
+															message:
+																"Canister creation cancelled",
+														}),
 													)
-												})
-											}
-											return Effect.fail(err)
+												}
+												return yield* replica.createCanister(
+													{
+														canisterId: undefined,
+														identity,
+													},
+												)
+											})
 										},
 									),
 								)
@@ -1855,7 +1845,10 @@ export const makeInstallArgsTask = <
 		encode: (taskCtx, result, input) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
-					yield* Effect.logDebug("encoding:", result)
+					yield* Effect.logDebug(
+						"Encoding args for",
+						result.canisterName,
+					)
 					return yield* encodeWithBigInt({
 						canisterName: result.canisterName,
 						installArgs: {

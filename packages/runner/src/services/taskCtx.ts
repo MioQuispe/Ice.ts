@@ -1,4 +1,4 @@
-import type { SignIdentity } from "@dfinity/agent"
+import type { SignIdentity } from "@icp-sdk/core/agent"
 import {
 	Config,
 	ConfigError,

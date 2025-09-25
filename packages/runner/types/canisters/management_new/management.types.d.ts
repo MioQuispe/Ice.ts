@@ -1,4 +1,4 @@
-import type { Principal } from '@dfinity/principal';
+import type { Principal } from '@icp-sdk/core/principal';
 export type canister_id = Principal;
 export interface canister_settings {
     'freezing_threshold': [] | [bigint];

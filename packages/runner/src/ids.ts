@@ -1,19 +1,18 @@
 import { Effect, Layer, Context, Data, Config, ManagedRuntime } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import type { Principal } from "@dfinity/principal"
-import { Actor, HttpAgent, type SignIdentity } from "@dfinity/agent"
-import { IDL } from "@dfinity/candid"
+import type { Principal } from "@icp-sdk/core/principal"
+import { Actor, HttpAgent, type SignIdentity } from "@icp-sdk/core/agent"
+import { IDL } from "@icp-sdk/core/candid"
 import find from "find-process"
 import { idlFactory } from "./canisters/management_latest/management.did.js"
-import { Ed25519KeyIdentity } from "@dfinity/identity"
+import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import os from "node:os"
 import psList from "ps-list"
 
 export class IdsError extends Data.TaggedError("IdsError")<{
 	message: string
 }> {}
-
 
 type User = {
 	accountId: string
@@ -37,7 +36,7 @@ const parseEd25519PrivateKey = (pem: string) => {
 	const keyBytes = new Uint8Array(Buffer.from(rawHex, "hex"))
 	// Ensure we only pass the 32-byte secret to the identity.
 	const secretKey = keyBytes.slice(0, 32)
-	return Ed25519KeyIdentity.fromSecretKey(secretKey.buffer)
+	return Ed25519KeyIdentity.fromSecretKey(new Uint8Array(secretKey.buffer))
 }
 
 const getAccountId = (principal: string) =>

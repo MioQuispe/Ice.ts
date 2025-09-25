@@ -1,4 +1,4 @@
-import type { ActorSubclass, SignIdentity } from "@dfinity/agent"
+import type { ActorSubclass, SignIdentity } from "@icp-sdk/core/agent"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { ConfigError } from "effect"
 import { ICEConfigError } from "../services/iceConfig.js"
@@ -31,7 +31,7 @@ export type CanisterActor = {
 	setControllers: (controllers: string[]) => Promise<void>
 }
 
-export type ManagementActor = import("@dfinity/agent").ActorSubclass<
+export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
 	import("../canisters/management_latest/management.types.js")._SERVICE
 >
 

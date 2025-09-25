@@ -1,7 +1,6 @@
 import path from "path"
 import { Opt } from "../types"
 import * as url from "url"
-import { Actor, HttpAgent } from "@dfinity/agent"
 import { idlFactory } from "./management.did"
 import { CreateProps } from "../types"
 import type { ExtendedCanisterConfiguration } from "@ice.ts/runner"
@@ -42,4 +41,4 @@ Management.idlFactory = idlFactory
 
 Management.scripts = {}
 
-export type ManagementActor = import("@dfinity/agent").ActorSubclass<import("./management.types")._SERVICE>
+export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<import("./management.types")._SERVICE>

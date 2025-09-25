@@ -1,4 +1,4 @@
-import { Principal } from "@dfinity/principal";
+import { Principal } from "@icp-sdk/core/principal";
 import { Context, Effect, Layer } from "effect";
 declare const ICError: new (args: {
     readonly message: string;

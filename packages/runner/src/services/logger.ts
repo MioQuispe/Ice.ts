@@ -1,8 +1,10 @@
 // packages/runner/src/services/logger.ts
-import { HashMap, List, Logger, LogLevel, Layer } from "effect"
+import { HashMap, List, Logger, LogLevel, Layer, Cause } from "effect"
+import * as Inspectable from "effect/Inspectable"
 import { log as clog } from "@clack/prompts"
 import * as p from "@clack/prompts"
 import * as util from "node:util"
+import { prettyLogger } from "effect/Logger"
 // keep logger free of Effect services/fibers
 
 const levelToClack = (level: LogLevel.LogLevel): "info" | "warn" | "error" => {
@@ -33,31 +35,38 @@ const formatSpans = (spans: List.List<{ label: string }>): string => {
 }
 
 const formatAnnotations = (ann: HashMap.HashMap<string, unknown>): string => {
-	let out = ""
-	let first = true
-	HashMap.forEach(ann, (v, k) => {
-		const val =
-			typeof v === "string"
-				? v
-				: util.inspect(v, { colors: false, depth: 2 })
-		const piece = `${k}=${val}`
-		out += first ? piece : " " + piece
-		first = false
-	})
-	return out
+    let out = ""
+    let first = true
+    HashMap.forEach(ann, (v, k) => {
+        const val =
+            typeof v === "string"
+                ? v
+                : v instanceof Error
+                    ? (v.stack || `${v.name}: ${v.message}`)
+                    : util.inspect(v, { colors: false, depth: 10, breakLength: Infinity })
+        const piece = `${k}=${val}`
+        out += first ? piece : " " + piece
+        first = false
+    })
+    return out
 }
 
 const normalizeMessage = (message: unknown): string => {
     if (typeof message === "string") return message
+    if (message instanceof Error) {
+        return message.stack || `${message.name}: ${message.message}`
+    }
     if (Array.isArray(message)) {
         const parts = message.map((m) =>
             typeof m === "string"
                 ? m
-                : util.inspect(m, { colors: false, depth: 6, breakLength: Infinity }),
+                : m instanceof Error
+                    ? (m.stack || `${m.name}: ${m.message}`)
+                    : util.inspect(m, { colors: false, depth: 10, breakLength: Infinity }),
         )
         return parts.length === 1 ? parts[0]! : parts.join(" ")
     }
-    return util.inspect(message, { colors: false, depth: 6, breakLength: Infinity })
+    return util.inspect(message, { colors: false, depth: 10, breakLength: Infinity })
 }
 
 // Single-writer UI queue: logs and spinner events share one pipeline
@@ -76,9 +85,7 @@ type SharedUIState = {
     spinner: ReturnType<typeof p.spinner> | null
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getShared = (): SharedUIState => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const g = globalThis as any
     if (!g.__ICE_UI_STATE) {
         g.__ICE_UI_STATE = {
@@ -169,21 +176,125 @@ export const uiSpinnerStop = (msg?: string, code?: number) => {
     drain()
 }
 
+// Pretty logger formatting (copied from Effect's prettyLogger), but render via our queue
+const colors = {
+    bold: "1",
+    red: "31",
+    green: "32",
+    yellow: "33",
+    blue: "34",
+    cyan: "36",
+    white: "37",
+    gray: "90",
+    black: "30",
+    bgBrightRed: "101",
+} as const
+
+const logLevelColors: Record<LogLevel.LogLevel["_tag"], ReadonlyArray<string>> = {
+    None: [],
+    All: [],
+    Trace: [colors.gray],
+    Debug: [colors.blue],
+    Info: [colors.green],
+    Warning: [colors.yellow],
+    Error: [colors.red],
+    Fatal: [colors.bgBrightRed, colors.black],
+}
+
+const withColor = (text: string, ...codes: ReadonlyArray<string>) => {
+    if (codes.length === 0) return text
+    let out = ""
+    for (let i = 0; i < codes.length; i++) out += `\x1b[${codes[i]}m`
+    return out + text + "\x1b[0m"
+}
+
+const defaultDateFormat = (date: Date): string =>
+    `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(
+        date.getSeconds(),
+    ).padStart(2, "0")}.${String(date.getMilliseconds()).padStart(3, "0")}`
+
+const hasProcessStdout = typeof process === "object" && process !== null && typeof process.stdout === "object" && process.stdout !== null
+const processStdoutIsTTY = hasProcessStdout && process.stdout.isTTY === true
+const hasProcessStdoutOrDeno = hasProcessStdout || "Deno" in globalThis
+
 export const ClackLoggingLive: Layer.Layer<never> = Logger.replace(
     Logger.defaultLogger,
-    Logger.make(({ logLevel, message, annotations, spans, date }) => {
+    Logger.make(({ annotations, cause, context, date, fiberId, logLevel, message: message_, spans }) => {
+        const mode_ = "auto"
+        const mode = mode_ === "auto" ? (hasProcessStdoutOrDeno ? "tty" : "browser") : mode_
+        const isBrowser = mode === "browser"
+        const showColors = processStdoutIsTTY || isBrowser
+        const formatDate = defaultDateFormat
         const method = levelToClack(logLevel)
-        const ts = date?.toISOString?.() ?? new Date().toISOString()
-        const spanPath = formatSpans(spans)
-        const ann = formatAnnotations(annotations)
-        const msg = normalizeMessage(message)
 
-        const line =
-            (spanPath ? `[${ts}] ${spanPath} ${msg}` : `[${ts}] ${msg}`) +
-            (ann ? " " + ann : "")
+        const message = Array.isArray(message_) ? message_ : [message_]
+        const color = showColors ? withColor : (s: string) => s
 
-        emit(method, line)
+        const ts = formatDate(date ?? new Date())
+        let firstLine = color(`[${ts}]`, colors.white) + ` ${color((logLevel as any).label, ...logLevelColors[logLevel._tag])}`
+        const fiberName = (fiberId as any)?.id != null ? String((fiberId as any).id) : ""
+        firstLine += fiberName ? ` (${fiberName})` : ""
+
+        if (List.isCons(spans)) {
+            const now = (date ?? new Date()).getTime()
+            List.forEach(spans, (span) => {
+                const label = (span as any).label
+                const start = (span as any).startTime ?? now
+                const dur = Math.max(0, now - start)
+                firstLine += ` ${label}=${dur}ms`
+            })
+        }
+
+        firstLine += ":"
+
+        let messageIndex = 0
+        if (message.length > 0) {
+            const firstMaybeString = structuredMessage(message[0])
+            if (typeof firstMaybeString === "string") {
+                firstLine += " " + color(firstMaybeString, colors.bold, colors.cyan)
+                messageIndex++
+            }
+        }
+
+        // Render via queue
+        emit(method, firstLine)
+
+        // Cause
+        if (cause && !(Cause as any).isEmpty?.(cause)) {
+            try {
+                emit(method, String(Cause.pretty(cause as any, { renderErrorCause: true })))
+            } catch {
+                emit(method, util.inspect(cause, { colors: false, depth: 10, breakLength: Infinity }))
+            }
+        }
+
+        // Remaining messages
+        for (; messageIndex < message.length; messageIndex++) {
+            const m = Inspectable.redact(message[messageIndex])
+            const line = typeof m === "string" ? m : Inspectable.stringifyCircular(m)
+            emit(method, line)
+        }
+
+        // Annotations
+        if (HashMap.size(annotations) > 0) {
+            HashMap.forEach(annotations, (v, k) => {
+                const redacted = Inspectable.redact(v)
+                const text = typeof redacted === "string" ? redacted : Inspectable.stringifyCircular(redacted)
+                emit(method, color(`${k}:`, colors.bold, colors.white) + " " + text)
+            })
+        }
     }),
 )
+
+const structuredMessage = (u: unknown): unknown => {
+    switch (typeof u) {
+        case "bigint":
+        case "function":
+        case "symbol":
+            return String(u)
+        default:
+            return Inspectable.toJSON(u)
+    }
+}
 
 // Note: global helpers removed; logging coordination is scoped to ClackLoggingLive layer.

@@ -1,17 +1,15 @@
 import { Effect, Layer, Context, Data, Config, Ref, Schedule } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
-import { Principal } from "@dfinity/principal"
+import { Principal } from "@icp-sdk/core/principal"
 import {
 	Actor,
 	ActorSubclass,
 	HttpAgent,
 	MANAGEMENT_CANISTER_ID,
 	type SignIdentity,
-} from "@dfinity/agent"
-import { IDL } from "@dfinity/candid"
+} from "@icp-sdk/core/agent"
 import find from "find-process"
 import { idlFactory } from "../../canisters/management_latest/management.did.js"
-import { Ed25519KeyIdentity } from "@dfinity/identity"
 import { Opt } from "../../index.js"
 import type { ManagementActor } from "../../types/types.js"
 import type { PlatformError } from "@effect/platform/Error"
@@ -37,9 +35,9 @@ import {
 	isCanisterIdInSubnet,
 	isCanisterIdInRanges,
 	subnetRanges,
+	CanisterCreateRangeError,
 } from "../replica.js"
 import { sha256 } from "js-sha256"
-import type { log_visibility } from "@dfinity/agent/lib/cjs/canisters/management_service.js"
 import * as url from "node:url"
 import {
 	EffectivePrincipal,
@@ -116,12 +114,22 @@ export const picReplicaImpl = Effect.gen(function* () {
 				},
 				// TODO:
 				// system: vec![],
-				// verified_application: vec![],
+				// verified_application: [
+				// 	// { state: { type: SubnetStateType.New } },
+				// 	// { state: { type: SubnetStateType.New } },
+				// ],
 				// application: vec![],
-				// application: [
-				// 	{ state: { type: SubnetStateType.New } },
-				// 	{ state: { type: SubnetStateType.New } },
-				//   ],
+				application: [
+					{ state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+					// { state: { type: SubnetStateType.New } },
+				],
 			}),
 		catch: (error) =>
 			new AgentError({
@@ -165,6 +173,7 @@ export const picReplicaImpl = Effect.gen(function* () {
 	// 			message: `Failed to get topology: ${error instanceof Error ? error.message : String(error)}`,
 	// 		}),
 	// })
+	// console.log("topology", topology)
 
 	// const applicationSubnets = yield* Effect.tryPromise({
 	// 	try: () => pic.getApplicationSubnets(),
@@ -522,6 +531,25 @@ export const picReplicaImpl = Effect.gen(function* () {
 						return canisterId
 					}
 				}
+				const topology = yield* Effect.tryPromise({
+					try: () => pic.getTopology(),
+					catch: (error) =>
+						new AgentError({
+							message: `Failed to get topology: ${error instanceof Error ? error.message : String(error)}`,
+						}),
+				})
+				const replicaRanges = topology
+					.map((subnet) =>
+						subnet.canisterRanges.map(
+							(range) =>
+								[range.start.toHex(), range.end.toHex()] as [
+									string,
+									string,
+								],
+						),
+					)
+					.flat()
+
 				// targetSubnetId related:
 				// Canister ranges:
 				// https://wiki.internetcomputer.org/wiki/Subnet_splitting_forum_announcement_template#firstHeading
@@ -539,23 +567,41 @@ export const picReplicaImpl = Effect.gen(function* () {
 					!isCanisterIdInRanges({
 						canisterId: targetCanisterId.toText(),
 						// TODO: get from config?
-						ranges: [
-							...subnetRanges.NNS,
-							...subnetRanges.Application,
+						// ranges: [
+						// 	// ...subnetRanges.NNS,
+						// 	// TODO: not working?
+						// 	// ...subnetRanges.Application,
 
-							// ...subnetRanges.Fiduciary,
-							// ...subnetRanges.SNS,
-							// ...subnetRanges.Bitcoin,
-						],
+						// 	// ...subnetRanges.Fiduciary,
+						// 	// ...subnetRanges.SNS,
+						// 	// ...subnetRanges.Bitcoin,
+						// ],
+						ranges: replicaRanges,
 					})
 				) {
 					// TODO: prompt new canisterId?
 					return yield* Effect.fail(
-						new CanisterCreateError({
+						new CanisterCreateRangeError({
 							message: `Target canister id is not in subnet range`,
 						}),
 					)
 				}
+
+				const targetSubnetId = targetCanisterId
+					? topology.find((subnet) =>
+							subnet.canisterRanges.some((range) =>
+								isCanisterIdInRanges({
+									canisterId: targetCanisterId.toText(),
+									ranges: [
+										[
+											range.start.toHex(),
+											range.end.toHex(),
+										],
+									],
+								}),
+							),
+						)?.id
+					: undefined
 
 				const createResult = yield* Effect.tryPromise({
 					try: () =>
@@ -574,13 +620,20 @@ export const picReplicaImpl = Effect.gen(function* () {
 							...(targetCanisterId ? { targetCanisterId } : {}),
 							// TODO:
 							// targetSubnetId: nnsSubnet?.id!,
+                            ...(targetSubnetId ? { targetSubnetId } : {}),
 							sender,
 						}),
-					catch: (error) =>
-						new CanisterCreateError({
+					catch: (error) => {
+                        if (error instanceof Error && error.message.includes("is invalid because it belongs to the canister allocation ranges of the test environment")) {
+                            return new CanisterCreateRangeError({
+                                    message: `Target canister id is in test environment range`,
+                                })
+                        }
+						return new CanisterCreateError({
 							message: `Failed to create canister: ${error instanceof Error ? error.message : String(error)}`,
 							cause: new Error("Failed to create canister"),
-						}),
+						})
+                    }
 				})
 				// pic.addCycles(createResult, 1_000_000_000_000_000)
 				return createResult.toText()

@@ -1,6 +1,6 @@
 import * as p from "@clack/prompts"
 import { cancel, isCancel } from "@clack/prompts"
-import { Ed25519KeyIdentity } from "@dfinity/identity"
+import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import { Resolvable, createMain, defineCommand, type ArgsDef } from "citty"
 import { Console, Effect, Either, Metric, Tracer } from "effect"
 // import {

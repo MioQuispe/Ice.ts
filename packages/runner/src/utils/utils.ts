@@ -1,5 +1,5 @@
 import crc from "crc"
-import { Principal } from "@dfinity/principal"
+import { Principal } from "@icp-sdk/core/principal"
 import { sha224 } from "js-sha256"
 
 export const calculateCrc32 = (bytes: Uint8Array): Uint8Array => {

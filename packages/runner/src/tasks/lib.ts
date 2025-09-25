@@ -1,4 +1,3 @@
-import type { SignIdentity } from "@dfinity/agent"
 import { StandardSchemaV1 } from "@standard-schema/spec"
 import { match, type } from "arktype"
 import {

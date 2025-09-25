@@ -1,16 +1,15 @@
 import { Effect, Layer, Context, Data, Config } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
-import { Principal } from "@dfinity/principal"
-import { Actor, HttpAgent, type SignIdentity } from "@dfinity/agent"
+import { Principal } from "@icp-sdk/core/principal"
+import { Actor, HttpAgent, type SignIdentity } from "@icp-sdk/core/agent"
 import { sha256 } from "js-sha256"
-import { IDL } from "@dfinity/candid"
+import { IDL } from "@icp-sdk/core/candid"
 import find from "find-process"
 import { idlFactory } from "../canisters/management_latest/management.did.js"
 import type {
 	canister_status_result,
 	log_visibility,
 } from "../canisters/management_latest/management.types.js"
-import { Ed25519KeyIdentity } from "@dfinity/identity"
 import type { DfxJson } from "../types/schema.js"
 import type { ManagementActor } from "../types/types.js"
 import type { PlatformError } from "@effect/platform/Error"

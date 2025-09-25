@@ -10,8 +10,7 @@
   },
   "type": "module",
   "dependencies": {
-    "@dfinity/identity": "^2.3.0",
-    "@dfinity/principal": "^2.3.0",
-    "@ice.ts/runner": "file:../../../runner"
+    "@ice.ts/runner": "file:../../../runner",
+    "@icp-sdk/core": "^4.0.4"
   }
 }

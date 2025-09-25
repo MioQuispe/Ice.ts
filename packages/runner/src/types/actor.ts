@@ -1,6 +1,6 @@
-import type { Agent, HttpDetailsResponse, QueryResponseRejected, SubmitResponse } from '@dfinity/agent';
-import type { IDL } from '@dfinity/candid';
-import type { Principal } from '@dfinity/principal';
+import type { Agent, HttpDetailsResponse, QueryResponseRejected, SubmitResponse } from '@icp-sdk/core/agent';
+import type { IDL } from '@icp-sdk/core/candid';
+import type { Principal } from '@icp-sdk/core/principal';
 
 declare type VerifyFunc = (pk: Uint8Array, sig: Uint8Array, msg: Uint8Array) => Promise<boolean>;
 

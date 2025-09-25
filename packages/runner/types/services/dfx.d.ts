@@ -1,7 +1,7 @@
 import { Effect, Layer, Context } from "effect";
 import { CommandExecutor, Path, FileSystem } from "@effect/platform";
-import { HttpAgent, type SignIdentity } from "@dfinity/agent";
-import { Ed25519KeyIdentity } from "@dfinity/identity";
+import { HttpAgent, type SignIdentity } from "@icp-sdk/core/agent";
+import { Ed25519KeyIdentity } from "@icp-sdk/core/identity";
 import type { DfxJson } from "../types/schema.js";
 import { ConfigError } from "../index.js";
 import type { ManagementActor } from "../types/types.js";

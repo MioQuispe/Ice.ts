@@ -1,6 +1,6 @@
 import type { Effect } from "effect";
-import type { ActorSubclass, Agent, Identity } from "@dfinity/agent";
-import type { Principal } from "@dfinity/principal";
+import type { ActorSubclass, Agent, Identity } from "@icp-sdk/core/agent";
+import type { Principal } from "@icp-sdk/core/principal";
 export type CanisterActor = {
     actor: ActorSubclass<unknown>;
     canisterId: string;
@@ -8,7 +8,7 @@ export type CanisterActor = {
     addControllers: (controllers: string[]) => Promise<void>;
     setControllers: (controllers: string[]) => Promise<void>;
 };
-export type ManagementActor = import("@dfinity/agent").ActorSubclass<import("../canisters/management_new/management.types.js")._SERVICE>;
+export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<import("../canisters/management_new/management.types.js")._SERVICE>;
 export type ICEContext = {
     users: {
         [key: string]: {

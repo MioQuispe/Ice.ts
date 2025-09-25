@@ -1,7 +1,7 @@
 import { type Effect, Context, Data } from "effect"
-import type { ActorSubclass, HttpAgent, SignIdentity } from "@dfinity/agent"
+import type { ActorSubclass, HttpAgent, SignIdentity } from "@icp-sdk/core/agent"
 import type { canister_status_result } from "src/canisters/management_latest/management.types.js"
-import { Principal } from "@dfinity/principal"
+import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
 
@@ -200,6 +200,12 @@ export class CanisterCreateError extends Data.TaggedError(
 	readonly message: string
 	readonly cause?: Error
 }> {}
+export class CanisterCreateRangeError extends Data.TaggedError(
+	"CanisterCreateRangeError",
+)<{
+	readonly message: string
+	readonly cause?: Error
+}> {}
 
 export class CanisterStopError extends Data.TaggedError("CanisterStopError")<{
 	readonly message: string
@@ -260,7 +266,7 @@ export type ReplicaService = {
 		identity: SignIdentity
 	}) => Effect.Effect<
 		string,
-		CanisterCreateError | CanisterStatusError | AgentError
+		CanisterCreateError | CanisterCreateRangeError | CanisterStatusError | AgentError
 	> // returns canister id
 	createActor: <_SERVICE>(params: {
 		canisterId: string

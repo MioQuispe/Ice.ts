@@ -1,6 +1,6 @@
-import { Principal } from "@dfinity/principal";
+import { Principal } from "@icp-sdk/core/principal";
 import type { ConfigNetwork } from "./types/schema.js";
-import { type ActorSubclass, type HttpAgent, type Identity, type SignIdentity } from "@dfinity/agent";
+import { type ActorSubclass, type HttpAgent, type Identity, type SignIdentity } from "@icp-sdk/core/agent";
 import { Effect, Layer, ManagedRuntime, Context } from "effect";
 import { Schema, ParseResult } from "@effect/schema";
 import { NodeContext } from "@effect/platform-node";
@@ -124,7 +124,7 @@ export declare const createActor: <T>({ canisterId, canisterDID, }: {
     canisterId: string;
     canisterDID: any;
 }) => Effect.Effect<{
-    actor: ActorSubclass<Record<string, import("@dfinity/agent").ActorMethod<unknown[], unknown>>>;
+    actor: ActorSubclass<Record<string, import("@icp-sdk/core/agent").ActorMethod<unknown[], unknown>>>;
     canisterId: string;
     getControllers: () => Promise<void>;
     addControllers: (controllers: Array<string>) => Effect.Effect<void, import("@effect/platform/Error").PlatformError, import("effect/Scope").Scope>;

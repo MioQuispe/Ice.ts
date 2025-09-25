@@ -1,6 +1,6 @@
-import { IDL } from '@dfinity/candid';
-import { Principal } from '@dfinity/principal';
-import { Identity } from '@dfinity/agent';
+import { IDL } from '@icp-sdk/core/candid';
+import { Principal } from '@icp-sdk/core/principal';
+import { Identity } from '@icp-sdk/core/agent';
 import { PocketIcClient } from './pocket-ic-client';
 
 export function decodeCandid<T>(
