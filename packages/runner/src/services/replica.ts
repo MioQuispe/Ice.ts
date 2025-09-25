@@ -5,6 +5,111 @@ import { Principal } from "@dfinity/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
 
+
+export type SubnetType = "II" | "Application" | "Fiduciary" | "NNS" | "SNS" | "Bitcoin"
+
+export const subnetRanges: Record<SubnetType, [string, string][]> = {
+	II: [
+		["00000000000000070101", "00000000000000070101"],
+		["00000000021000000101", "00000000021FFFFF0101"],
+		["FFFFFFFFFFC000000101", "FFFFFFFFFFCFFFFF0101"],
+	],
+	Application: [["FFFFFFFFFF9000000101", "FFFFFFFFFF9FFFFF0101"]],
+	Fiduciary: [
+		["00000000023000000101", "00000000023FFFFF0101"],
+		["FFFFFFFFFFB000000101", "FFFFFFFFFFBFFFFF0101"],
+	],
+	NNS: [
+		["00000000000000000101", "00000000000000060101"],
+		["00000000000000080101", "00000000000FFFFF0101"],
+		["FFFFFFFFFFE000000101", "FFFFFFFFFFEFFFFF0101"],
+	],
+	SNS: [
+		["00000000020000000101", "00000000020FFFFF0101"],
+		["FFFFFFFFFFD000000101", "FFFFFFFFFFDFFFFF0101"],
+	],
+	Bitcoin: [
+		["0000000001A000000101", "0000000001AFFFFF0101"],
+		["FFFFFFFFFFA000000101", "FFFFFFFFFFAFFFFF0101"],
+	],
+}
+
+export const generateRandomCanisterIdInRange = (
+	startHex: string,
+	endHex: string,
+): string => {
+	const start = BigInt(`0x${startHex}`)
+	const end = BigInt(`0x${endHex}`)
+	const range = end - start + 1n
+
+	// Generate random BigInt within range
+	const randomBytes = new Uint8Array(10)
+	crypto.getRandomValues(randomBytes)
+
+	let randomBigInt = 0n
+	for (let i = 0; i < 10; i++) {
+		randomBigInt = (randomBigInt << 8n) + BigInt(randomBytes[i]!)
+	}
+
+	const scaledRandom = start + (randomBigInt % range)
+
+	// Convert back to 10-byte array
+	const hex = scaledRandom.toString(16).padStart(20, "0")
+	const bytes = new Uint8Array(10)
+	for (let i = 0; i < 10; i++) {
+		bytes[i] = parseInt(hex.substr(i * 2, 2), 16)
+	}
+
+	return Principal.fromUint8Array(bytes).toString()
+}
+
+export const makeCanisterId = (
+	ranges: [string, string][] = subnetRanges.NNS,
+): string => {
+	const randomRange = ranges[Math.floor(Math.random() * ranges.length)]
+	const [startHex, endHex] = randomRange!
+
+	return generateRandomCanisterIdInRange(startHex, endHex)
+	//   return generateRandomCanisterIdInSubnet(subnetType)
+}
+
+/**
+ * Check whether a `canisterId` lies within any of the provided 10-byte ranges.
+ * Ranges are inclusive of both start and end.
+ */
+export const isCanisterIdInRanges = (params: {
+    canisterId: string
+    ranges: [string, string][]
+}): boolean => {
+    const { canisterId, ranges } = params
+    let bytes: Uint8Array
+    try {
+        bytes = Principal.fromText(canisterId).toUint8Array()
+    } catch {
+        return false
+    }
+    if (bytes.length !== 10) return false
+    let value = 0n
+    for (let i = 0; i < 10; i++) value = (value << 8n) + BigInt(bytes[i]!)
+    for (const [startHex, endHex] of ranges) {
+        const start = BigInt(`0x${startHex}`)
+        const end = BigInt(`0x${endHex}`)
+        if (value >= start && value <= end) return true
+    }
+    return false
+}
+
+/**
+ * Convenience wrapper: check whether `canisterId` is in the ranges for a given `SubnetType`.
+ */
+export const isCanisterIdInSubnet = (params: {
+    canisterId: string
+    subnetType: SubnetType
+}): boolean => {
+    const { canisterId, subnetType } = params
+    return isCanisterIdInRanges({ canisterId, ranges: subnetRanges[subnetType] })
+}
+
 export const InstallModes = type("'install' | 'upgrade' | 'reinstall'")
 // TODO: this gets a weird type. maybe arktype bug?
 // export type InstallModes = typeof InstallModes.infer

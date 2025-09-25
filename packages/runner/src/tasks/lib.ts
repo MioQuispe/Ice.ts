@@ -649,7 +649,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				const taskResult = yield* Deferred.await(inflight).pipe(
 					Effect.catchAll((error) => {
 						return new TaskRuntimeError({
-							message: "Error awaiting inflight task",
+							message: `Error awaiting inflight task for task ${taskPath}`,
 							error,
 						})
 					}),
@@ -708,7 +708,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							try: () => cachedTask.input(taskCtx),
 							catch: (error) => {
 								return new TaskRuntimeError({
-									message: "Error getting cached task input",
+									message: `Error getting cached task input for task ${taskPath}`,
 									error,
 								})
 							},
@@ -757,7 +757,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 										catch: (error) => {
 											return new TaskRuntimeError({
 												message:
-													"Error revalidating cached task",
+													`Error revalidating cached task ${taskPath}`,
 												error,
 											})
 										},
@@ -815,7 +815,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 									catch: (error) => {
 										return new TaskRuntimeError({
 											message:
-												"Error decoding cached task",
+												`Error decoding cached task ${taskPath}`,
 											error,
 										})
 									},
@@ -841,7 +841,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								return yield* Effect.fail(
 									new TaskRuntimeError({
 										message:
-											"Cache hit, but failed to read cache",
+											`Cache hit, but failed to read cache for task ${taskPath}`,
 									}),
 								)
 							}
@@ -853,7 +853,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								try: () => cachedTask.effect(taskCtx),
 								catch: (error) => {
 									return new TaskRuntimeError({
-										message: "Error executing cached task",
+										message: `Error executing cached task ${taskPath}`,
 										error,
 									})
 								},
@@ -868,7 +868,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 									cachedTask.encode(taskCtx, result, input),
 								catch: (error) => {
 									return new TaskRuntimeError({
-										message: "Error encoding cached task",
+										message: `Error encoding cached task ${taskPath}`,
 										error,
 									})
 								},
@@ -901,7 +901,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							try: () => task.effect(taskCtx),
 							catch: (error) => {
 								return new TaskRuntimeError({
-									message: "Error executing task",
+									message: `Error executing task ${taskPath}`,
 									error,
 								})
 							},

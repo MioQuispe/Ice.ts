@@ -63,8 +63,9 @@ export const baseLayer = Layer.mergeAll(
 	configLayer,
 	// TODO: ??
 	// telemetryLayer,
-	ClackLoggingLive,
-    // TODO: get logLevel
+	// ClackLoggingLive,
+	Logger.pretty,
+	// TODO: get logLevel
 	Logger.minimumLogLevel(LogLevel.Debug),
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
@@ -133,13 +134,13 @@ export const makeConfigTask = <
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
 >(
-    builderLayer: BuilderLayer,
+	builderLayer: BuilderLayer,
 	configOrFn:
 		| ((args: { ctx: TaskCtxShape }) => Promise<Config>)
 		| ((args: { ctx: TaskCtxShape }) => Config)
 		| Config,
 ) => {
-    const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = ManagedRuntime.make(builderLayer)
 	return {
 		_tag: "task",
 		description: "Config task",
@@ -149,9 +150,9 @@ export const makeConfigTask = <
 		namedParams: {},
 		params: {},
 		positionalParams: [],
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					if (typeof configOrFn === "function") {
 						const configFn = configOrFn as (args: {
 							ctx: TaskCtxShape
@@ -170,12 +171,12 @@ export const makeConfigTask = <
 						return configResult
 					}
 					return configOrFn
-                })(),
-            ),
+				})(),
+			),
 		id: Symbol("canister/config"),
-        input: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_input")(function* () {
+		input: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_input")(function* () {
 					const { depResults } = taskCtx
 					const depCacheKeys = Record.map(
 						depResults,
@@ -184,21 +185,21 @@ export const makeConfigTask = <
 					return {
 						depCacheKeys,
 					}
-                })(),
-            ),
-        encode: (taskCtx, value) =>
-            runtime.runPromise(
-                Effect.fn("task_encode")(function* () {
+				})(),
+			),
+		encode: (taskCtx, value) =>
+			runtime.runPromise(
+				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-                })(),
-            ),
+				})(),
+			),
 		encodingFormat: "string",
-        decode: (taskCtx, value) =>
-            runtime.runPromise(
-                Effect.fn("task_decode")(function* () {
+		decode: (taskCtx, value) =>
+			runtime.runPromise(
+				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-                })(),
-            ),
+				})(),
+			),
 		computeCacheKey: (input) => {
 			return hashJson({
 				configHash: hashConfig(configOrFn),
@@ -239,12 +240,12 @@ export type CreateConfig = {
 }
 
 export const makeCreateTask = <Config extends CreateConfig>(
-    builderLayer: BuilderLayer,
+	builderLayer: BuilderLayer,
 	configTask: ConfigTask<Config>,
 	tags: string[] = [],
 ): CreateTask => {
 	const id = Symbol("canister/create")
-    const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = ManagedRuntime.make(builderLayer)
 	return {
 		_tag: "task",
 		id,
@@ -252,9 +253,9 @@ export const makeCreateTask = <Config extends CreateConfig>(
 		dependencies: {
 			config: configTask,
 		},
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					const path = yield* Path.Path
 					const fs = yield* FileSystem.FileSystem
 					// const canisterIdsService = yield* CanisterIdsService
@@ -329,16 +330,73 @@ export const makeCreateTask = <Config extends CreateConfig>(
 
 					const canisterId = isAlreadyInstalled
 						? resolvedCanisterId
-						: yield* replica.createCanister({
-								canisterId: resolvedCanisterId,
-								identity,
-							})
+						: yield* replica
+								.createCanister({
+									canisterId: resolvedCanisterId,
+									identity,
+								})
+								.pipe(
+									Effect.catchTag(
+										"CanisterCreateError",
+										(err) => {
+											if (
+												err.message.includes(
+													"not in subnet range",
+												)
+											) {
+												return Effect.gen(function* () {
+													const confirmResult =
+														yield* Effect.tryPromise(
+															{
+																try: () =>
+																	taskCtx.prompts.confirm(
+																		{
+																			// type: "confirm",
+																			message:
+																				"Target canister id is not in subnet range. Do you want to create a new canister?",
+																			initialValue: false,
+																		},
+																	),
+																catch: (
+																	error,
+																) => {
+																	return new TaskError(
+																		{
+																			message:
+																				String(
+																					error,
+																				),
+																		},
+																	)
+																},
+															},
+														)
+													if (!confirmResult) {
+														return yield* Effect.fail(
+															new TaskCancelled({
+																message:
+																	"Canister creation cancelled",
+															}),
+														)
+													}
+													return yield* replica.createCanister(
+														{
+															canisterId:
+																undefined,
+															identity,
+														},
+													)
+												})
+											}
+											return Effect.fail(err)
+										},
+									),
+								)
 					const { appDir, iceDir } = taskCtx
 					yield* Effect.logDebug(
 						"create Task: setting canisterId",
 						canisterId,
 					)
-					// TODO: integrate with cache?
 					yield* Effect.tryPromise({
 						try: () =>
 							taskCtx.canisterIds.setCanisterId({
@@ -353,20 +411,20 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					const outDir = path.join(iceDir, "canisters", canisterName)
 					yield* fs.makeDirectory(outDir, { recursive: true })
 					return canisterId
-                })(),
-            ),
-        encode: (taskCtx, value) =>
-            runtime.runPromise(
-                Effect.fn("task_encode")(function* () {
+				})(),
+			),
+		encode: (taskCtx, value) =>
+			runtime.runPromise(
+				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-                })(),
-            ),
-        decode: (taskCtx, value) =>
-            runtime.runPromise(
-                Effect.fn("task_decode")(function* () {
+				})(),
+			),
+		decode: (taskCtx, value) =>
+			runtime.runPromise(
+				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-                })(),
-            ),
+				})(),
+			),
 		encodingFormat: "string",
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -375,9 +433,9 @@ export const makeCreateTask = <Config extends CreateConfig>(
 				network: input.network,
 			})
 		},
-        input: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_input")(function* () {
+		input: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_input")(function* () {
 					const {
 						taskPath,
 						roles: {
@@ -393,11 +451,11 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						network: taskCtx.currentNetwork,
 					}
 					return input
-                })(),
-            ),
-        revalidate: (taskCtx, { input }) =>
-            runtime.runPromise(
-                Effect.fn("task_revalidate")(function* () {
+				})(),
+			),
+		revalidate: (taskCtx, { input }) =>
+			runtime.runPromise(
+				Effect.fn("task_revalidate")(function* () {
 					const {
 						replica,
 						roles: { deployer },
@@ -448,8 +506,8 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					}
 
 					return false
-                })(),
-            ),
+				})(),
+			),
 		description: "Create custom canister",
 		// TODO: caching? now task handles it already
 		tags: [Tags.CANISTER, Tags.CREATE, ...tags],
@@ -1025,19 +1083,17 @@ export function normalizeDepsMap(
 	)
 }
 
-export const makeStopTask = (
-    builderLayer: BuilderLayer,
-): StopTask => {
-    const runtime = ManagedRuntime.make(builderLayer)
-    return {
+export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
+	const runtime = ManagedRuntime.make(builderLayer)
+	return {
 		_tag: "task",
 		id: Symbol("customCanister/stop"),
 		dependsOn: {},
 		dependencies: {},
 		// TODO: do we allow a fn as args here?
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
@@ -1080,8 +1136,8 @@ export const makeStopTask = (
 						identity,
 					})
 					yield* Effect.logDebug(`Stopped canister ${canisterName}`)
-                })(),
-            ),
+				})(),
+			),
 		description: "Stop canister",
 		// TODO: no tag custom
 		tags: [Tags.CANISTER, Tags.STOP],
@@ -1091,19 +1147,17 @@ export const makeStopTask = (
 	} satisfies Task<void>
 }
 
-export const makeRemoveTask = (
-    builderLayer: BuilderLayer,
-): RemoveTask => {
-    const runtime = ManagedRuntime.make(builderLayer)
-    return {
+export const makeRemoveTask = (builderLayer: BuilderLayer): RemoveTask => {
+	const runtime = ManagedRuntime.make(builderLayer)
+	return {
 		_tag: "task",
 		id: Symbol("customCanister/remove"),
 		dependsOn: {},
 		dependencies: {},
 		// TODO: do we allow a fn as args here?
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
@@ -1141,8 +1195,8 @@ export const makeRemoveTask = (
 					})
 					// yield* canisterIdsService.removeCanisterId(canisterName)
 					yield* Effect.logDebug(`Removed canister ${canisterName}`)
-                })(),
-            ),
+				})(),
+			),
 		description: "Remove canister",
 		// TODO: no tag custom
 		tags: [Tags.CANISTER, Tags.REMOVE],
@@ -1153,11 +1207,11 @@ export const makeRemoveTask = (
 }
 
 export const makeCanisterStatusTask = (
-    builderLayer: BuilderLayer,
+	builderLayer: BuilderLayer,
 	tags: string[],
 ): StatusTask => {
-    const runtime = ManagedRuntime.make(builderLayer)
-    return {
+	const runtime = ManagedRuntime.make(builderLayer)
+	return {
 		_tag: "task",
 		// TODO: change
 		id: Symbol("canister/status"),
@@ -1165,9 +1219,9 @@ export const makeCanisterStatusTask = (
 		// TODO: we only want to warn at a type level?
 		// TODO: type Task
 		dependencies: {},
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					// TODO:
 					const { replica, currentNetwork } = taskCtx
 					const { taskPath } = taskCtx
@@ -1219,8 +1273,8 @@ export const makeCanisterStatusTask = (
 						status,
 						info: canisterInfo,
 					}
-                })(),
-            ),
+				})(),
+			),
 		description: "Get canister status",
 		tags: [Tags.CANISTER, Tags.STATUS, ...tags],
 		namedParams: {},
@@ -1522,7 +1576,7 @@ export const makeInstallArgsTask = <
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
 >(
-    builderLayer: BuilderLayer,
+	builderLayer: BuilderLayer,
 	installArgs: {
 		fn: (args: {
 			ctx: TaskCtxShape
@@ -1549,8 +1603,8 @@ export const makeInstallArgsTask = <
 	},
 	dependencies: P,
 ): InstallArgsTask<_SERVICE, I, U, D, P> => {
-    const runtime = ManagedRuntime.make(builderLayer)
-    return {
+	const runtime = ManagedRuntime.make(builderLayer)
+	return {
 		_tag: "task",
 		id: Symbol("customCanister/install_args"),
 		dependsOn: {} as D,
@@ -1559,9 +1613,9 @@ export const makeInstallArgsTask = <
 		namedParams: installArgsParams,
 		positionalParams: [],
 		params: installArgsParams,
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					yield* Effect.logDebug(
 						"Starting custom canister installation",
 					)
@@ -1738,8 +1792,8 @@ export const makeInstallArgsTask = <
 						// mode,
 						canisterName,
 					}
-                })(),
-            ),
+				})(),
+			),
 		description: "Generate install args for canister",
 		tags: [Tags.CANISTER, Tags.INSTALL_ARGS],
 		// TODO: add network?
@@ -1757,9 +1811,9 @@ export const makeInstallArgsTask = <
 			}
 			return hashJson(keyInput)
 		},
-        input: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_input")(function* () {
+		input: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_input")(function* () {
 					const { args } = taskCtx
 					const { taskPath, depResults } = taskCtx
 					const taskArgs = args as {
@@ -1793,14 +1847,14 @@ export const makeInstallArgsTask = <
 						installArgsFn: installArgs.fn,
 						upgradeArgsFn: upgradeArgs.fn,
 					}
-                    return input
-                })(),
-            ),
+					return input
+				})(),
+			),
 		encodingFormat: "string",
 
-        encode: (taskCtx, result, input) =>
-            runtime.runPromise(
-                Effect.fn("task_encode")(function* () {
+		encode: (taskCtx, result, input) =>
+			runtime.runPromise(
+				Effect.fn("task_encode")(function* () {
 					yield* Effect.logDebug("encoding:", result)
 					return yield* encodeWithBigInt({
 						canisterName: result.canisterName,
@@ -1816,12 +1870,12 @@ export const makeInstallArgsTask = <
 								result.upgradeArgs.encoded,
 							),
 						},
-                    })
-                })(),
-            ),
-        decode: (taskCtx, value, input) =>
-            runtime.runPromise(
-                Effect.fn("task_decode")(function* () {
+					})
+				})(),
+			),
+		decode: (taskCtx, value, input) =>
+			runtime.runPromise(
+				Effect.fn("task_decode")(function* () {
 					const {
 						canisterName,
 						installArgs: decodedInstallArgs,
@@ -1871,19 +1925,19 @@ export const makeInstallArgsTask = <
 							fn: upgradeArgs.fn,
 						},
 					}
-                    return decoded
-                })(),
-            ),
+					return decoded
+				})(),
+			),
 	} satisfies InstallArgsTask<_SERVICE, I, U, D, P>
 }
 
 export const makeInstallTask = <_SERVICE, I, U>(
-    builderLayer: BuilderLayer,
+	builderLayer: BuilderLayer,
 	installArgsTask: InstallArgsTask<_SERVICE, I, U>,
 ): InstallTask<_SERVICE, I, U> => {
-    // TODO: canister installed, but cache deleted. should use reinstall, not install
-    const runtime = ManagedRuntime.make(builderLayer)
-    return {
+	// TODO: canister installed, but cache deleted. should use reinstall, not install
+	const runtime = ManagedRuntime.make(builderLayer)
+	return {
 		_tag: "task",
 		id: Symbol("customCanister/install"),
 		dependsOn: {},
@@ -1894,9 +1948,9 @@ export const makeInstallTask = <_SERVICE, I, U>(
 		namedParams: installParams,
 		positionalParams: [],
 		params: installParams,
-        effect: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_effect")(function* () {
+		effect: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_effect")(function* () {
 					yield* Effect.logDebug(
 						"Starting custom canister installation",
 					)
@@ -2062,8 +2116,8 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						// TODO: plugin which transforms install tasks?
 						// actor: proxyActor(canisterName, actor),
 					}
-                })(),
-            ),
+				})(),
+			),
 		description: "Install canister code",
 		tags: [Tags.CANISTER, Tags.CUSTOM, Tags.INSTALL],
 		// TODO: add network?
@@ -2092,9 +2146,9 @@ export const makeInstallTask = <_SERVICE, I, U>(
 			}
 			return hashJson(keyInput)
 		},
-        input: (taskCtx) =>
-            runtime.runPromise(
-                Effect.fn("task_input")(function* () {
+		input: (taskCtx) =>
+			runtime.runPromise(
+				Effect.fn("task_input")(function* () {
 					const { args } = taskCtx
 					const { taskPath, depResults } = taskCtx
 					const taskArgs = args as InstallTaskArgs
@@ -2188,12 +2242,12 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						installArgsDigest,
 						upgradeArgsDigest,
 					}
-                    return input
-                })(),
-            ),
-        revalidate: (taskCtx, { input }) =>
-            runtime.runPromise(
-                Effect.fn("task_revalidate")(function* () {
+					return input
+				})(),
+			),
+		revalidate: (taskCtx, { input }) =>
+			runtime.runPromise(
+				Effect.fn("task_revalidate")(function* () {
 					const {
 						replica,
 						roles: { deployer },
@@ -2248,14 +2302,14 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					) {
 						return true
 					}
-                    return false
-                })(),
-            ),
+					return false
+				})(),
+			),
 		encodingFormat: "string",
 
-        encode: (taskCtx, result, input) =>
-            runtime.runPromise(
-                Effect.fn("task_encode")(function* () {
+		encode: (taskCtx, result, input) =>
+			runtime.runPromise(
+				Effect.fn("task_encode")(function* () {
 					yield* Effect.logDebug(
 						"encoding task result",
 						//  result
@@ -2267,11 +2321,11 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						encodedArgs: uint8ArrayToJsonString(result.encodedArgs),
 						args: result.args,
 					})
-                })(),
-            ),
-        decode: (taskCtx, value, input) =>
-            runtime.runPromise(
-                Effect.fn("task_decode")(function* () {
+				})(),
+			),
+		decode: (taskCtx, value, input) =>
+			runtime.runPromise(
+				Effect.fn("task_decode")(function* () {
 					const {
 						canisterId,
 						canisterName,
@@ -2332,9 +2386,9 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						encodedArgs,
 						args: initArgs,
 					}
-                    return decoded
-                })(),
-            ),
+					return decoded
+				})(),
+			),
 	} satisfies InstallTask<_SERVICE, I, U>
 }
 

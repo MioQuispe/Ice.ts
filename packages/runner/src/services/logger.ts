@@ -55,10 +55,8 @@ const normalizeMessage = (message: unknown): string => {
                 ? m
                 : util.inspect(m, { colors: false, depth: 6, breakLength: Infinity }),
         )
-        // If callers passed a single large string in an array, preserve exact content
-        return parts.join("")
+        return parts.length === 1 ? parts[0]! : parts.join(" ")
     }
-    // For objects and others, render compactly without '+\n' concatenations
     return util.inspect(message, { colors: false, depth: 6, breakLength: Infinity })
 }
 

@@ -34,6 +34,9 @@ import {
 	Replica,
 	CanisterInfo,
 	CanisterStatusResult,
+	isCanisterIdInSubnet,
+	isCanisterIdInRanges,
+	subnetRanges,
 } from "../replica.js"
 import { sha256 } from "js-sha256"
 import type { log_visibility } from "@dfinity/agent/lib/cjs/canisters/management_service.js"
@@ -527,6 +530,33 @@ export const picReplicaImpl = Effect.gen(function* () {
 				const targetCanisterId = canisterId
 					? Principal.fromText(canisterId)
 					: undefined
+
+				// const isInRange =
+
+				// TODO: need to check if target is in subnet range
+				if (
+					targetCanisterId &&
+					!isCanisterIdInRanges({
+						canisterId: targetCanisterId.toText(),
+						// TODO: get from config?
+						ranges: [
+							...subnetRanges.NNS,
+							...subnetRanges.Application,
+
+							// ...subnetRanges.Fiduciary,
+							// ...subnetRanges.SNS,
+							// ...subnetRanges.Bitcoin,
+						],
+					})
+				) {
+					// TODO: prompt new canisterId?
+					return yield* Effect.fail(
+						new CanisterCreateError({
+							message: `Target canister id is not in subnet range`,
+						}),
+					)
+				}
+
 				const createResult = yield* Effect.tryPromise({
 					try: () =>
 						pic.createCanister({
