@@ -1,0 +1,45 @@
+{
+	"name": "@ice.ts/pocket-ic",
+	"version": "0.0.1",
+	"description": "Vendored PocketIC binary (10.0.0, macOS arm64) with a JS shim.",
+	"license": "ISC",
+	"author": "Mio Quispe",
+	"type": "module",
+	"main": "dist/index.js",
+	"module": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"require": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"pocket-ic": "dist/run-bin.js"
+	},
+	"files": [
+		"dist",
+		"10.0.0/pocket-ic",
+		"README.md"
+	],
+	"os": [
+		"darwin"
+	],
+	"cpu": [
+		"arm64"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"build": "tsup",
+		"prepare": "npm run build",
+		"test": "echo \"no tests\""
+	},
+	"devDependencies": {
+		"tsup": "^8.5.0",
+		"typescript": "^5.6.2"
+	}
+}

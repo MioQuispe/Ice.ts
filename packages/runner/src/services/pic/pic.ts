@@ -1,4 +1,15 @@
-import { Effect, Layer, Context, Data, Config, Ref, Schedule } from "effect"
+import {
+	Effect,
+	Layer,
+	Context,
+	Data,
+	Config,
+	Ref,
+	Schedule,
+	Stream,
+	Fiber,
+	Scope,
+} from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { Principal } from "@icp-sdk/core/principal"
 import {
@@ -36,6 +47,7 @@ import {
 	isCanisterIdInRanges,
 	subnetRanges,
 	CanisterCreateRangeError,
+	ReplicaError,
 } from "../replica.js"
 import { sha256 } from "js-sha256"
 import * as url from "node:url"
@@ -44,42 +56,77 @@ import {
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
 import type * as ActorTypes from "../../types/actor.js"
+import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
+import { decodeText, runFold } from "effect/Stream"
+import {
+	startPocketIcWithMonitor,
+	ensureBackgroundPocketIc,
+} from "./pic-process.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 export const picReplicaImpl = Effect.gen(function* () {
+	const scope = yield* Effect.scope
 	const commandExecutor = yield* CommandExecutor.CommandExecutor
 	const path = yield* Path.Path
-	// const port = 8080
-	// const host = "http://0.0.0.0"
+	// TODO: make it configurable
+	const RUN_IN_BACKGROUND = true
+	const DEFAULT_IP = "0.0.0.0"
+	const DEFAULT_PORT = 8081
 
-	const picPath = path.resolve(__dirname, "./pocket-ic")
-	// const dirUrl = new URL(".", import.meta.url).href
-	// TODO: pocket-ic isnt moved to dist/
-	// we need to move it in the build step and get the url somehow
+	// Decide mode & ensure server
+	let host: string
+	let port: number
+	let monitorPid: number | undefined
+	let monitorFiber:
+		| Fiber.Fiber<never, ReplicaError | PlatformError>
+		| undefined
 
-	// TODO: fix!
-	const port = 8081
-	const ipAddr = "0.0.0.0"
-	const host = `http://${ipAddr}`
-	// const command = Command.make(picPath, "--ip-addr", ipAddr, "--port", port.toString())
-	// yield* Effect.log(`Starting pocket-ic: ${command.toString()}`)
-	// const pocketIcProcess = yield* commandExecutor
-	// 	.start(command)
-	// 	.pipe(Effect.scoped)
+	if (RUN_IN_BACKGROUND) {
+		// Reuse or start background PIC (persisting beyond this process)
+		const bg = yield* ensureBackgroundPocketIc({
+			ip: DEFAULT_IP,
+			port: DEFAULT_PORT,
+			ttlSeconds: 9_999_999_999,
+		})
+		host = bg.host
+		port = bg.port
+		yield* Effect.logDebug(
+			`[pocket-ic] background ${bg.reused ? "reused" : "started"} pid ${bg.pid} @ ${host}:${port}`,
+		)
+		// No finalizer: stays running intentionally.
+	} else {
+		// Foreground: monitor watches parent & we also add a scope finalizer to kill it on exit
+		const fg = yield* startPocketIcWithMonitor({
+			ip: DEFAULT_IP,
+			port: DEFAULT_PORT,
+			ttlSeconds: 9_999_999_999,
+			background: false,
+		})
+		host = fg.host
+		port = fg.port
+		monitorPid = fg.monitorPid
+		monitorFiber = fg.monitorFiber
 
-	// // const picServer = yield* Effect.tryPromise(() => PocketIcServer.start())
-	// // const url = picServer.getUrl()
-	// yield* Effect.log(`Pocket-ic started: ${pocketIcProcess.pid}, url: ${host}:${port}`)
-	// url example: http://127.0.0.1:65127
-	// TODO: split url into host and port
-	// const urlParts = new URL(url)
-	// const host = `http://${urlParts.hostname}`
-	// const port = Number.parseInt(urlParts.port, 10)
-	// const port = 8080
+		yield* Effect.logDebug(
+			`Pocket-IC monitor started (pid ${monitorPid}) -> ${host}:${port}`,
+		)
+
+		// On scope end, signal the monitor; it will tear down the whole group.
+		yield* Effect.addFinalizer(() =>
+			Effect.sync(() => {
+				try {
+					if (monitorPid) process.kill(monitorPid, "SIGTERM")
+				} catch {}
+			}),
+		)
+	}
+
+	yield* Effect.logDebug(
+		`Pocket-ic monitor started: ${monitorPid}, url: ${host}:${port}`,
+	)
 	// const NNS_SUBNET_ID =
 	// 	"nt6ha-vabpm-j6nog-bkr62-vbgbt-swwzc-u54zn-odtoy-igwlu-ab7uj-4qe"
-
-	const customPocketIcClient = yield* Effect.tryPromise({
+	const CustomPocketIcClientEffect = Effect.tryPromise({
 		try: () =>
 			// TODO: creates a new instance every time?
 			CustomPocketIcClient.create(`${host}:${port}`, {
@@ -146,6 +193,16 @@ export const picReplicaImpl = Effect.gen(function* () {
 			),
 		),
 	)
+
+	const customPocketIcClient = monitorFiber
+		? // Foreground: race monitor stderr fatal watcher vs client readiness
+			yield* Effect.race(
+				Fiber.join(monitorFiber),
+				CustomPocketIcClientEffect,
+			)
+		: // Background: just wait for the client
+			yield* CustomPocketIcClientEffect
+
 	// Needed because the constructor is set as private, but we need to instantiate it this way
 	// @ts-ignore
 	const pic: PocketIc = new PocketIc(customPocketIcClient)
@@ -165,15 +222,6 @@ export const picReplicaImpl = Effect.gen(function* () {
 				message: `Failed to make pic live: ${error instanceof Error ? error.message : String(error)}`,
 			}),
 	}).pipe(Effect.ignore)
-
-	// const topology = yield* Effect.tryPromise({
-	// 	try: () => customPocketIcClient.getTopology(),
-	// 	catch: (error) =>
-	// 		new AgentError({
-	// 			message: `Failed to get topology: ${error instanceof Error ? error.message : String(error)}`,
-	// 		}),
-	// })
-	// console.log("topology", topology)
 
 	// const applicationSubnets = yield* Effect.tryPromise({
 	// 	try: () => pic.getApplicationSubnets(),
@@ -272,11 +320,6 @@ export const picReplicaImpl = Effect.gen(function* () {
 					canisterStatus = CanisterStatus.RUNNING
 					break
 			}
-			// if (result.module_hash.length > 0) {
-			//   console.log(
-			//     `Canister ${canisterName} is already installed. Skipping deployment.`,
-			//   )
-			// }
 			return canisterStatus
 		})
 
@@ -620,20 +663,25 @@ export const picReplicaImpl = Effect.gen(function* () {
 							...(targetCanisterId ? { targetCanisterId } : {}),
 							// TODO:
 							// targetSubnetId: nnsSubnet?.id!,
-                            ...(targetSubnetId ? { targetSubnetId } : {}),
+							...(targetSubnetId ? { targetSubnetId } : {}),
 							sender,
 						}),
 					catch: (error) => {
-                        if (error instanceof Error && error.message.includes("is invalid because it belongs to the canister allocation ranges of the test environment")) {
-                            return new CanisterCreateRangeError({
-                                    message: `Target canister id is in test environment range`,
-                                })
-                        }
+						if (
+							error instanceof Error &&
+							error.message.includes(
+								"is invalid because it belongs to the canister allocation ranges of the test environment",
+							)
+						) {
+							return new CanisterCreateRangeError({
+								message: `Target canister id is in test environment range`,
+							})
+						}
 						return new CanisterCreateError({
 							message: `Failed to create canister: ${error instanceof Error ? error.message : String(error)}`,
 							cause: new Error("Failed to create canister"),
 						})
-                    }
+					},
 				})
 				// pic.addCycles(createResult, 1_000_000_000_000_000)
 				return createResult.toText()
@@ -666,8 +714,6 @@ export const picReplicaImpl = Effect.gen(function* () {
 						}),
 				})
 			}),
-		// getCanisterStatus: yield* Effect.cachedFunction(getCanisterStatus),
-		// getCanisterInfo: yield* Effect.cachedFunction(getCanisterInfo),
 		getCanisterStatus,
 		getCanisterInfo,
 		createActor: <_SERVICE>({

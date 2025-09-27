@@ -21,12 +21,6 @@
       }
     ]
   },
-  "include": [
-    "packages/react/src/*",
-    "packages/svelte/src/*",
-    "packages/client/src/*",
-    "packages/client/src/providers/*"
-  ],
   "exclude": ["node_modules", "**/dist/**", "**/node_modules/**"],
   "ts-node": {
     "transpileOnly": true,

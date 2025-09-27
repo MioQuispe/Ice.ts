@@ -50,7 +50,6 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 			accountId: string
 		}
 	}
-	readonly replica: ReplicaService
 
 	readonly runTask: {
 		<T extends Task>(task: T): Promise<TaskSuccess<T>>
@@ -61,12 +60,10 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	}
 
 	readonly currentNetwork: string
+	readonly replica: ReplicaService
 	readonly networks: {
 		[key: string]: {
 			replica: ReplicaService
-			host: string
-			port: number
-			// subnet: Subnet?
 		}
 	}
 	readonly args: A

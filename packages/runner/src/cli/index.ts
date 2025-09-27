@@ -170,10 +170,14 @@ export const makeCliRuntime = ({
 
 	const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
 
-	const DefaultReplicaService = Layer.effect(
+	const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(configLayer),
+	)
+	const DefaultReplicaService = Layer.scoped(
 		DefaultReplica,
 		picReplicaImpl,
-	).pipe(Layer.provide(NodeContext.layer))
+	).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const DefaultsLayer = Layer
 	// 	.mergeAll
@@ -205,11 +209,6 @@ export const makeCliRuntime = ({
 
 	const TaskRegistryLayer = TaskRegistry.Live.pipe(
 		Layer.provide(KVStorageLayer),
-	)
-
-	const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
-		Layer.provide(NodeContext.layer),
-		Layer.provide(configLayer),
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))

@@ -61,7 +61,8 @@
     "ps-list": "^8.1.1",
     "sisteransi": "^1.0.5",
     "starkbank-ecdsa": "^1.1.5",
-    "tsx": "^4.20.4"
+    "tsx": "^4.20.4",
+    "@ice.ts/pocket-ic": "*"
   },
   "devDependencies": {
     "@ark/attest": "^0.48.2",

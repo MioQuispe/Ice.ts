@@ -1,12 +1,21 @@
 import { type Effect, Context, Data } from "effect"
-import type { ActorSubclass, HttpAgent, SignIdentity } from "@icp-sdk/core/agent"
+import type {
+	ActorSubclass,
+	HttpAgent,
+	SignIdentity,
+} from "@icp-sdk/core/agent"
 import type { canister_status_result } from "src/canisters/management_latest/management.types.js"
 import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
 
-
-export type SubnetType = "II" | "Application" | "Fiduciary" | "NNS" | "SNS" | "Bitcoin"
+export type SubnetType =
+	| "II"
+	| "Application"
+	| "Fiduciary"
+	| "NNS"
+	| "SNS"
+	| "Bitcoin"
 
 export const subnetRanges: Record<SubnetType, [string, string][]> = {
 	II: [
@@ -78,36 +87,39 @@ export const makeCanisterId = (
  * Ranges are inclusive of both start and end.
  */
 export const isCanisterIdInRanges = (params: {
-    canisterId: string
-    ranges: [string, string][]
+	canisterId: string
+	ranges: [string, string][]
 }): boolean => {
-    const { canisterId, ranges } = params
-    let bytes: Uint8Array
-    try {
-        bytes = Principal.fromText(canisterId).toUint8Array()
-    } catch {
-        return false
-    }
-    if (bytes.length !== 10) return false
-    let value = 0n
-    for (let i = 0; i < 10; i++) value = (value << 8n) + BigInt(bytes[i]!)
-    for (const [startHex, endHex] of ranges) {
-        const start = BigInt(`0x${startHex}`)
-        const end = BigInt(`0x${endHex}`)
-        if (value >= start && value <= end) return true
-    }
-    return false
+	const { canisterId, ranges } = params
+	let bytes: Uint8Array
+	try {
+		bytes = Principal.fromText(canisterId).toUint8Array()
+	} catch {
+		return false
+	}
+	if (bytes.length !== 10) return false
+	let value = 0n
+	for (let i = 0; i < 10; i++) value = (value << 8n) + BigInt(bytes[i]!)
+	for (const [startHex, endHex] of ranges) {
+		const start = BigInt(`0x${startHex}`)
+		const end = BigInt(`0x${endHex}`)
+		if (value >= start && value <= end) return true
+	}
+	return false
 }
 
 /**
  * Convenience wrapper: check whether `canisterId` is in the ranges for a given `SubnetType`.
  */
 export const isCanisterIdInSubnet = (params: {
-    canisterId: string
-    subnetType: SubnetType
+	canisterId: string
+	subnetType: SubnetType
 }): boolean => {
-    const { canisterId, subnetType } = params
-    return isCanisterIdInRanges({ canisterId, ranges: subnetRanges[subnetType] })
+	const { canisterId, subnetType } = params
+	return isCanisterIdInRanges({
+		canisterId,
+		ranges: subnetRanges[subnetType],
+	})
 }
 
 export const InstallModes = type("'install' | 'upgrade' | 'reinstall'")
@@ -221,7 +233,14 @@ export class AgentError extends Data.TaggedError("AgentError")<{
 	readonly message: string
 }> {}
 
+export class ReplicaError extends Data.TaggedError("ReplicaError")<{
+	readonly message: string
+}> {}
+
 export type ReplicaService = {
+    // TODO:
+    // topology: Topology
+	// subnet: Subnet?
 	host: string
 	port: number
 	// readonly createCanister: (params: {
@@ -266,7 +285,10 @@ export type ReplicaService = {
 		identity: SignIdentity
 	}) => Effect.Effect<
 		string,
-		CanisterCreateError | CanisterCreateRangeError | CanisterStatusError | AgentError
+		| CanisterCreateError
+		| CanisterCreateRangeError
+		| CanisterStatusError
+		| AgentError
 	> // returns canister id
 	createActor: <_SERVICE>(params: {
 		canisterId: string

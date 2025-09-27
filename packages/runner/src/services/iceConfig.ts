@@ -9,8 +9,6 @@ import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
 import { InstallModes } from "./replica.js"
 import { LogLevel } from "effect/LogLevel"
-// import { removeBuilders } from "../plugins/remove_builders.js"
-// import { candidUITaskPlugin } from "../plugins/candid-ui.js"
 
 export const removeBuilders = (
 	taskTree: TaskTree | TaskTreeNode,

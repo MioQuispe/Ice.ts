@@ -31,7 +31,7 @@ import { layerFileSystem, layerMemory } from "@effect/platform/KeyValueStore"
 import { CanisterIdsService } from "./canisterIds.js"
 import { DefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
-import { AgentError, DefaultReplica } from "./replica.js"
+import { AgentError, DefaultReplica, ReplicaError } from "./replica.js"
 import type { ICEConfig, ICECtx } from "../types/types.js"
 import { picReplicaImpl } from "./pic/pic.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
@@ -93,7 +93,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| InFlight
 			| IceDir
 			| PromptsService,
-			PlatformError | AgentError | TaskRuntimeError | MocError
+			PlatformError | ReplicaError | AgentError | TaskRuntimeError | MocError
 		>
 		taskLayer: Layer.Layer<
 			| OtelTracer
@@ -110,7 +110,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| TelemetryConfig
 			| InFlight
 			| IceDir,
-			PlatformError | AgentError | TaskRuntimeError | MocError
+			PlatformError | ReplicaError | AgentError | TaskRuntimeError | MocError
 		>
 	}
 >() {}
@@ -203,10 +203,6 @@ export const makeTaskLayer = () =>
 		const configLayer = Layer.setConfigProvider(
 			ConfigProvider.fromMap(configMap),
 		)
-		const DefaultReplicaService = Layer.effect(
-			DefaultReplica,
-			picReplicaImpl,
-		).pipe(Layer.provide(NodeContext.layer))
 		// TODO: dont pass down to child tasks
 		const ICEConfig = yield* ICEConfigService
 		const ICEConfigLayer = Layer.succeed(ICEConfigService, ICEConfig)
@@ -214,7 +210,10 @@ export const makeTaskLayer = () =>
 		const IceDirLayer = Layer.succeed(IceDir, iceDir)
 		// TODO: make it work for tests too
 		const telemetryConfig = yield* TelemetryConfig
-
+		const DefaultReplicaService = Layer.scoped(
+			DefaultReplica,
+			picReplicaImpl,
+		).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 		// const telemetryConfigLayer = Layer.succeed(
 		// 	TelemetryConfig,
@@ -258,9 +257,9 @@ export const makeTaskLayer = () =>
 			// DevTools.layerWebSocket().pipe(
 			// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
 			// ),
-            ICEConfigLayer,
-            telemetryConfigLayer,
-            ClackLoggingLive, // single-writer clack logger
+			ICEConfigLayer,
+			telemetryConfigLayer,
+			ClackLoggingLive, // single-writer clack logger
 			Logger.minimumLogLevel(ICEConfig.globalArgs.logLevel),
 			InFlightLayer,
 			IceDirLayer,

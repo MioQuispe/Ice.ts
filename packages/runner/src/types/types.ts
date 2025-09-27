@@ -36,6 +36,7 @@ export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
 >
 
 export type ReplicaConfig = {
+    // TODO: use pocket-ic subnet config
 	subnet: "system" | "application" | "verified_application"
 	// type?: "ephemeral" | "persistent"
 	bitcoin?: boolean
@@ -61,8 +62,6 @@ export type ICEConfig = {
 	networks: {
 		[key: string]: {
 			replica: ReplicaService
-			host: string
-			port: number
 		}
 	}
 }

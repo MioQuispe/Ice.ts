@@ -59,11 +59,6 @@ import { DeploymentsService } from "../../src/services/deployments.js"
 import { BuilderLayer } from "../../src/builders/lib.js"
 import { PromptsService } from "../../src/services/prompts.js"
 
-const DefaultReplicaService = Layer.effect(DefaultReplica, picReplicaImpl).pipe(
-	Layer.provide(NodeContext.layer),
-	// Layer.provide(configLayer),
-)
-
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
 export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 	const globalArgs = { network: "local", logLevel: LogLevel.Debug } as const
@@ -80,9 +75,6 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 	// 	// config,
 	// ).pipe(Layer.provide(NodeContext.layer))
 
-	const DefaultConfigLayer = DefaultConfig.Live.pipe(
-		Layer.provide(DefaultReplicaService),
-	)
 	const telemetryExporter = new InMemorySpanExporter()
 	const telemetryConfig = {
 		resource: { serviceName: "ice" },
@@ -109,6 +101,13 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 	const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
 		Layer.provide(NodeContext.layer),
 		Layer.provide(configLayer),
+	)
+	const DefaultReplicaService = Layer.scoped(
+		DefaultReplica,
+		picReplicaImpl,
+	).pipe(Layer.provide(NodeContext.layer), Layer.provide(iceDirLayer))
+	const DefaultConfigLayer = DefaultConfig.Live.pipe(
+		Layer.provide(DefaultReplicaService),
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
@@ -231,7 +230,25 @@ export const makeTestEnvEffect = (
 	// 	logLevel: LogLevel.Debug,
 	// } as const
 	const config = {} satisfies Partial<ICEConfig>
+	// separate for each test?
+	const configMap = new Map([
+		["APP_DIR", fs.realpathSync(process.cwd())],
+		// ["ICE_DIR_NAME", iceDir],
+	])
 
+	const configLayer = Layer.setConfigProvider(
+		ConfigProvider.fromMap(configMap),
+	)
+
+	const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(configLayer),
+	)
+
+	const DefaultReplicaService = Layer.scoped(
+		DefaultReplica,
+		picReplicaImpl,
+	).pipe(Layer.provide(NodeContext.layer), Layer.provide(iceDirLayer))
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(DefaultReplicaService),
 	)
@@ -256,22 +273,10 @@ export const makeTestEnvEffect = (
 	// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
 	const KVStorageLayer = layerMemory
 
-	// separate for each test?
-	const configMap = new Map([
-		["APP_DIR", fs.realpathSync(process.cwd())],
-		// ["ICE_DIR_NAME", iceDir],
-	])
-	const configLayer = Layer.setConfigProvider(
-		ConfigProvider.fromMap(configMap),
-	)
-
-	const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
-		Layer.provide(NodeContext.layer),
-		Layer.provide(configLayer),
-	)
-
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
-    const PromptsLayer = PromptsService.Live.pipe(Layer.provide(NodeContext.layer))
+	const PromptsLayer = PromptsService.Live.pipe(
+		Layer.provide(NodeContext.layer),
+	)
 
 	const testLayer = Layer.mergeAll(
 		// ICEConfigLayer,
