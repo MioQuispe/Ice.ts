@@ -200,6 +200,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 					Effect.annotateLogs("taskPath", taskPath),
 					Effect.withParentSpan(parentSpan),
 					Effect.withConcurrency("unbounded"),
+                    Effect.scoped,
 				),
 			)
 			return result

@@ -198,7 +198,9 @@ const dfxReplicaImpl = Effect.gen(function* () {
 						})
 						return {
 							...result,
-							status: Object.keys(result.status)[0] as CanisterStatus,
+							status: Object.keys(
+								result.status,
+							)[0] as CanisterStatus,
 						}
 					} catch (error) {
 						return { status: CanisterStatus.NOT_FOUND } as const
@@ -244,12 +246,15 @@ const dfxReplicaImpl = Effect.gen(function* () {
 								try: () =>
 									mgmt.upload_chunk({
 										chunk: Array.from(chunk),
-										canister_id: Principal.fromText(canisterId),
+										canister_id:
+											Principal.fromText(canisterId),
 									}),
 								catch: (error) =>
 									new CanisterInstallError({
 										message: `Failed to upload chunk: ${
-											error instanceof Error ? error.message : String(error)
+											error instanceof Error
+												? error.message
+												: String(error)
 										}`,
 									}),
 							}).pipe(
@@ -382,7 +387,9 @@ const dfxReplicaImpl = Effect.gen(function* () {
 							],
 							amount: Opt<bigint>(1_000_000_000_000_000_000n),
 							specified_id: Opt<Principal>(
-								canisterId ? Principal.fromText(canisterId) : undefined,
+								canisterId
+									? Principal.fromText(canisterId)
+									: undefined,
 							),
 							sender_canister_version: Opt<bigint>(0n),
 						}) as Promise<{ canister_id: Principal }>,
@@ -420,6 +427,9 @@ const dfxReplicaImpl = Effect.gen(function* () {
 							message: `Failed to delete canister: ${error instanceof Error ? error.message : String(error)}`,
 						}),
 				})
+			}),
+		stop: () =>
+			Effect.gen(function* () {
 			}),
 		getCanisterStatus,
 		getCanisterInfo,

@@ -33,7 +33,6 @@ import { DefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
 import { AgentError, DefaultReplica, ReplicaError } from "./replica.js"
 import type { ICEConfig, ICECtx } from "../types/types.js"
-import { picReplicaImpl } from "./pic/pic.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { TelemetryConfig } from "./telemetryConfig.js"
 import { makeTelemetryLayer } from "./telemetryConfig.js"
@@ -116,10 +115,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 >() {}
 
 const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
-
-const DefaultReplicaService = Layer.effect(DefaultReplica, picReplicaImpl).pipe(
-	Layer.provide(NodeContext.layer),
-)
 
 // const DefaultsLayer = Layer
 // 	.mergeAll
@@ -210,10 +205,17 @@ export const makeTaskLayer = () =>
 		const IceDirLayer = Layer.succeed(IceDir, iceDir)
 		// TODO: make it work for tests too
 		const telemetryConfig = yield* TelemetryConfig
-		const DefaultReplicaService = Layer.scoped(
-			DefaultReplica,
-			picReplicaImpl,
-		).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
+        const defaultReplica = yield* DefaultReplica
+        const DefaultReplicaService = Layer.succeed(DefaultReplica, defaultReplica)
+		// const DefaultReplicaService = Layer.scoped(
+		// 	DefaultReplica,
+		// 	picReplicaImpl({
+		// 		runInBackground: false,
+		// 		ip: "0.0.0.0",
+		// 		port: 8081,
+		// 		ttlSeconds: 9_999_999_999,
+		// 	}),
+		// ).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 		// const telemetryConfigLayer = Layer.succeed(
 		// 	TelemetryConfig,

@@ -8,6 +8,7 @@ import type { canister_status_result } from "src/canisters/management_latest/man
 import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
+import { PlatformError } from "@effect/platform/Error"
 
 export type SubnetType =
 	| "II"
@@ -296,6 +297,7 @@ export type ReplicaService = {
 		identity: SignIdentity
 	}) => Effect.Effect<ActorSubclass<_SERVICE>, AgentError>
 	getTopology: () => Effect.Effect<SubnetTopology[], AgentError>
+    stop: () => Effect.Effect<void, PlatformError>
 }
 
 export class Replica extends Context.Tag("Replica")<

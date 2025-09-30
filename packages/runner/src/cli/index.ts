@@ -16,7 +16,7 @@ import { Tags } from "../builders/lib.js"
 import { DeploymentError } from "../canister.js"
 import { CanisterIdsService } from "../services/canisterIds.js"
 import { ICEConfigService } from "../services/iceConfig.js"
-import { CanisterStatus, DefaultReplica } from "../services/replica.js"
+import { CanisterStatus, DefaultReplica, Replica } from "../services/replica.js"
 import {
 	filterNodes,
 	totalTaskCount,
@@ -145,6 +145,9 @@ export const resolveCliArgsMap = (
 const GlobalArgs = type({
 	network: "string" as const,
 	logLevel: "'debug' | 'info' | 'error'",
+	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
+		(str) => str === "1" || str === "true" || str === "" || str === true,
+	),
 }) satisfies StandardSchemaV1<Record<string, unknown>>
 
 const logLevelMap = {
@@ -154,7 +157,7 @@ const logLevelMap = {
 }
 
 type MakeCliRuntimeArgs = {
-	globalArgs: { network: string; logLevel: string }
+	globalArgs: { network: string; logLevel: string; background: boolean }
 	// fix type
 	telemetryExporter?: SpanExporter
 }
@@ -174,9 +177,15 @@ export const makeCliRuntime = ({
 		Layer.provide(NodeContext.layer),
 		Layer.provide(configLayer),
 	)
+
 	const DefaultReplicaService = Layer.scoped(
 		DefaultReplica,
-		picReplicaImpl,
+		picReplicaImpl({
+			background: globalArgs.background,
+			ip: "0.0.0.0",
+			port: 8081,
+			ttlSeconds: 9_999_999_999,
+		}),
 	).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const DefaultsLayer = Layer
@@ -314,27 +323,23 @@ function moduleHashToHexString(moduleHash: [] | [number[]]): string {
 
 const getGlobalArgs = (
 	cmdName: string,
-): { network: string; logLevel: string } => {
-	const runIndex = process.argv.indexOf(cmdName)
-	// TODO: simplify this
-	if (runIndex === -1) {
-		// just ice command
-		const argv = mri(process.argv.slice(2, 3), {
-			string: ["logLevel", "network"],
-		})
-		return {
-			network: argv?.["network"] ?? "local",
-			logLevel: argv?.["logLevel"] ?? "info",
-		}
-	}
-	const argv = mri(process.argv.slice(2, runIndex + 2), {
+): { network: string; logLevel: string; background: boolean } => {
+	const args = process.argv.slice(2)
+	// Stop at the first non-flag token (subcommand/positional)
+	const firstNonFlagIndex = args.findIndex((arg) => !arg.startsWith("-"))
+	const globalSlice = firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
+	const parsed = mri(globalSlice, {
+		boolean: ["background"],
 		string: ["logLevel", "network"],
-	})
-	const globalArgs = {
-		network: argv?.["network"] ?? "local",
-		logLevel: argv?.["logLevel"] ?? "info",
-	}
-	return globalArgs
+		default: { background: false },
+	}) as Record<string, unknown>
+	const rawLogLevel = String(parsed["logLevel"] ?? "info").toLowerCase()
+	const logLevel = ["debug", "info", "error"].includes(rawLogLevel)
+		? (rawLogLevel as "debug" | "info" | "error")
+		: "info"
+	const network = String(parsed["network"] ?? "local")
+	const background = Boolean(parsed["background"]) || parsed["background"] === ""
+	return { network, logLevel, background }
 }
 
 const globalArgs = {
@@ -351,6 +356,12 @@ const globalArgs = {
 		required: false,
 		default: "info",
 		description: "Select a log level",
+	},
+	background: {
+		type: "boolean",
+		required: false,
+		default: false,
+		description: "Run in background",
 	},
 } satisfies Resolvable<ArgsDef>
 
@@ -439,10 +450,12 @@ const initCommand = defineCommand({
 const deployRun = async ({
 	network,
 	logLevel,
+	background,
 	cliTaskArgs,
 }: {
 	network: string
 	logLevel: string
+	background: boolean
 	cliTaskArgs: {
 		positionalArgs: string[]
 		namedArgs: Record<string, string>
@@ -453,6 +466,7 @@ const deployRun = async ({
 	const globalArgs = {
 		network,
 		logLevel,
+		background,
 	}
 	const telemetryExporter = new InMemorySpanExporter()
 	// TODO: convert to task
@@ -509,6 +523,12 @@ const deployRun = async ({
 			Effect.provide(ChildTaskRuntimeLayer),
 			Effect.annotateLogs("caller", "deployRun"),
 		)
+
+        // TODO: clean up. use Replica
+        const replica = yield* DefaultReplica
+        yield* Effect.logInfo("Stopping replica")
+        yield* replica.stop()
+        yield* Effect.logInfo("Stopped replica")
 
 		const count = yield* Metric.value(totalTaskCount)
 		const cachedCount = yield* Metric.value(cachedTaskCount)
@@ -624,12 +644,13 @@ const canistersCreateCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("create")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -682,11 +703,12 @@ const canistersBuildCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("build")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -739,11 +761,12 @@ const canistersBindingsCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("bindings")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -799,12 +822,13 @@ const canistersInstallCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("install")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -858,11 +882,12 @@ const canistersStopCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("stop")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -944,11 +969,12 @@ const canistersStatusCommand = defineCommand({
 		// TODO: support canister name or ID
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("status")
-			const { network, logLevel } = globalArgs
+			const { network, logLevel, background } = globalArgs
 			await makeCliRuntime({
 				globalArgs: {
 					network,
 					logLevel,
+					background,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1042,11 +1068,12 @@ const canistersRemoveCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("remove")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
 				network,
 				logLevel,
+				background,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -1109,7 +1136,7 @@ const canistersDeployCommand = defineCommand({
 	},
 	run: async ({ args, rawArgs }) => {
 		const globalArgs = getGlobalArgs("deploy")
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1124,6 +1151,7 @@ const canistersDeployCommand = defineCommand({
 		await deployRun({
 			network,
 			logLevel,
+			background,
 			cliTaskArgs,
 		})
 	},
@@ -1141,7 +1169,7 @@ const canisterCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("canister")
-			const { network, logLevel } = globalArgs
+			const { network, logLevel, background } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1150,6 +1178,7 @@ const canisterCommand = defineCommand({
 				globalArgs: {
 					network,
 					logLevel,
+					background,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1260,7 +1289,7 @@ const taskCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("task")
-			const { network, logLevel } = globalArgs
+			const { network, logLevel, background } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1269,6 +1298,7 @@ const taskCommand = defineCommand({
 				globalArgs: {
 					network,
 					logLevel,
+					background,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1366,14 +1396,14 @@ const main = defineCommand({
 		)
 		const positionalArgs = parsedArgs._
 		const mode = namedArgs["mode"] as string | undefined
-		const { network, logLevel } = globalArgs
+		const { network, logLevel, background } = globalArgs
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
 		}
 
 		if (args._.length === 0) {
-			await deployRun({ network, logLevel, cliTaskArgs })
+			await deployRun({ network, logLevel, background, cliTaskArgs })
 			// await deployRun(globalArgs)
 		}
 	},
