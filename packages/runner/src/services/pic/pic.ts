@@ -9,6 +9,7 @@ import {
 	Stream,
 	Fiber,
 	Scope,
+	Option,
 } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { Principal } from "@icp-sdk/core/principal"
@@ -58,10 +59,7 @@ import {
 import type * as ActorTypes from "../../types/actor.js"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 import { decodeText, runFold } from "effect/Stream"
-import {
-	makeMonitor,
-	Monitor,
-} from "./pic-process.js"
+import { makeMonitor, Monitor } from "./pic-process.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -174,16 +172,15 @@ export const picReplicaImpl = ({
 			),
 		)
 
+		// Fail fast on foreground monitor stderr, otherwise just wait for client
+		const failFast = Option.isSome(monitor.stdErrFiber)
+			? Fiber.join(monitor.stdErrFiber.value)
+			: Effect.never
+
 		const customPocketIcClient = yield* Effect.race(
-			!background
-				? Fiber.join(monitor.stdErrFiber!)
-				: Effect.forever(Effect.never),
+			failFast,
 			CustomPocketIcClientEffect,
 		)
-		// monitor.onReady
-		// ? // Foreground: race monitor stderr fatal watcher vs client readiness
-		// : // Background: just wait for the client
-		// 	yield* CustomPocketIcClientEffect
 
 		// Needed because the constructor is set as private, but we need to instantiate it this way
 		// @ts-ignore

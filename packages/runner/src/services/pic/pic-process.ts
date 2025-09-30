@@ -1,6 +1,5 @@
 import { Deferred, Effect, Fiber, Option, Schedule, Stream } from "effect"
 import { FileSystem, Path, Command, CommandExecutor } from "@effect/platform"
-import os from "node:os"
 import * as url from "node:url"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 import { IceDir } from "../iceDir.js"
@@ -89,7 +88,7 @@ const waitTcpReady = (host: string, port: number, perTryMs = 800) =>
 			}),
 	})
 
-// Who owns <port>? If listener’s command matches pocketIcPath → Some(pid), else None.
+// If a process is listening on <port> AND its command looks like pocket-ic -> Some(pid) else None
 const pidByPortIfPocketIc = (port: number) =>
 	Effect.tryPromise({
 		try: () => find("port", port),
@@ -111,7 +110,7 @@ const pidByPortIfPocketIc = (port: number) =>
 	)
 
 export type Monitor = {
-	stdErrFiber?: Fiber.Fiber<never, ReplicaError | PlatformError>
+	stdErrFiber: Option.Option<Fiber.Fiber<never, ReplicaError | PlatformError>>
 	pid: number
 	host: string
 	port: number
@@ -137,87 +136,87 @@ export const makeMonitor = (opts: {
 			"../../../bin/monitor.js",
 		)
 		const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
+		const statePath = yield* statePathEffect
 
+		// --- Reuse: if we have state and the PID is alive & version matches
+		const st = yield* readState
+		if (Option.isSome(st)) {
+			const alive = yield* isPidAlive(st.value.pid)
+			const versionOk =
+				(st.value.version ?? pocketIcVersion) === pocketIcVersion
+			if (alive && versionOk) {
+				yield* waitTcpReady(ip, port).pipe(
+					Effect.retry(
+						Schedule.intersect(
+							Schedule.spaced("120 millis"),
+							Schedule.recurs(40),
+						),
+					),
+				)
+				const shutdown = () => {
+					// do NOT kill here automatically; this is a background server we reused
+					try {
+						/* noop or gentle signal if you decide */
+					} catch {}
+				}
+				return {
+					stdErrFiber: Option.none(),
+					reused: true,
+					pid: st.value.pid,
+					host: `http://${ip}`,
+					port,
+					shutdown,
+				} satisfies Monitor
+			} else {
+				yield* removeState
+			}
+		}
+
+		// --- Adopt: no state, but something already listening and it is pocket-ic → recreate state, reuse
+		const maybePid = yield* pidByPortIfPocketIc(port)
+		if (Option.isSome(maybePid)) {
+			const pid = maybePid.value
+			const alive = yield* isPidAlive(pid)
+			if (alive) {
+				yield* writeState({
+					pid,
+					startedAt: Date.now(),
+					binPath: pocketIcPath,
+					args: ["-i", ip, "-p", String(port), "--ttl", ttl],
+					version: pocketIcVersion,
+				})
+				yield* waitTcpReady(ip, port).pipe(
+					Effect.retry(
+						Schedule.intersect(
+							Schedule.spaced("120 millis"),
+							Schedule.recurs(40),
+						),
+					),
+				)
+				const shutdown = () => {
+					// same: we adopted a background instance; don't kill by default
+					try {
+						/* noop or gentle signal if you decide */
+					} catch {}
+				}
+				return {
+					stdErrFiber: Option.none(),
+					reused: true,
+					pid,
+					host: `http://${ip}`,
+					port,
+					shutdown,
+				} satisfies Monitor
+			}
+		}
+
+		// --- Start fresh
 		if (opts.background) {
-			const statePath = yield* statePathEffect
-
-			// 1) Try reuse (state)
-			const st = yield* readState
-			if (Option.isSome(st)) {
-				const alive = yield* isPidAlive(st.value.pid)
-				const versionOk =
-					(st.value.version ?? pocketIcVersion) === pocketIcVersion
-				if (alive && versionOk) {
-					// Ensure socket ready
-					yield* waitTcpReady(ip, port).pipe(
-						Effect.retry(
-							Schedule.intersect(
-								Schedule.spaced("120 millis"),
-								Schedule.recurs(40),
-							),
-						),
-					)
-					const shutdown = () => {
-						try {
-							if (st.value.pid)
-								process.kill(st.value.pid, "SIGTERM")
-						} catch {}
-					}
-					return {
-						reused: true,
-						pid: st.value.pid,
-						host: `http://${ip}`,
-						port,
-						shutdown,
-					} satisfies Monitor
-				} else {
-					yield* removeState
-				}
-			}
-
-			// 2) If no state: adopt only if current listener on port is *actually* pocket-ic
-			const maybePid = yield* pidByPortIfPocketIc(port)
-			if (Option.isSome(maybePid)) {
-				const pid = maybePid.value
-				const alive = yield* isPidAlive(pid)
-				if (alive) {
-					// Recreate state for the already-running PIC
-					yield* writeState({
-						pid,
-						startedAt: Date.now(),
-						binPath: pocketIcPath,
-						args: ["-i", ip, "-p", String(port), "--ttl", ttl],
-						version: pocketIcVersion,
-					})
-					// Be sure it's accepting
-					yield* waitTcpReady(ip, port).pipe(
-						Effect.retry(
-							Schedule.intersect(
-								Schedule.spaced("120 millis"),
-								Schedule.recurs(40),
-							),
-						),
-					)
-					const shutdown = () => {
-						try {
-							if (pid) process.kill(pid, "SIGTERM")
-						} catch {}
-					}
-					return {
-						reused: true,
-						pid,
-						host: `http://${ip}`,
-						port,
-						shutdown,
-					} satisfies Monitor
-				}
-			}
-
-			// 3) Start fresh in background via monitor
+			// Background via monitor.js (writes state + exits)
 			const cmd = Command.make(
 				process.execPath,
 				monitorPath,
-				...(opts.background ? ["--background"] : []), // never empty-arg
+				...["--background"],
 				"--state-file",
 				statePath,
 				"--parent",
@@ -233,17 +232,13 @@ export const makeMonitor = (opts: {
 				ttl,
 			)
 
-			yield* Effect.logDebug(
-				`[pocket-ic] starting.... with cmd: ${cmd.toString()}`,
-			)
-
+			yield* Effect.logDebug(`[pocket-ic] cmd: ${cmd.toString()}`)
 			const proc = yield* commandExec.start(cmd)
-
 			yield* Effect.logDebug(
-				`[pocket-ic] starting in background (monitor pid ${proc.pid})`,
+				`[pocket-ic] background monitor started (pid ${proc.pid})`,
 			)
 
-			// 3a) Wait state → PID alive (treat empty/invalid JSON as "not ready")
+			// Wait for state → parsed → pid alive
 			const state = yield* Effect.gen(function* () {
 				const exists = yield* fs.exists(statePath)
 				if (!exists) {
@@ -282,7 +277,7 @@ export const makeMonitor = (opts: {
 				),
 			)
 
-			// 3b) Confirm the listener PID is THIS state.pid (no port guessing)
+			// Verify listener ownership then TCP ready
 			yield* Effect.gen(function* () {
 				const owner = yield* pidByPortIfPocketIc(port)
 				if (Option.isNone(owner) || owner.value !== state.pid) {
@@ -302,7 +297,6 @@ export const makeMonitor = (opts: {
 				),
 			)
 
-			// 3c) Finally ensure TCP accepts
 			yield* waitTcpReady(ip, port).pipe(
 				Effect.retry(
 					Schedule.intersect(
@@ -312,18 +306,19 @@ export const makeMonitor = (opts: {
 				),
 			)
 
-			// 3d) Stamp version if missing
 			if (!state.version) {
 				yield* writeState({ ...state, version: pocketIcVersion })
 			}
 
 			const shutdown = () => {
+				// background: by design we keep it running; leave as no-op
 				try {
-					if (state.pid) process.kill(state.pid, "SIGTERM")
+					/* noop */
 				} catch {}
 			}
 
 			return {
+				stdErrFiber: Option.none(),
 				reused: false,
 				pid: state.pid,
 				host: `http://${ip}`,
@@ -332,11 +327,11 @@ export const makeMonitor = (opts: {
 			} satisfies Monitor
 		}
 
-		// foreground
+		// Foreground: start monitor.js (no state-file); watch stderr for fatals
 		const cmd = Command.make(
 			process.execPath,
 			monitorPath,
-			...(opts.background ? ["--background"] : []), // no empty-arg
+			// no --background
 			"--parent",
 			String(process.pid),
 			"--bin",
@@ -350,30 +345,23 @@ export const makeMonitor = (opts: {
 			ttl,
 		)
 
-		yield* Effect.logDebug(
-			`[pocket-ic] starting.... with cmd: ${cmd.toString()}`,
-		)
-
+		yield* Effect.logDebug(`[pocket-ic] cmd: ${cmd.toString()}`)
 		const proc = yield* commandExec.start(cmd)
-
 		yield* Effect.logDebug(
-			`[pocket-ic] starting in foreground (monitor pid ${proc.pid})`,
+			`[pocket-ic] foreground monitor started (pid ${proc.pid})`,
 		)
 
 		const fatalStderrMonitor = makeStdErrMonitor(proc, ip, port)
 		const stderrMonitorFiber = yield* Effect.forkScoped(fatalStderrMonitor)
+
 		const shutdownMonitor = () =>
 			Effect.sync(() => {
 				try {
 					if (proc.pid) process.kill(proc.pid, "SIGTERM")
 				} catch {}
 			})
-
 		yield* Effect.addFinalizer(shutdownMonitor)
 
-		yield* Effect.logDebug(
-			`Pocket-IC monitor started (pid ${proc.pid}) -> pocket-ic @ http://${ip}:${port}`,
-		)
 		const shutdown = () => {
 			try {
 				if (proc.pid) process.kill(proc.pid, "SIGTERM")
@@ -381,9 +369,9 @@ export const makeMonitor = (opts: {
 		}
 
 		return {
+			stdErrFiber: Option.some(stderrMonitorFiber),
 			reused: false,
 			pid: proc.pid,
-			stdErrFiber: stderrMonitorFiber,
 			host: `http://${ip}`,
 			port,
 			shutdown,
