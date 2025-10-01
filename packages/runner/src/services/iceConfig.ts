@@ -9,6 +9,7 @@ import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
 import { InstallModes } from "./replica.js"
 import { LogLevel } from "effect/LogLevel"
+import { IceDir } from "./iceDir.js"
 
 export const removeBuilders = (
 	taskTree: TaskTree | TaskTreeNode,
@@ -53,10 +54,13 @@ export class ICEConfigError extends Data.TaggedError("ICEConfigError")<{
 	message: string
 }> {}
 
-const createService = (globalArgs: { network: string; logLevel: LogLevel }) =>
+const createService = (globalArgs: {
+	network: string
+	logLevel: "debug" | "info" | "error"
+	background: boolean
+}) =>
 	Effect.gen(function* () {
 		// TODO: service?
-		const { network, logLevel } = globalArgs
 		const path = yield* Path.Path
 		const fs = yield* FileSystem.FileSystem
 		const appDirectory = yield* fs.realPath(process.cwd())
@@ -66,6 +70,7 @@ const createService = (globalArgs: { network: string; logLevel: LogLevel }) =>
 			configPath,
 			appDirectory,
 		})
+		const { path: iceDirPath } = yield* IceDir
 
 		// Wrap tsImport in a console.log monkey patch.
 		const mod = yield* Effect.tryPromise({
@@ -86,7 +91,7 @@ const createService = (globalArgs: { network: string; logLevel: LogLevel }) =>
 			Object.entries(mod).filter(([key]) => key !== "default"),
 		) as TaskTree
 		const transformedTaskTree = yield* applyPlugins(taskTree)
-		const iceCtx = { network }
+		const iceCtx = { iceDirPath, ...globalArgs }
 		let config: Partial<ICEConfig>
 		const d = mod.default
 		if (typeof d === "function") {
@@ -126,13 +131,13 @@ export class ICEConfigInject extends Context.Tag("ICEConfigInject")<
 	static readonly Test = Layer.effect(
 		ICEConfigInject,
 		Effect.gen(function* () {
-            let configRef = yield* Ref.make({})
-            let taskTreeRef = yield* Ref.make({})
-            return {
-                configRef,
-                taskTreeRef,
-            }
-        }),
+			let configRef = yield* Ref.make({})
+			let taskTreeRef = yield* Ref.make({})
+			return {
+				configRef,
+				taskTreeRef,
+			}
+		}),
 	)
 }
 
@@ -146,22 +151,25 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 		readonly taskTree: TaskTree
 		readonly globalArgs: {
 			network: string
-			logLevel: LogLevel
+			logLevel: "debug" | "info" | "error"
+			background: boolean
 		}
 	}
 >() {
 	static readonly Live = (globalArgs: {
 		network: string
-		logLevel: LogLevel
+		logLevel: "debug" | "info" | "error"
+		background: boolean
 	}) => Layer.effect(ICEConfigService, createService(globalArgs))
 
 	static readonly Test = (
 		globalArgs: {
 			network: string
-			logLevel: LogLevel
+			logLevel: "debug" | "info" | "error"
+			background: boolean
 		},
-        taskTree: TaskTree,
-        config: Partial<ICEConfig>,
+		taskTree: TaskTree,
+		config: Partial<ICEConfig>,
 	) =>
 		Layer.effect(
 			ICEConfigService,

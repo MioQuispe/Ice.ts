@@ -50,9 +50,9 @@ import fs from "node:fs"
 import { DefaultConfig } from "../services/defaultConfig.js"
 import { DfxReplica } from "../services/dfx.js"
 import { Moc } from "../services/moc.js"
-import { picReplicaImpl } from "../services/pic/pic.js"
+import { picReplicaImpl, PICReplicaLive } from "../services/pic/pic.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
-import type { ICEConfig, ICECtx } from "../types/types.js"
+import type { ICEConfig, ICEConfigContext } from "../types/types.js"
 import {
 	BatchSpanProcessor,
 	InMemorySpanExporter,
@@ -142,15 +142,20 @@ export const resolveCliArgsMap = (
 		return argsMap
 	})
 
-const GlobalArgs = type({
+export const GlobalArgs = type({
 	network: "string" as const,
 	logLevel: "'debug' | 'info' | 'error'",
 	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
 		(str) => str === "1" || str === "true" || str === "" || str === true,
 	),
 }) satisfies StandardSchemaV1<Record<string, unknown>>
+export type GlobalArgs = {
+	network: string
+	logLevel: "debug" | "info" | "error"
+	background: boolean
+}
 
-const logLevelMap = {
+export const logLevelMap = {
 	debug: LogLevel.Debug,
 	info: LogLevel.Info,
 	error: LogLevel.Error,
@@ -178,23 +183,22 @@ export const makeCliRuntime = ({
 		Layer.provide(configLayer),
 	)
 
-	const DefaultReplicaService = Layer.scoped(
-		DefaultReplica,
-		picReplicaImpl({
-			background: globalArgs.background,
-			ip: "0.0.0.0",
-			port: 8081,
-			ttlSeconds: 9_999_999_999,
-		}),
-	).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
+	//     // }, {
+	// 	// 	background: globalArgs.background,
+	// 	// 	ip: "0.0.0.0",
+	// 	// 	port: 8081,
+	// 	// 	ttlSeconds: 9_999_999_999,
+	// 	// }),
+	// ).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const DefaultsLayer = Layer
 	// 	.mergeAll
 	// 	()
 	const ICEConfigLayer = ICEConfigService.Live({
 		network: globalArgs.network,
-		logLevel: logLevelMap[globalArgs.logLevel],
-	}).pipe(Layer.provide(NodeContext.layer))
+		logLevel: globalArgs.logLevel,
+		background: globalArgs.background,
+	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const telemetryExporter = new OTLPTraceExporter()
 	// const spanProcessor = new BatchSpanProcessor(telemetryExporter)
@@ -233,15 +237,12 @@ export const makeCliRuntime = ({
 		// ),
 	)
 
-	const DefaultConfigLayer = DefaultConfig.Live.pipe(
-		Layer.provide(DefaultReplicaService),
-	)
 	const CanisterIdsLayer = CanisterIdsService.Live.pipe(
 		Layer.provide(NodeContext.layer),
 		Layer.provide(IceDirLayer),
 	)
 	const cliLayer = Layer.mergeAll(
-		DefaultConfigLayer,
+		// DefaultConfigLayer,
 		TaskRegistry.Live.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
@@ -262,7 +263,7 @@ export const makeCliRuntime = ({
 		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
-		DefaultReplicaService,
+		// DefaultReplicaService,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		ClackLoggingLive,
 		// clackLogger,
@@ -321,13 +322,12 @@ function moduleHashToHexString(moduleHash: [] | [number[]]): string {
 	return `0x${hexString}`
 }
 
-const getGlobalArgs = (
-	cmdName: string,
-): { network: string; logLevel: string; background: boolean } => {
+const getGlobalArgs = (cmdName: string): GlobalArgs => {
 	const args = process.argv.slice(2)
 	// Stop at the first non-flag token (subcommand/positional)
 	const firstNonFlagIndex = args.findIndex((arg) => !arg.startsWith("-"))
-	const globalSlice = firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
+	const globalSlice =
+		firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
 	const parsed = mri(globalSlice, {
 		boolean: ["background"],
 		string: ["logLevel", "network"],
@@ -338,7 +338,8 @@ const getGlobalArgs = (
 		? (rawLogLevel as "debug" | "info" | "error")
 		: "info"
 	const network = String(parsed["network"] ?? "local")
-	const background = Boolean(parsed["background"]) || parsed["background"] === ""
+	const background =
+		Boolean(parsed["background"]) || parsed["background"] === ""
 	return { network, logLevel, background }
 }
 
@@ -405,24 +406,38 @@ const runCommand = defineCommand({
 				yield* s.start(
 					`Running task... ${color.green(color.underline(args.taskPath))}`,
 				)
-				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
 					taskLayer,
 				})
-				yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.tap((result) =>
-						Effect.gen(function* () {
-							const count = yield* Metric.value(totalTaskCount)
-							const cachedCount =
-								yield* Metric.value(cachedTaskCount)
-							const uncachedCount =
-								yield* Metric.value(uncachedTaskCount)
-							const hitCount = yield* Metric.value(cacheHitCount)
-						}),
-					),
-				)
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							runTaskByPath(args.taskPath, cliTaskArgs).pipe(
+								Effect.provide(ChildTaskRuntimeLayer),
+							),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
+				// yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
+				// 	Effect.provide(ChildTaskRuntimeLayer),
+				// 	Effect.tap((result) =>
+				// 		Effect.gen(function* () {
+				// 			const count = yield* Metric.value(totalTaskCount)
+				// 			const cachedCount =
+				// 				yield* Metric.value(cachedTaskCount)
+				// 			const uncachedCount =
+				// 				yield* Metric.value(uncachedTaskCount)
+				// 			const hitCount = yield* Metric.value(cacheHitCount)
+				// 		}),
+				// 	),
+				// )
 				yield* s.stop(
 					`Finished task: ${color.green(color.underline(args.taskPath))}`,
 				)
@@ -454,7 +469,7 @@ const deployRun = async ({
 	cliTaskArgs,
 }: {
 	network: string
-	logLevel: string
+	logLevel: "debug" | "info" | "error"
 	background: boolean
 	cliTaskArgs: {
 		positionalArgs: string[]
@@ -475,11 +490,6 @@ const deployRun = async ({
 		const Prompts = yield* PromptsService
 		const s = yield* Prompts.Spinner()
 		yield* s.start("Deploying all canisters...")
-		const { runtime, taskLayer } = yield* makeTaskLayer()
-		const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-			runtime,
-			taskLayer,
-		})
 		const tasksWithPath = (yield* filterNodes(
 			taskTree,
 			(node) =>
@@ -519,16 +529,13 @@ const deployRun = async ({
 				// s.message(`Completed ${update.taskPath}`)
 				// console.log(`Completed ${update.taskPath}`)
 			}
-		}).pipe(
-			Effect.provide(ChildTaskRuntimeLayer),
-			Effect.annotateLogs("caller", "deployRun"),
-		)
+		}).pipe(Effect.annotateLogs("caller", "deployRun"))
 
-        // TODO: clean up. use Replica
-        const replica = yield* DefaultReplica
-        yield* Effect.logInfo("Stopping replica")
-        yield* replica.stop()
-        yield* Effect.logInfo("Stopped replica")
+		// TODO: clean up. use Replica
+		const replica = yield* DefaultReplica
+		yield* Effect.logInfo("Stopping replica")
+		yield* replica.stop()
+		yield* Effect.logInfo("Stopped replica")
 
 		const count = yield* Metric.value(totalTaskCount)
 		const cachedCount = yield* Metric.value(cachedTaskCount)
@@ -631,7 +638,27 @@ const deployRun = async ({
 	await makeCliRuntime({
 		globalArgs,
 		telemetryExporter,
-	}).runPromise(program)
+	}).runPromise(
+		Effect.gen(function* () {
+			const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
+			const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+				runtime,
+				taskLayer,
+			})
+			yield* Effect.tryPromise({
+				try: () =>
+					runtime.runPromise(
+						program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+					),
+				catch: (error) => {
+					return new TaskRuntimeError({
+						message: String(error),
+						error,
+					})
+				},
+			})
+		}),
+	)
 }
 
 const canistersCreateCommand = defineCommand({
@@ -645,6 +672,36 @@ const canistersCreateCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("create")
 		const { network, logLevel, background } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+			yield* s.start("Creating all canisters")
+
+			yield* Effect.logDebug("Running canisters:create")
+			const { taskTree } = yield* ICEConfigService
+			const tasksWithPath = (yield* filterNodes(
+				taskTree,
+				(node) =>
+					node._tag === "task" &&
+					node.tags.includes(Tags.CANISTER) &&
+					node.tags.includes(Tags.CREATE),
+			)) as Array<{ node: Task; path: string[] }>
+			const tasks = tasksWithPath.map(({ node }) => ({
+				...node,
+				args: {},
+			}))
+			yield* runTasks(tasks, (update) => {
+				if (update.status === "starting") {
+					s.message(`Running ${update.taskPath}`)
+				}
+				if (update.status === "completed") {
+					s.message(`Completed ${update.taskPath}`)
+				}
+			}).pipe(Effect.annotateLogs("caller", "canistersCreateCommand"))
+			yield* s.stop("Finished creating all canisters")
+		})
+
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
@@ -654,40 +711,23 @@ const canistersCreateCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
 					taskLayer,
 				})
-				const Prompts = yield* PromptsService
-				const s = yield* Prompts.Spinner()
-				yield* s.start("Creating all canisters")
-
-				yield* Effect.logDebug("Running canisters:create")
-				const { taskTree } = yield* ICEConfigService
-				const tasksWithPath = (yield* filterNodes(
-					taskTree,
-					(node) =>
-						node._tag === "task" &&
-						node.tags.includes(Tags.CANISTER) &&
-						node.tags.includes(Tags.CREATE),
-				)) as Array<{ node: Task; path: string[] }>
-				const tasks = tasksWithPath.map(({ node }) => ({
-					...node,
-					args: {},
-				}))
-				yield* runTasks(tasks, (update) => {
-					if (update.status === "starting") {
-						s.message(`Running ${update.taskPath}`)
-					}
-					if (update.status === "completed") {
-						s.message(`Completed ${update.taskPath}`)
-					}
-				}).pipe(
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.annotateLogs("caller", "canistersCreateCommand"),
-				)
-				yield* s.stop("Finished creating all canisters")
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
 			}),
 		)
 	},
@@ -704,6 +744,36 @@ const canistersBuildCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("build")
 		const { network, logLevel, background } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+			yield* s.start("Building all canisters")
+
+			yield* Effect.logDebug("Running canisters:create")
+			const { taskTree } = yield* ICEConfigService
+			const tasksWithPath = (yield* filterNodes(
+				taskTree,
+				(node) =>
+					node._tag === "task" &&
+					node.tags.includes(Tags.CANISTER) &&
+					node.tags.includes(Tags.CREATE),
+			)) as Array<{ node: Task; path: string[] }>
+			const tasks = tasksWithPath.map(({ node }) => ({
+				...node,
+				args: {},
+			}))
+			yield* runTasks(tasks, (update) => {
+				if (update.status === "starting") {
+					s.message(`Running ${update.taskPath}`)
+				}
+				if (update.status === "completed") {
+					s.message(`Completed ${update.taskPath}`)
+				}
+			}).pipe(Effect.annotateLogs("caller", "canistersBuildCommand"))
+			yield* s.stop("Finished building all canisters")
+		})
+
 		await makeCliRuntime({
 			globalArgs: {
 				network,
@@ -712,40 +782,23 @@ const canistersBuildCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const Prompts = yield* PromptsService
-				const s = yield* Prompts.Spinner()
-				yield* s.start("Building all canisters")
-
-				yield* Effect.logDebug("Running canisters:create")
-				const { taskTree } = yield* ICEConfigService
-				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
 					taskLayer,
 				})
-				const tasksWithPath = (yield* filterNodes(
-					taskTree,
-					(node) =>
-						node._tag === "task" &&
-						node.tags.includes(Tags.CANISTER) &&
-						node.tags.includes(Tags.CREATE),
-				)) as Array<{ node: Task; path: string[] }>
-				const tasks = tasksWithPath.map(({ node }) => ({
-					...node,
-					args: {},
-				}))
-				yield* runTasks(tasks, (update) => {
-					if (update.status === "starting") {
-						s.message(`Running ${update.taskPath}`)
-					}
-					if (update.status === "completed") {
-						s.message(`Completed ${update.taskPath}`)
-					}
-				}).pipe(
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.annotateLogs("caller", "canistersBuildCommand"),
-				)
-				yield* s.stop("Finished building all canisters")
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
 			}),
 		)
 	},
@@ -762,6 +815,39 @@ const canistersBindingsCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("bindings")
 		const { network, logLevel, background } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+			yield* s.start("Generating bindings for all canisters")
+
+			yield* Effect.logDebug("Running canisters:bindings")
+			const { taskTree } = yield* ICEConfigService
+			const tasksWithPath = (yield* filterNodes(
+				taskTree,
+				(node) =>
+					node._tag === "task" &&
+					node.tags.includes(Tags.CANISTER) &&
+					node.tags.includes(Tags.BINDINGS),
+			)) as Array<{ node: Task; path: string[] }>
+			const tasks = tasksWithPath.map(({ node }) => ({
+				...node,
+				args: {},
+			}))
+			// TODO: wrong. deps not deduplicated
+			// need a runTasks
+			yield* runTasks(tasks, (update) => {
+				if (update.status === "starting") {
+					s.message(`Running ${update.taskPath}`)
+				}
+				if (update.status === "completed") {
+					s.message(`Completed ${update.taskPath}`)
+				}
+			}).pipe(Effect.annotateLogs("caller", "canistersBindingsCommand"))
+
+			yield* s.stop("Finished generating bindings for all canisters")
+		})
+
 		await makeCliRuntime({
 			globalArgs: {
 				network,
@@ -770,43 +856,23 @@ const canistersBindingsCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const Prompts = yield* PromptsService
-				const s = yield* Prompts.Spinner()
-				yield* s.start("Generating bindings for all canisters")
-
-				yield* Effect.logDebug("Running canisters:bindings")
-				const { taskTree } = yield* ICEConfigService
-				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
 					taskLayer,
 				})
-				const tasksWithPath = (yield* filterNodes(
-					taskTree,
-					(node) =>
-						node._tag === "task" &&
-						node.tags.includes(Tags.CANISTER) &&
-						node.tags.includes(Tags.BINDINGS),
-				)) as Array<{ node: Task; path: string[] }>
-				const tasks = tasksWithPath.map(({ node }) => ({
-					...node,
-					args: {},
-				}))
-				// TODO: wrong. deps not deduplicated
-				// need a runTasks
-				yield* runTasks(tasks, (update) => {
-					if (update.status === "starting") {
-						s.message(`Running ${update.taskPath}`)
-					}
-					if (update.status === "completed") {
-						s.message(`Completed ${update.taskPath}`)
-					}
-				}).pipe(
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.annotateLogs("caller", "canistersBindingsCommand"),
-				)
-
-				yield* s.stop("Finished generating bindings for all canisters")
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
 			}),
 		)
 	},
@@ -823,6 +889,37 @@ const canistersInstallCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("install")
 		const { network, logLevel, background } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+			yield* s.start("Installing all canisters")
+
+			yield* Effect.logDebug("Running canisters:create")
+			const { taskTree } = yield* ICEConfigService
+			const tasksWithPath = (yield* filterNodes(
+				taskTree,
+				(node) =>
+					node._tag === "task" &&
+					node.tags.includes(Tags.CANISTER) &&
+					node.tags.includes(Tags.CREATE),
+			)) as Array<{ node: Task; path: string[] }>
+			const tasks = tasksWithPath.map(({ node }) => ({
+				...node,
+				args: {},
+			}))
+			yield* runTasks(tasks, (update) => {
+				if (update.status === "starting") {
+					s.message(`Running ${update.taskPath}`)
+				}
+				if (update.status === "completed") {
+					s.message(`Completed ${update.taskPath}`)
+				}
+			}).pipe(Effect.annotateLogs("caller", "canistersInstallCommand"))
+
+			yield* s.stop("Finished installing all canisters")
+		})
+
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
@@ -832,41 +929,23 @@ const canistersInstallCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const Prompts = yield* PromptsService
-				const s = yield* Prompts.Spinner()
-				yield* s.start("Installing all canisters")
-
-				yield* Effect.logDebug("Running canisters:create")
-				const { taskTree } = yield* ICEConfigService
-				const { runtime, taskLayer } = yield* makeTaskLayer()
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 					runtime,
 					taskLayer,
 				})
-				const tasksWithPath = (yield* filterNodes(
-					taskTree,
-					(node) =>
-						node._tag === "task" &&
-						node.tags.includes(Tags.CANISTER) &&
-						node.tags.includes(Tags.CREATE),
-				)) as Array<{ node: Task; path: string[] }>
-				const tasks = tasksWithPath.map(({ node }) => ({
-					...node,
-					args: {},
-				}))
-				yield* runTasks(tasks, (update) => {
-					if (update.status === "starting") {
-						s.message(`Running ${update.taskPath}`)
-					}
-					if (update.status === "completed") {
-						s.message(`Completed ${update.taskPath}`)
-					}
-				}).pipe(
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.annotateLogs("caller", "canistersInstallCommand"),
-				)
-
-				yield* s.stop("Finished installing all canisters")
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
 			}),
 		)
 	},
@@ -883,6 +962,65 @@ const canistersStopCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("stop")
 		const { network, logLevel, background } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+			yield* s.start("Stopping all canisters")
+
+			yield* Effect.logDebug("Running canisters:stop")
+			const { taskTree } = yield* ICEConfigService
+			const tasksWithPath = (yield* filterNodes(
+				taskTree,
+				(node) =>
+					node._tag === "task" &&
+					node.tags.includes(Tags.CANISTER) &&
+					node.tags.includes(Tags.STOP),
+			)) as Array<{ node: Task; path: string[] }>
+			const tasks = tasksWithPath.map(({ node }) => ({
+				...node,
+				args: {},
+			}))
+			runTasks(tasks, (update) => {
+				if (update.status === "starting") {
+					s.message(`Running ${update.taskPath}`)
+				}
+				if (update.status === "completed") {
+					s.message(`Completed ${update.taskPath}`)
+				}
+			}).pipe(Effect.annotateLogs("caller", "canistersStopCommand"))
+
+			// // TODO: runTask?
+			// yield* Effect.forEach(
+			// 	Object.keys(canisterIdsMap),
+			// 	(canisterId) =>
+			// 		Effect.gen(function* () {
+			// 			const {
+			// 				roles: {
+			// 					deployer: { identity },
+			// 				},
+			// 				replica,
+			// 			} = yield* TaskCtx
+			// 			yield* replica.stopCanister({
+			// 				canisterId,
+			// 				identity,
+			// 			})
+			// 		}),
+			// 	{ concurrency: "unbounded" },
+			// )
+
+			// (update) => {
+			// 				if (update.status === "starting") {
+			// 					s.message(`Running ${update.taskPath}`)
+			// 				}
+			// 				if (update.status === "completed") {
+			// 					s.message(`Completed ${update.taskPath}`)
+			// 				}
+			// 			}
+
+			yield* s.stop("Finished stopping all canisters")
+		})
+
 		await makeCliRuntime({
 			globalArgs: {
 				network,
@@ -891,62 +1029,23 @@ const canistersStopCommand = defineCommand({
 			},
 		}).runPromise(
 			Effect.gen(function* () {
-				const Prompts = yield* PromptsService
-				const s = yield* Prompts.Spinner()
-				yield* s.start("Stopping all canisters")
-
-				yield* Effect.logDebug("Running canisters:stop")
-				const { taskTree } = yield* ICEConfigService
-				const { runtime } = yield* makeTaskLayer()
-				const tasksWithPath = (yield* filterNodes(
-					taskTree,
-					(node) =>
-						node._tag === "task" &&
-						node.tags.includes(Tags.CANISTER) &&
-						node.tags.includes(Tags.STOP),
-				)) as Array<{ node: Task; path: string[] }>
-				const tasks = tasksWithPath.map(({ node }) => ({
-					...node,
-					args: {},
-				}))
-				runTasks(tasks, (update) => {
-					if (update.status === "starting") {
-						s.message(`Running ${update.taskPath}`)
-					}
-					if (update.status === "completed") {
-						s.message(`Completed ${update.taskPath}`)
-					}
-				}).pipe(Effect.annotateLogs("caller", "canistersStopCommand"))
-
-				// // TODO: runTask?
-				// yield* Effect.forEach(
-				// 	Object.keys(canisterIdsMap),
-				// 	(canisterId) =>
-				// 		Effect.gen(function* () {
-				// 			const {
-				// 				roles: {
-				// 					deployer: { identity },
-				// 				},
-				// 				replica,
-				// 			} = yield* TaskCtx
-				// 			yield* replica.stopCanister({
-				// 				canisterId,
-				// 				identity,
-				// 			})
-				// 		}),
-				// 	{ concurrency: "unbounded" },
-				// )
-
-				// (update) => {
-				// 				if (update.status === "starting") {
-				// 					s.message(`Running ${update.taskPath}`)
-				// 				}
-				// 				if (update.status === "completed") {
-				// 					s.message(`Completed ${update.taskPath}`)
-				// 				}
-				// 			}
-
-				yield* s.stop("Finished stopping all canisters")
+				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime,
+					taskLayer,
+				})
+				yield* Effect.tryPromise({
+					try: () =>
+						runtime.runPromise(
+							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
+						),
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: String(error),
+							error,
+						})
+					},
+				})
 			}),
 		)
 	},
@@ -970,22 +1069,15 @@ const canistersStatusCommand = defineCommand({
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("status")
 			const { network, logLevel, background } = globalArgs
-			await makeCliRuntime({
-				globalArgs: {
-					network,
-					logLevel,
-					background,
-				},
-			}).runPromise(
-				Effect.gen(function* () {
-					const canisterIdsService = yield* CanisterIdsService
-					const canisterIdsMap =
-						yield* canisterIdsService.getCanisterIds()
-					const replica = yield* DefaultReplica
-					const identity = Ed25519KeyIdentity.generate()
-					const canisterStatusesEffects = Object.keys(
-						canisterIdsMap,
-					).map((canisterName) =>
+
+			const program = Effect.gen(function* () {
+				const canisterIdsService = yield* CanisterIdsService
+				const canisterIdsMap =
+					yield* canisterIdsService.getCanisterIds()
+				const replica = yield* DefaultReplica
+				const identity = Ed25519KeyIdentity.generate()
+				const canisterStatusesEffects = Object.keys(canisterIdsMap).map(
+					(canisterName) =>
 						Effect.either(
 							Effect.gen(function* () {
 								// TODO: currentNetwork
@@ -1007,25 +1099,24 @@ const canistersStatusCommand = defineCommand({
 								return { canisterName, canisterId, status }
 							}),
 						),
-					)
+				)
 
-					const canisterStatuses = yield* Effect.all(
-						canisterStatusesEffects,
-						{
-							concurrency: "unbounded",
-						},
-					)
+				const canisterStatuses = yield* Effect.all(
+					canisterStatusesEffects,
+					{
+						concurrency: "unbounded",
+					},
+				)
 
-					// TODO: this needs to run as a task
-					// TODO: inline
-					const statusLog = canisterStatuses
-						.map((result) =>
-							Either.match(result, {
-								onLeft: (left) => `Error for canister: ${left}`,
-								onRight: (right) =>
-									right.status.status !==
-									CanisterStatus.NOT_FOUND
-										? `
+				// TODO: this needs to run as a task
+				// TODO: inline
+				const statusLog = canisterStatuses
+					.map((result) =>
+						Either.match(result, {
+							onLeft: (left) => `Error for canister: ${left}`,
+							onRight: (right) =>
+								right.status.status !== CanisterStatus.NOT_FOUND
+									? `
 ${color.underline(right.canisterName)}
   ID: ${right.canisterId}
   Status: ${color.green(Object.keys(right.status.status)[0])}
@@ -1033,25 +1124,55 @@ ${color.underline(right.canisterName)}
   Cycles: ${right.status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
   Idle Cycles Burned Per Day: ${right.status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
   Module Hash: ${moduleHashToHexString(right.status.module_hash)}`
-										: // TODO: fix?
-											`Error for canister: ${result._tag}`,
-							}),
-						)
-						.join("\n")
-					// 							result._tag === "Right" && result.right.status.status !== CanisterStatus.NOT_FOUND
-					// 								? `
-					// ${color.underline(result.right.canisterName)}
-					//   ID: ${result.right.canisterId}
-					//   Status: ${color.green(Object.keys(result.right.status.status)[0])}
-					//   Memory Size: ${result.right.status.memory_size.toLocaleString("en-US").replace(/,/g, "_")}
-					//   Cycles: ${result.right.status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
-					//   Idle Cycles Burned Per Day: ${result.right.status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
-					//   Module Hash: ${moduleHashToHexString(result.right.status.module_hash)}`
-					// 								: `Error for canister: ${result._tag}`,
-					// 						)
-					// 						.join("\n")
+									: // TODO: fix?
+										`Error for canister: ${result._tag}`,
+						}),
+					)
+					.join("\n")
+				// 							result._tag === "Right" && result.right.status.status !== CanisterStatus.NOT_FOUND
+				// 								? `
+				// ${color.underline(result.right.canisterName)}
+				//   ID: ${result.right.canisterId}
+				//   Status: ${color.green(Object.keys(result.right.status.status)[0])}
+				//   Memory Size: ${result.right.status.memory_size.toLocaleString("en-US").replace(/,/g, "_")}
+				//   Cycles: ${result.right.status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
+				//   Idle Cycles Burned Per Day: ${result.right.status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
+				//   Module Hash: ${moduleHashToHexString(result.right.status.module_hash)}`
+				// 								: `Error for canister: ${result._tag}`,
+				// 						)
+				// 						.join("\n")
 
-					yield* Effect.logInfo(statusLog)
+				yield* Effect.logInfo(statusLog)
+			})
+
+			await makeCliRuntime({
+				globalArgs: {
+					network,
+					logLevel,
+					background,
+				},
+			}).runPromise(
+				Effect.gen(function* () {
+					const { runtime, taskLayer } =
+						yield* makeTaskLayer(globalArgs)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime,
+						taskLayer,
+					})
+					yield* Effect.tryPromise({
+						try: () =>
+							runtime.runPromise(
+								program.pipe(
+									Effect.provide(ChildTaskRuntimeLayer),
+								),
+							),
+						catch: (error) => {
+							return new TaskRuntimeError({
+								message: String(error),
+								error,
+							})
+						},
+					})
 				}),
 			)
 		}
@@ -1174,6 +1295,80 @@ const canisterCommand = defineCommand({
 				positionalArgs: [],
 				namedArgs: {},
 			}
+
+			const program = Effect.gen(function* () {
+				const { taskTree } = yield* ICEConfigService
+				const canisterScopesWithPath = yield* filterNodes(
+					taskTree,
+					(node) =>
+						node._tag === "scope" &&
+						node.tags.includes(Tags.CANISTER),
+				)
+
+				// TODO: format nicely
+				const canisterList = canisterScopesWithPath.map(
+					({ node, path }) => {
+						const scopePath = path.join(":") // Use colon to represent hierarchy
+						return `  ${scopePath}` // Indent for better readability
+					},
+				)
+				const canister = (yield* Effect.tryPromise(() =>
+					p.select({
+						message: "Select a canister",
+						options: canisterList.map((canister) => ({
+							value: canister,
+							// TODO: add a status marker to the canister
+							label: canister,
+						})),
+					}),
+				)) as string
+				if (isCancel(canister)) {
+					cancel("Operation cancelled.")
+					process.exit(0)
+				}
+				if (!canister) {
+					return
+				}
+				const action = (yield* Effect.tryPromise(() =>
+					p.select({
+						message: "Select an action",
+						options: [
+							{ value: "deploy", label: "Deploy" },
+							{ value: "create", label: "Create" },
+							{ value: "build", label: "Build" },
+							{ value: "bindings", label: "Bindings" },
+							{ value: "install", label: "Install" },
+							{ value: "status", label: "Status" },
+							{ value: "stop", label: "Stop" },
+							{ value: "remove", label: "Remove" },
+						],
+					}),
+				)) as string
+				if (isCancel(action)) {
+					cancel("Operation cancelled.")
+					process.exit(0)
+				}
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start(`Running ${canister}:${action}`)
+				const result = yield* runTaskByPath(
+					`${canister.trimStart().trimEnd()}:${action.trimStart().trimEnd()}`,
+					// TODO: args?
+					cliTaskArgs,
+					(update) => {
+						if (update.status === "starting") {
+							s.message(`Running ${update.taskPath}`)
+						}
+						if (update.status === "completed") {
+							s.message(`Completed ${update.taskPath}`)
+						}
+					},
+				).pipe(
+					Effect.annotateLogs("caller", "canistersCanisterCommand"),
+				)
+				yield* s.stop(`Completed ${canister}:${action}`)
+			})
+
 			await makeCliRuntime({
 				globalArgs: {
 					network,
@@ -1182,85 +1377,26 @@ const canisterCommand = defineCommand({
 				},
 			}).runPromise(
 				Effect.gen(function* () {
-					const { taskTree } = yield* ICEConfigService
-					const { runtime, taskLayer } = yield* makeTaskLayer()
+					const { runtime, taskLayer } =
+						yield* makeTaskLayer(globalArgs)
 					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 						runtime,
 						taskLayer,
 					})
-					const canisterScopesWithPath = yield* filterNodes(
-						taskTree,
-						(node) =>
-							node._tag === "scope" &&
-							node.tags.includes(Tags.CANISTER),
-					)
-
-					// TODO: format nicely
-					const canisterList = canisterScopesWithPath.map(
-						({ node, path }) => {
-							const scopePath = path.join(":") // Use colon to represent hierarchy
-							return `  ${scopePath}` // Indent for better readability
+					yield* Effect.tryPromise({
+						try: () =>
+							runtime.runPromise(
+								program.pipe(
+									Effect.provide(ChildTaskRuntimeLayer),
+								),
+							),
+						catch: (error) => {
+							return new TaskRuntimeError({
+								message: String(error),
+								error,
+							})
 						},
-					)
-					const canister = (yield* Effect.tryPromise(() =>
-						p.select({
-							message: "Select a canister",
-							options: canisterList.map((canister) => ({
-								value: canister,
-								// TODO: add a status marker to the canister
-								label: canister,
-							})),
-						}),
-					)) as string
-					if (isCancel(canister)) {
-						cancel("Operation cancelled.")
-						process.exit(0)
-					}
-					if (!canister) {
-						return
-					}
-					const action = (yield* Effect.tryPromise(() =>
-						p.select({
-							message: "Select an action",
-							options: [
-								{ value: "deploy", label: "Deploy" },
-								{ value: "create", label: "Create" },
-								{ value: "build", label: "Build" },
-								{ value: "bindings", label: "Bindings" },
-								{ value: "install", label: "Install" },
-								{ value: "status", label: "Status" },
-								{ value: "stop", label: "Stop" },
-								{ value: "remove", label: "Remove" },
-							],
-						}),
-					)) as string
-					if (isCancel(action)) {
-						cancel("Operation cancelled.")
-						process.exit(0)
-					}
-					const Prompts = yield* PromptsService
-					const s = yield* Prompts.Spinner()
-					yield* s.start(`Running ${canister}:${action}`)
-					const result = yield* runTaskByPath(
-						`${canister.trimStart().trimEnd()}:${action.trimStart().trimEnd()}`,
-						// TODO: args?
-						cliTaskArgs,
-						(update) => {
-							if (update.status === "starting") {
-								s.message(`Running ${update.taskPath}`)
-							}
-							if (update.status === "completed") {
-								s.message(`Completed ${update.taskPath}`)
-							}
-						},
-					).pipe(
-						Effect.provide(ChildTaskRuntimeLayer),
-						Effect.annotateLogs(
-							"caller",
-							"canistersCanisterCommand",
-						),
-					)
-					yield* s.stop(`Completed ${canister}:${action}`)
+					})
 				}),
 			)
 		}
@@ -1294,6 +1430,54 @@ const taskCommand = defineCommand({
 				positionalArgs: [],
 				namedArgs: {},
 			}
+
+			const program = Effect.gen(function* () {
+				const { taskTree } = yield* ICEConfigService
+				const tasksWithPath = yield* filterNodes(
+					taskTree,
+					(node) =>
+						node._tag === "task" &&
+						!node.tags.includes(Tags.CANISTER),
+				)
+				// TODO: format nicely
+				const taskList = tasksWithPath.map(({ node: task, path }) => {
+					const taskPath = path.join(":") // Use colon to represent hierarchy
+					return `  ${taskPath}` // Indent for better readability
+				})
+				const task = (yield* Effect.tryPromise(() =>
+					p.select({
+						message: "Select a task",
+						options: taskList.map((task) => ({
+							value: task,
+							label: task,
+						})),
+					}),
+				)) as string
+				if (isCancel(task)) {
+					cancel("Operation cancelled.")
+					process.exit(0)
+				}
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start(`Running ${task}`)
+				const result = yield* runTaskByPath(
+					`${task.trimStart().trimEnd()}`,
+					// TODO: args?
+					cliTaskArgs,
+					(update) => {
+						if (update.status === "starting") {
+							s.message(`Running ${update.taskPath}`)
+						}
+						if (update.status === "completed") {
+							s.message(`Completed ${update.taskPath}`)
+						}
+					},
+				).pipe(
+					Effect.annotateLogs("caller", "canistersTaskCommand"),
+				)
+				yield* s.stop(`Completed ${task}`)
+			})
+
 			await makeCliRuntime({
 				globalArgs: {
 					network,
@@ -1302,58 +1486,26 @@ const taskCommand = defineCommand({
 				},
 			}).runPromise(
 				Effect.gen(function* () {
-					const { taskTree } = yield* ICEConfigService
-					const { runtime, taskLayer } = yield* makeTaskLayer()
+					const { runtime, taskLayer } =
+						yield* makeTaskLayer(globalArgs)
 					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 						runtime,
 						taskLayer,
 					})
-					const tasksWithPath = yield* filterNodes(
-						taskTree,
-						(node) =>
-							node._tag === "task" &&
-							!node.tags.includes(Tags.CANISTER),
-					)
-					// TODO: format nicely
-					const taskList = tasksWithPath.map(
-						({ node: task, path }) => {
-							const taskPath = path.join(":") // Use colon to represent hierarchy
-							return `  ${taskPath}` // Indent for better readability
+					yield* Effect.tryPromise({
+						try: () =>
+							runtime.runPromise(
+								program.pipe(
+									Effect.provide(ChildTaskRuntimeLayer),
+								),
+							),
+						catch: (error) => {
+							return new TaskRuntimeError({
+								message: String(error),
+								error,
+							})
 						},
-					)
-					const task = (yield* Effect.tryPromise(() =>
-						p.select({
-							message: "Select a task",
-							options: taskList.map((task) => ({
-								value: task,
-								label: task,
-							})),
-						}),
-					)) as string
-					if (isCancel(task)) {
-						cancel("Operation cancelled.")
-						process.exit(0)
-					}
-					const Prompts = yield* PromptsService
-					const s = yield* Prompts.Spinner()
-					yield* s.start(`Running ${task}`)
-					const result = yield* runTaskByPath(
-						`${task.trimStart().trimEnd()}`,
-						// TODO: args?
-						cliTaskArgs,
-						(update) => {
-							if (update.status === "starting") {
-								s.message(`Running ${update.taskPath}`)
-							}
-							if (update.status === "completed") {
-								s.message(`Completed ${update.taskPath}`)
-							}
-						},
-					).pipe(
-						Effect.provide(ChildTaskRuntimeLayer),
-						Effect.annotateLogs("caller", "canistersTaskCommand"),
-					)
-					yield* s.stop(`Completed ${task}`)
+					})
 				}),
 			)
 		}

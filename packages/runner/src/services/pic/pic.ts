@@ -10,6 +10,7 @@ import {
 	Fiber,
 	Scope,
 	Option,
+	ManagedRuntime,
 } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { Principal } from "@icp-sdk/core/principal"
@@ -49,6 +50,8 @@ import {
 	subnetRanges,
 	CanisterCreateRangeError,
 	ReplicaError,
+	ReplicaService,
+    DefaultReplica,
 } from "../replica.js"
 import { sha256 } from "js-sha256"
 import * as url from "node:url"
@@ -60,22 +63,46 @@ import type * as ActorTypes from "../../types/actor.js"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 import { decodeText, runFold } from "effect/Stream"
 import { makeMonitor, Monitor } from "./pic-process.js"
+import { NodeContext } from "@effect/platform-node"
+import { ICEConfigContext } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
+// TODO: add subnet / state config
+export const PICReplica = async (
+	ctx: ICEConfigContext,
+	{
+		host,
+		port,
+	}: {
+		host: string
+		port: number
+	},
+) => {
+	const impl = await Effect.runPromise(
+		picReplicaImpl(ctx, {
+			host: host,
+			port: port,
+			ttlSeconds: 9_999_999_999,
+		}).pipe(Effect.provide(NodeContext.layer), Effect.scoped),
+	)
+	return impl
+}
+
 // TODO: never finishes after tasks have run.
 // we need to kill it?
-export const picReplicaImpl = ({
-	background,
-	ip = "0.0.0.0",
-	port = 8081,
-	ttlSeconds = 9_999_999_999,
-}: {
-	background: boolean
-	ip: string
-	port: number
-	ttlSeconds: number
-}) =>
+export const picReplicaImpl = (
+	ctx: ICEConfigContext,
+	{
+		host = "0.0.0.0",
+		port = 8081,
+		ttlSeconds = 9_999_999_999,
+	}: {
+		host: string
+		port: number
+		ttlSeconds: number
+	},
+) =>
 	Effect.gen(function* () {
 		// TODO: make it configurable
 		// const DEFAULT_IP = "0.0.0.0"
@@ -89,11 +116,10 @@ export const picReplicaImpl = ({
 			| Fiber.Fiber<never, ReplicaError | PlatformError>
 			| undefined
 
-		let monitor: Monitor = yield* makeMonitor({
-			ip,
+		let monitor: Monitor = yield* makeMonitor(ctx, {
+			host,
 			port,
 			ttlSeconds: 9_999_999_999,
-			background,
 		})
 		resolvedHost = monitor.host
 		resolvedPort = monitor.port
@@ -364,10 +390,10 @@ export const picReplicaImpl = ({
 				Effect.sync(() => {
 					console.log(
 						"stop called on replica",
-						background,
+						ctx.background,
 						monitor.pid,
 					)
-					if (!background) {
+					if (!ctx.background) {
 						try {
 							monitor.shutdown()
 						} catch {}
@@ -697,3 +723,12 @@ export const picReplicaImpl = ({
 				}),
 		})
 	})
+
+export const PICReplicaLive = (ctx: ICEConfigContext) => Layer.effect(
+	DefaultReplica,
+	picReplicaImpl(ctx, {
+		host: "0.0.0.0",
+		port: 8081,
+		ttlSeconds: 9_999_999_999,
+	}),
+)

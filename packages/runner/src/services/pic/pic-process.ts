@@ -2,20 +2,20 @@ import { Deferred, Effect, Fiber, Option, Schedule, Stream } from "effect"
 import { FileSystem, Path, Command, CommandExecutor } from "@effect/platform"
 import * as url from "node:url"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
-import { IceDir } from "../iceDir.js"
 import { ReplicaError } from "../replica.js"
 import { PlatformError } from "@effect/platform/Error"
 import net from "node:net"
 import { Process } from "@effect/platform/CommandExecutor"
 import find from "find-process"
+import { ICEConfigContext } from "../../types/types.js"
 
-const statePathEffect = Effect.gen(function* () {
-	const path = yield* Path.Path
-	const { path: iceDirPath } = yield* IceDir
-	const STATE_DIR = path.join(iceDirPath, "pocketic-server")
-	const STATE_FILE = "state.json"
-	return path.join(STATE_DIR, STATE_FILE)
-})
+const statePathEffect = (iceDirPath: string) =>
+	Effect.gen(function* () {
+		const path = yield* Path.Path
+		const STATE_DIR = path.join(iceDirPath, "pocketic-server")
+		const STATE_FILE = "state.json"
+		return path.join(STATE_DIR, STATE_FILE)
+	})
 
 type PocketIcState = {
 	pid: number
@@ -25,19 +25,20 @@ type PocketIcState = {
 	version?: string
 }
 
-const readState = Effect.gen(function* () {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* statePathEffect
-	const exists = yield* fs.exists(path)
-	if (!exists) return Option.none<PocketIcState>()
-	const txt = yield* fs.readFileString(path)
-	return Option.some(JSON.parse(txt) as PocketIcState)
-})
-
-const writeState = (state: PocketIcState) =>
+const readState = (iceDirPath: string) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem
-		const path = yield* statePathEffect
+		const path = yield* statePathEffect(iceDirPath)
+		const exists = yield* fs.exists(path)
+		if (!exists) return Option.none<PocketIcState>()
+		const txt = yield* fs.readFileString(path)
+		return Option.some(JSON.parse(txt) as PocketIcState)
+	})
+
+const writeState = (iceDirPath: string, state: PocketIcState) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const path = yield* statePathEffect(iceDirPath)
 		const dir = (yield* Path.Path).dirname(path)
 		yield* fs.makeDirectory(dir, { recursive: true })
 		yield* fs.writeFile(
@@ -46,12 +47,13 @@ const writeState = (state: PocketIcState) =>
 		)
 	})
 
-const removeState = Effect.gen(function* () {
-	const fs = yield* FileSystem.FileSystem
-	const path = yield* statePathEffect
-	const exists = yield* fs.exists(path)
-	if (exists) yield* fs.remove(path)
-})
+const removeState = (iceDirPath: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const path = yield* statePathEffect(iceDirPath)
+		const exists = yield* fs.exists(path)
+		if (exists) yield* fs.remove(path)
+	})
 
 const isPidAlive = (pid: number) =>
 	Effect.try(() => process.kill(pid, 0) === undefined || true).pipe(
@@ -92,8 +94,12 @@ const waitTcpReady = (host: string, port: number, perTryMs = 800) =>
 const pidByPortIfPocketIc = (port: number) =>
 	Effect.tryPromise({
 		try: () => find("port", port),
-		catch: () => [],
+		catch: () =>
+			new ReplicaError({
+				message: `Failed to find process listening on ${port}`,
+			}),
 	}).pipe(
+		Effect.catchAll(() => Effect.succeed([])),
 		Effect.map((list) => {
 			const match = list.find((p) => {
 				const cmd = (p as any).cmd as string | undefined
@@ -118,14 +124,16 @@ export type Monitor = {
 	shutdown: () => void
 }
 
-export const makeMonitor = (opts: {
-	ip: string
-	port: number
-	ttlSeconds?: number
-	background: boolean
-}) =>
+export const makeMonitor = (
+	ctx: ICEConfigContext,
+	opts: {
+		host: string
+		port: number
+		ttlSeconds?: number
+	},
+) =>
 	Effect.gen(function* () {
-		const ip = opts.ip
+		const host = opts.host
 		const port = opts.port
 		const fs = yield* FileSystem.FileSystem
 		const pathSvc = yield* Path.Path
@@ -136,16 +144,16 @@ export const makeMonitor = (opts: {
 			"../../../bin/monitor.js",
 		)
 		const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
-		const statePath = yield* statePathEffect
+		const statePath = yield* statePathEffect(ctx.iceDirPath)
 
 		// --- Reuse: if we have state and the PID is alive & version matches
-		const st = yield* readState
+		const st = yield* readState(ctx.iceDirPath)
 		if (Option.isSome(st)) {
 			const alive = yield* isPidAlive(st.value.pid)
 			const versionOk =
 				(st.value.version ?? pocketIcVersion) === pocketIcVersion
 			if (alive && versionOk) {
-				yield* waitTcpReady(ip, port).pipe(
+				yield* waitTcpReady(host, port).pipe(
 					Effect.retry(
 						Schedule.intersect(
 							Schedule.spaced("120 millis"),
@@ -163,12 +171,12 @@ export const makeMonitor = (opts: {
 					stdErrFiber: Option.none(),
 					reused: true,
 					pid: st.value.pid,
-					host: `http://${ip}`,
+					host: `http://${host}`,
 					port,
 					shutdown,
 				} satisfies Monitor
 			} else {
-				yield* removeState
+				yield* removeState(ctx.iceDirPath)
 			}
 		}
 
@@ -178,14 +186,14 @@ export const makeMonitor = (opts: {
 			const pid = maybePid.value
 			const alive = yield* isPidAlive(pid)
 			if (alive) {
-				yield* writeState({
+				yield* writeState(ctx.iceDirPath, {
 					pid,
 					startedAt: Date.now(),
 					binPath: pocketIcPath,
-					args: ["-i", ip, "-p", String(port), "--ttl", ttl],
+					args: ["-i", host, "-p", String(port), "--ttl", ttl],
 					version: pocketIcVersion,
 				})
-				yield* waitTcpReady(ip, port).pipe(
+				yield* waitTcpReady(host, port).pipe(
 					Effect.retry(
 						Schedule.intersect(
 							Schedule.spaced("120 millis"),
@@ -203,7 +211,7 @@ export const makeMonitor = (opts: {
 					stdErrFiber: Option.none(),
 					reused: true,
 					pid,
-					host: `http://${ip}`,
+					host: `http://${host}`,
 					port,
 					shutdown,
 				} satisfies Monitor
@@ -211,7 +219,7 @@ export const makeMonitor = (opts: {
 		}
 
 		// --- Start fresh
-		if (opts.background) {
+		if (ctx.background) {
 			// Background via monitor.js (writes state + exits)
 			const cmd = Command.make(
 				process.execPath,
@@ -225,7 +233,7 @@ export const makeMonitor = (opts: {
 				pocketIcPath,
 				"--",
 				"-i",
-				ip,
+				host,
 				"-p",
 				String(port),
 				"--ttl",
@@ -256,9 +264,13 @@ export const makeMonitor = (opts: {
 						}),
 					)
 				}
-				const parsed = yield* Effect.try(
-					() => JSON.parse(txt) as PocketIcState,
-				)
+				const parsed = yield* Effect.try({
+					try: () => JSON.parse(txt) as PocketIcState,
+					catch: () =>
+						new ReplicaError({
+							message: `Failed to parse PocketIC background state`,
+						}),
+				})
 				const alive2 = yield* isPidAlive(parsed.pid)
 				if (!alive2) {
 					return yield* Effect.fail(
@@ -283,7 +295,7 @@ export const makeMonitor = (opts: {
 				if (Option.isNone(owner) || owner.value !== state.pid) {
 					return yield* Effect.fail(
 						new ReplicaError({
-							message: `PocketIC did not take ownership of ${ip}:${port} (listener mismatch)`,
+							message: `PocketIC did not take ownership of ${host}:${port} (listener mismatch)`,
 						}),
 					)
 				}
@@ -297,7 +309,7 @@ export const makeMonitor = (opts: {
 				),
 			)
 
-			yield* waitTcpReady(ip, port).pipe(
+			yield* waitTcpReady(host, port).pipe(
 				Effect.retry(
 					Schedule.intersect(
 						Schedule.spaced("120 millis"),
@@ -307,7 +319,10 @@ export const makeMonitor = (opts: {
 			)
 
 			if (!state.version) {
-				yield* writeState({ ...state, version: pocketIcVersion })
+				yield* writeState(ctx.iceDirPath, {
+					...state,
+					version: pocketIcVersion,
+				})
 			}
 
 			const shutdown = () => {
@@ -321,7 +336,7 @@ export const makeMonitor = (opts: {
 				stdErrFiber: Option.none(),
 				reused: false,
 				pid: state.pid,
-				host: `http://${ip}`,
+				host: `http://${host}`,
 				port,
 				shutdown,
 			} satisfies Monitor
@@ -338,7 +353,7 @@ export const makeMonitor = (opts: {
 			pocketIcPath,
 			"--",
 			"-i",
-			ip,
+			host,
 			"-p",
 			String(port),
 			"--ttl",
@@ -351,7 +366,7 @@ export const makeMonitor = (opts: {
 			`[pocket-ic] foreground monitor started (pid ${proc.pid})`,
 		)
 
-		const fatalStderrMonitor = makeStdErrMonitor(proc, ip, port)
+		const fatalStderrMonitor = makeStdErrMonitor(proc, host, port)
 		const stderrMonitorFiber = yield* Effect.forkScoped(fatalStderrMonitor)
 
 		const shutdownMonitor = () =>
@@ -372,26 +387,11 @@ export const makeMonitor = (opts: {
 			stdErrFiber: Option.some(stderrMonitorFiber),
 			reused: false,
 			pid: proc.pid,
-			host: `http://${ip}`,
+			host: `http://${host}`,
 			port,
 			shutdown,
 		} satisfies Monitor
 	})
-
-export const stopBackgroundPocketIc = Effect.gen(function* () {
-	const st = yield* readState
-	if (Option.isNone(st)) return false
-	const pid = st.value.pid
-	try {
-		process.kill(-pid, "SIGTERM")
-	} catch {}
-	yield* Effect.sleep("250 millis")
-	try {
-		process.kill(-pid, "SIGKILL")
-	} catch {}
-	yield* removeState
-	return true
-})
 
 const decodeChunk = (chunk: unknown): string => {
 	if (typeof chunk === "string") return chunk

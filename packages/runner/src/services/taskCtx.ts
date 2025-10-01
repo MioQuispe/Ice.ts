@@ -20,7 +20,7 @@ import {
 import type { ICEUser, Task, TaskTree } from "../types/types.js"
 import { DefaultConfig, InitializedDefaultConfig } from "./defaultConfig.js"
 import { ICEConfigService } from "./iceConfig.js"
-import { makeTaskLayer, TaskRuntime } from "./taskRuntime.js"
+import { TaskRuntime } from "./taskRuntime.js"
 import { runTask } from "../tasks/run.js"
 import { IceDir } from "./iceDir.js"
 import { Deployment, DeploymentsService } from "./deployments.js"

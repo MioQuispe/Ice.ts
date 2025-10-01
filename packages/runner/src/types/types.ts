@@ -22,6 +22,7 @@ import { PlatformError } from "@effect/platform/Error"
 import { DeploymentError } from "../canister.js"
 import { Schema as S } from "effect"
 import { type TaskCtxShape } from "../services/taskCtx.js"
+import { LogLevel } from "effect/LogLevel"
 
 export type CanisterActor = {
 	actor: ActorSubclass<unknown>
@@ -209,14 +210,17 @@ export type TaskTreeNode = Task | Scope | BuilderResult
 export type TaskTree = Record<string, TaskTreeNode>
 
 // TODO: come up with a better name
-export type ICECtx = {
+export type ICEConfigContext = {
 	network: string
+	iceDirPath: string
+	background: boolean
+	logLevel: "debug" | "info" | "error"
 }
 // TODO: fix
 export type ICEConfigFile = {
 	default:
 		| Partial<ICEConfig>
-		| ((ctx: ICECtx) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
+		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
 } & {
 	[key: string]: TaskTreeNode
 }

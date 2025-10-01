@@ -1,5 +1,5 @@
 import { makeCliRuntime } from "./cli/index.js"
-import type { ICEConfig, ICECtx } from "./types/types.js"
+import type { ICEConfig, ICEConfigContext } from "./types/types.js"
 import type { Scope, TaskTree } from "./types/types.js"
 export { Opt } from "./types/types.js"
 export * from "./builders/index.js"
@@ -7,11 +7,16 @@ export type { CanisterScopeSimple } from "./builders/lib.js"
 export type { CustomCanisterScope } from "./builders/custom.js"
 export * from "./ids.js"
 export type { InstallModes } from "./services/replica.js"
+import { PICReplica } from "./services/pic/pic.js"
+
+export const Replica = {
+	PocketIC: PICReplica,
+}
 
 export const Ice = (
 	configOrFn:
 		| Partial<ICEConfig>
-		| ((ctx: ICECtx) => Promise<Partial<ICEConfig>>),
+		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfig>>),
 ) => {
 	return configOrFn
 }

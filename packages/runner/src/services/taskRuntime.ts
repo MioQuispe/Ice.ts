@@ -32,7 +32,7 @@ import { CanisterIdsService } from "./canisterIds.js"
 import { DefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
 import { AgentError, DefaultReplica, ReplicaError } from "./replica.js"
-import type { ICEConfig, ICECtx } from "../types/types.js"
+import type { ICEConfig, ICEConfigContext } from "../types/types.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { TelemetryConfig } from "./telemetryConfig.js"
 import { makeTelemetryLayer } from "./telemetryConfig.js"
@@ -48,6 +48,8 @@ import { DfxReplica } from "./dfx.js"
 import { configLayer } from "./config.js"
 import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
+import { picReplicaImpl } from "./pic/pic.js"
+import { GlobalArgs } from "../cli/index.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -61,11 +63,6 @@ class TaskRunnerError extends Data.TaggedError("TaskRunnerError")<{
 	message?: string
 	error?: unknown
 }> {}
-
-const GlobalArgs = type({
-	network: "string" as const,
-	logLevel: "'debug' | 'info' | 'error'",
-}) satisfies StandardSchemaV1<Record<string, unknown>>
 
 const logLevelMap = {
 	debug: LogLevel.Debug,
@@ -92,7 +89,11 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| InFlight
 			| IceDir
 			| PromptsService,
-			PlatformError | ReplicaError | AgentError | TaskRuntimeError | MocError
+			| PlatformError
+			| ReplicaError
+			| AgentError
+			| TaskRuntimeError
+			| MocError
 		>
 		taskLayer: Layer.Layer<
 			| OtelTracer
@@ -107,9 +108,14 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| DeploymentsService
 			| ICEConfigService
 			| TelemetryConfig
+			| PromptsService
 			| InFlight
 			| IceDir,
-			PlatformError | ReplicaError | AgentError | TaskRuntimeError | MocError
+			| PlatformError
+			| ReplicaError
+			| AgentError
+			| TaskRuntimeError
+			| MocError
 		>
 	}
 >() {}
@@ -121,7 +127,8 @@ const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
 // 	()
 const ICEConfigLayer = ICEConfigService.Live({
 	network: "local",
-	logLevel: logLevelMap.debug,
+	logLevel: "debug",
+	background: false,
 }).pipe(Layer.provide(NodeContext.layer))
 
 const telemetryConfig = {
@@ -187,7 +194,7 @@ const CanisterIdsLayer = CanisterIdsService.Live.pipe(
 // )
 
 // TODO: Layer memoize instead?
-export const makeTaskLayer = () =>
+export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 	Effect.gen(function* () {
 		const appDir = yield* Config.string("APP_DIR")
 		// const iceDir = yield* Config.string("ICE_DIR_NAME")
@@ -205,8 +212,8 @@ export const makeTaskLayer = () =>
 		const IceDirLayer = Layer.succeed(IceDir, iceDir)
 		// TODO: make it work for tests too
 		const telemetryConfig = yield* TelemetryConfig
-        const defaultReplica = yield* DefaultReplica
-        const DefaultReplicaService = Layer.succeed(DefaultReplica, defaultReplica)
+		// const defaultReplica = yield* DefaultReplica
+		// const DefaultReplicaService = Layer.succeed(DefaultReplica, defaultReplica)
 		// const DefaultReplicaService = Layer.scoped(
 		// 	DefaultReplica,
 		// 	picReplicaImpl({
@@ -246,6 +253,22 @@ export const makeTaskLayer = () =>
 			TaskRegistry,
 			TaskRegistryService,
 		)
+		const ctx = {
+			...globalArgs,
+			iceDirPath: iceDir.path,
+		}
+
+		const DefaultReplicaService = Layer.scoped(
+			DefaultReplica,
+			picReplicaImpl(ctx, {
+				host: "0.0.0.0",
+				port: 8081,
+				ttlSeconds: 9_999_999_999,
+			}),
+		).pipe(
+			Layer.provide(NodeContext.layer),
+			// Layer.provide(PromptsLayer),
+		)
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
 		const taskLayer = Layer.mergeAll(
@@ -262,7 +285,7 @@ export const makeTaskLayer = () =>
 			ICEConfigLayer,
 			telemetryConfigLayer,
 			ClackLoggingLive, // single-writer clack logger
-			Logger.minimumLogLevel(ICEConfig.globalArgs.logLevel),
+			Logger.minimumLogLevel(logLevelMap[ICEConfig.globalArgs.logLevel]),
 			InFlightLayer,
 			IceDirLayer,
 			KVStorageLayer,
