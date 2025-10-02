@@ -26,6 +26,13 @@ import {
 	type CanisterStatusResult,
 	InstallModes,
 	Replica,
+	AgentError,
+	CanisterStatusError,
+	CanisterCreateError,
+	CanisterCreateRangeError,
+	CanisterStopError,
+	CanisterDeleteError,
+	CanisterInstallError,
 } from "../services/replica.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type {
@@ -301,24 +308,49 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						resolvedCanisterId,
 					})
 					const canisterInfo = resolvedCanisterId
-						? yield* replica
-								.getCanisterInfo({
-									canisterId: resolvedCanisterId,
-									identity,
-								})
-								.pipe(
-									Effect.catchTag(
-										"CanisterStatusError",
-										(err) => {
-											return Effect.succeed({
-												status: CanisterStatus.NOT_FOUND,
-											})
-										},
-									),
-								)
-						: {
-								status: CanisterStatus.NOT_FOUND,
-							}
+						? yield* Effect.tryPromise<
+								CanisterStatusResult,
+								CanisterStatusError | AgentError
+							>({
+								try: () =>
+									replica.getCanisterInfo({
+										canisterId: resolvedCanisterId,
+										identity,
+									}),
+								catch: (e) =>
+									e instanceof CanisterStatusError ||
+									e instanceof AgentError
+										? e
+										: new AgentError({
+												message: String(e),
+											}),
+							}).pipe(
+								Effect.catchTag("CanisterStatusError", () =>
+									Effect.succeed({
+										status: CanisterStatus.NOT_FOUND,
+									} as const),
+								),
+							)
+						: ({ status: CanisterStatus.NOT_FOUND } as const)
+					// const canisterInfo = resolvedCanisterId
+					// 	? yield* replica
+					// 			.getCanisterInfo({
+					// 				canisterId: resolvedCanisterId,
+					// 				identity,
+					// 			})
+					// 			.pipe(
+					// 				Effect.catchTag(
+					// 					"CanisterStatusError",
+					// 					(err) => {
+					// 						return Effect.succeed({
+					// 							status: CanisterStatus.NOT_FOUND,
+					// 						})
+					// 					},
+					// 				),
+					// 			)
+					// 	: {
+					// 			status: CanisterStatus.NOT_FOUND,
+					// 		}
 					const isAlreadyInstalled =
 						resolvedCanisterId &&
 						canisterInfo.status !== CanisterStatus.NOT_FOUND
@@ -330,58 +362,96 @@ export const makeCreateTask = <Config extends CreateConfig>(
 
 					const canisterId = isAlreadyInstalled
 						? resolvedCanisterId
-						: yield* replica
-								.createCanister({
-									canisterId: resolvedCanisterId,
-									identity,
-								})
-								.pipe(
-									Effect.catchTag(
-										"CanisterCreateRangeError",
-										(err) => {
-											// For testing purposes only
-											// return Effect.fail(err)
-											return Effect.gen(function* () {
-												const confirmResult =
-													yield* Effect.tryPromise({
-														try: () =>
-															taskCtx.prompts.confirm(
-																{
-																	// type: "confirm",
-																	message:
-																		"Target canister id is not in subnet range. Do you want to create a new canister id for it?",
-																	initialValue: true,
-																},
-															),
-														catch: (error) => {
-															return new TaskError(
-																{
-																	message:
-																		String(
-																			error,
-																		),
-																},
-															)
-														},
-													})
-												if (!confirmResult) {
-													return yield* Effect.fail(
-														new TaskCancelled({
+						: // ⬇️ Replace the whole `canisterId = ...` ternary RHS with this:
+							yield* Effect.tryPromise<
+								string,
+								| CanisterCreateError
+								| CanisterCreateRangeError
+								| CanisterStatusError
+								| AgentError
+							>({
+								// IMPORTANT: do NOT wrap here — preserve the original tagged error
+								try: () =>
+									replica.createCanister({
+										canisterId: resolvedCanisterId,
+										identity,
+									}),
+								catch: (e) =>
+									e as
+										| CanisterCreateError
+										| CanisterCreateRangeError
+										| CanisterStatusError
+										| AgentError,
+							}).pipe(
+								// Now the tag is preserved, so this branch actually triggers
+								Effect.catchTag(
+									"CanisterCreateRangeError",
+									() => {
+										return Effect.gen(function* () {
+											const confirmResult =
+												yield* Effect.tryPromise({
+													try: () =>
+														taskCtx.prompts.confirm(
+															{
+																message:
+																	"Target canister id is not in subnet range. Do you want to create a new canister id for it?",
+																initialValue: true,
+															},
+														),
+													catch: (error) =>
+														new TaskError({
 															message:
-																"Canister creation cancelled",
+																String(error),
 														}),
-													)
-												}
-												return yield* replica.createCanister(
-													{
+												})
+											if (!confirmResult) {
+												return yield* Effect.fail(
+													new TaskCancelled({
+														message:
+															"Canister creation cancelled",
+													}),
+												)
+											}
+											// second attempt with a fresh canister id
+											return yield* Effect.tryPromise<
+												string,
+												| CanisterCreateError
+												| CanisterCreateRangeError
+												| CanisterStatusError
+												| AgentError
+											>({
+												try: () =>
+													replica.createCanister({
 														canisterId: undefined,
 														identity,
-													},
-												)
+													}),
+												// again: don't wrap, preserve tag
+												catch: (e) =>
+													e as
+														| CanisterCreateError
+														| CanisterCreateRangeError
+														| CanisterStatusError
+														| AgentError,
 											})
-										},
-									),
-								)
+										})
+									},
+								),
+								// Finally wrap truly-unknown errors as CanisterCreateError
+								Effect.catchAll((e) => {
+									const tag = (e as any)?._tag
+									return tag === "CanisterCreateError" ||
+										tag === "CanisterCreateRangeError" ||
+										tag === "CanisterStatusError" ||
+										tag === "AgentError"
+										? Effect.fail(e as any)
+										: Effect.fail(
+												new CanisterCreateError({
+													message: String(e),
+													cause: e as any,
+												}),
+											)
+								}),
+							)
 					const { appDir, iceDir } = taskCtx
 					yield* Effect.logDebug(
 						"create Task: setting canisterId",
@@ -483,9 +553,21 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						return true
 					}
 
-					const info = yield* replica.getCanisterInfo({
-						canisterId: resolvedCanisterId,
-						identity: deployer.identity,
+					// 🔁 makeCanisterStatusTask.effect – wrap getCanisterInfo
+					const info = yield* Effect.tryPromise<
+						CanisterStatusResult,
+						CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.getCanisterInfo({
+								canisterId: resolvedCanisterId,
+								identity: deployer.identity,
+							}),
+						catch: (e) =>
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					if (info.status === CanisterStatus.NOT_FOUND) {
 						return true
@@ -1110,10 +1192,20 @@ export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
 					} = taskCtx
 					// TODO: check if canister is running / stopped
 					// get status first
-					const status = yield* replica.getCanisterStatus({
-						canisterId,
-						identity,
+					// 🔁 makeStopTask.effect – wrap getCanisterStatus and stopCanister
+					const status = yield* Effect.tryPromise<
+						CanisterStatus,
+						CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.getCanisterStatus({ canisterId, identity }),
+						catch: (e) =>
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
+
 					if (status === CanisterStatus.STOPPED) {
 						yield* Effect.logDebug(
 							`Canister ${canisterName} is already stopped or not installed`,
@@ -1121,9 +1213,17 @@ export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
 						)
 						return
 					}
-					yield* replica.stopCanister({
-						canisterId,
-						identity,
+					yield* Effect.tryPromise<
+						void,
+						CanisterStopError | AgentError
+					>({
+						try: () =>
+							replica.stopCanister({ canisterId, identity }),
+						catch: (e) =>
+							e instanceof CanisterStopError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					yield* Effect.logDebug(`Stopped canister ${canisterName}`)
 				})(),
@@ -1172,9 +1272,18 @@ export const makeRemoveTask = (builderLayer: BuilderLayer): RemoveTask => {
 						},
 						replica,
 					} = taskCtx
-					yield* replica.removeCanister({
-						canisterId,
-						identity,
+					// 🔁 makeRemoveTask.effect – wrap removeCanister
+					yield* Effect.tryPromise<
+						void,
+						CanisterDeleteError | AgentError
+					>({
+						try: () =>
+							replica.removeCanister({ canisterId, identity }),
+						catch: (e) =>
+							e instanceof CanisterDeleteError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					yield* Effect.tryPromise({
 						try: () =>
@@ -1252,9 +1361,18 @@ export const makeCanisterStatusTask = (
 							deployer: { identity },
 						},
 					} = taskCtx
-					const canisterInfo = yield* replica.getCanisterInfo({
-						canisterId,
-						identity,
+					// 🔁 makeInstallTask.effect – wrap getCanisterInfo before precondition checks
+					const canisterInfo = yield* Effect.tryPromise<
+						CanisterStatusResult,
+						CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.getCanisterInfo({ canisterId, identity }),
+						catch: (e) =>
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					const status = canisterInfo.status
 					return {
@@ -1302,24 +1420,30 @@ export const resolveMode = (
 		const canisterId =
 			canisterIdsMap[canisterName]?.[currentNetwork] ?? configCanisterId
 		// TODO: use Option.Option?
+		// 🔁 resolveMode – wrap getCanisterInfo (+ keep your catchTag branch)
 		const canisterInfo = canisterId
-			? yield* replica
-					.getCanisterInfo({
-						canisterId,
-						identity,
-					})
-					.pipe(
-						Effect.catchTag("CanisterStatusError", (err) => {
-							// TODO: previous canister_ids could exist
-							// but canister not even created
-							return Effect.succeed({
-								status: CanisterStatus.NOT_FOUND,
-							})
+			? yield* Effect.tryPromise<
+					CanisterStatusResult,
+					CanisterStatusError | AgentError
+				>({
+					try: () =>
+						replica.getCanisterInfo({
+							canisterId,
+							identity,
 						}),
-					)
-			: ({
-					status: CanisterStatus.NOT_FOUND,
-				} as const)
+					catch: (e) =>
+						e instanceof CanisterStatusError ||
+						e instanceof AgentError
+							? e
+							: new AgentError({ message: String(e) }),
+				}).pipe(
+					Effect.catchTag("CanisterStatusError", () =>
+						Effect.succeed({
+							status: CanisterStatus.NOT_FOUND,
+						} as const),
+					),
+				)
+			: ({ status: CanisterStatus.NOT_FOUND } as const)
 
 		const noModule =
 			canisterInfo.status === CanisterStatus.NOT_FOUND ||
@@ -2019,9 +2143,17 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const wasm = new Uint8Array(wasmContent)
 					const maxSize = 3670016
 					// Enforce explicit mode preconditions
-					const canisterInfo = yield* replica.getCanisterInfo({
-						canisterId,
-						identity,
+					const canisterInfo = yield* Effect.tryPromise<
+						CanisterStatusResult,
+						CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.getCanisterInfo({ canisterId, identity }),
+						catch: (e) =>
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					const modulePresent =
 						canisterInfo.status !== CanisterStatus.NOT_FOUND &&
@@ -2064,12 +2196,25 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					yield* Effect.logDebug(
 						`Installing code for ${canisterId} at ${wasmPath} with mode ${mode}`,
 					)
-					yield* replica.installCode({
-						canisterId,
-						wasm,
-						encodedArgs: initArgs.encoded,
-						identity,
-						mode,
+					// 🔁 makeInstallTask.effect – wrap installCode
+					yield* Effect.tryPromise<
+						void,
+						CanisterInstallError | CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.installCode({
+								canisterId,
+								wasm,
+								encodedArgs: initArgs.encoded,
+								identity,
+								mode,
+							}),
+						catch: (e) =>
+							e instanceof CanisterInstallError ||
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					// const Deployments = yield* DeploymentsService
 					yield* Effect.tryPromise({
@@ -2093,10 +2238,17 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					yield* Effect.logDebug(
 						`Canister ${canisterName} installed successfully`,
 					)
-					const actor = yield* replica.createActor<_SERVICE>({
-						canisterId,
-						canisterDID,
-						identity,
+					const actor = yield* Effect.tryPromise({
+						try: () =>
+							replica.createActor<_SERVICE>({
+								canisterId,
+								canisterDID,
+								identity,
+							}),
+						catch: (e) =>
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					return {
 						args: initArgs.raw,
@@ -2285,9 +2437,20 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					}
 					// const taskArgs = args as InstallTaskArgs
 					// const requestedMode = taskArgs.mode
-					const info = yield* replica.getCanisterInfo({
-						canisterId: input.canisterId,
-						identity: deployer.identity,
+					const info = yield* Effect.tryPromise<
+						CanisterStatusResult,
+						CanisterStatusError | AgentError
+					>({
+						try: () =>
+							replica.getCanisterInfo({
+								canisterId: input.canisterId,
+								identity: deployer.identity,
+							}),
+						catch: (e) =>
+							e instanceof CanisterStatusError ||
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					if (
 						info.status === CanisterStatus.NOT_FOUND ||
@@ -2360,11 +2523,17 @@ export const makeInstallTask = <_SERVICE, I, U>(
 								message: "Failed to load canisterDID",
 							}),
 					})
-					const actor = yield* replica.createActor<_SERVICE>({
-						// canisterName,
-						canisterId,
-						canisterDID,
-						identity,
+					const actor = yield* Effect.tryPromise({
+						try: () =>
+							replica.createActor<_SERVICE>({
+								canisterId,
+								canisterDID,
+								identity,
+							}),
+						catch: (e) =>
+							e instanceof AgentError
+								? e
+								: new AgentError({ message: String(e) }),
 					})
 					// // Always reflect the CURRENT resolved mode rather than the cached one
 					// const currentMode = input.mode

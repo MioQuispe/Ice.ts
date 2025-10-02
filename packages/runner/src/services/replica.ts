@@ -1,4 +1,4 @@
-import { type Effect, Context, Data } from "effect"
+import { Effect, Context, Data, Layer } from "effect"
 import type {
 	ActorSubclass,
 	HttpAgent,
@@ -239,8 +239,8 @@ export class ReplicaError extends Data.TaggedError("ReplicaError")<{
 }> {}
 
 export type ReplicaService = {
-    // TODO:
-    // topology: Topology
+	// TODO:
+	// topology: Topology
 	// subnet: Subnet?
 	host: string
 	port: number
@@ -297,15 +297,263 @@ export type ReplicaService = {
 		identity: SignIdentity
 	}) => Effect.Effect<ActorSubclass<_SERVICE>, AgentError>
 	getTopology: () => Effect.Effect<SubnetTopology[], AgentError>
-    stop: () => Effect.Effect<void, PlatformError>
+	stop: () => Effect.Effect<void, ReplicaError>
+}
+
+export type ReplicaServiceClass = {
+	// TODO:
+	// topology: Topology
+	// subnet: Subnet?
+	host: string
+	port: number
+	// readonly createCanister: (params: {
+	//   canisterName: string
+	//   args?: any[]
+	// }) => Effect.Effect<string, DfxError>
+	// readonly installCanister: (params: {
+	//   canisterName: string
+	//   args?: any[]
+	// }) => Effect.Effect<string, DfxError>
+	// readonly mgmt: ManagementActor
+	installCode: (params: {
+		canisterId: string
+		wasm: Uint8Array
+		encodedArgs: Uint8Array
+		identity: SignIdentity
+		mode: InstallModes
+		// TODO: progress callback?
+	}) => Promise<void>
+	// uninstallCode: (canisterId: string) => Effect.Effect<void, unknown, unknown>
+	getCanisterStatus: (params: {
+		canisterId: string
+		identity: SignIdentity
+	}) => Promise<CanisterStatus>
+	getCanisterInfo: (params: {
+		canisterId: string
+		identity: SignIdentity
+	}) => Promise<CanisterInfo>
+	stopCanister: (params: {
+		canisterId: string
+		identity: SignIdentity
+	}) => Promise<void>
+	removeCanister: (params: {
+		canisterId: string
+		identity: SignIdentity
+	}) => Promise<void>
+	createCanister: (params: {
+		canisterId: string | undefined
+		identity: SignIdentity
+	}) => Promise<string> // returns canister id
+	createActor: <_SERVICE>(params: {
+		canisterId: string
+		canisterDID: any
+		identity: SignIdentity
+	}) => Promise<ActorSubclass<_SERVICE>>
+	getTopology: () => Promise<SubnetTopology[]>
+	start: () => Promise<void>
+	stop: () => Promise<void>
 }
 
 export class Replica extends Context.Tag("Replica")<
 	Replica,
-	ReplicaService
+	ReplicaServiceClass
 >() {}
 
 export class DefaultReplica extends Context.Tag("DefaultReplica")<
 	DefaultReplica,
-	ReplicaService
+	ReplicaServiceClass
 >() {}
+
+// ---------- small error helpers (pass through if already one of your types) ----------
+
+function asInstallErr(
+	e: unknown,
+): CanisterInstallError | AgentError | CanisterStatusError {
+	if (
+		e instanceof CanisterInstallError ||
+		e instanceof CanisterStatusError ||
+		e instanceof AgentError
+	)
+		return e
+	return new AgentError({ message: `installCode failed: ${fmt(e)}` })
+}
+
+function asStatusErr(e: unknown): CanisterStatusError | AgentError {
+	if (e instanceof CanisterStatusError || e instanceof AgentError) return e
+	return new AgentError({ message: `status failed: ${fmt(e)}` })
+}
+
+function asStopErr(e: unknown): CanisterStopError | AgentError {
+	if (e instanceof CanisterStopError || e instanceof AgentError) return e
+	return new AgentError({ message: `stopCanister failed: ${fmt(e)}` })
+}
+
+function asDeleteErr(e: unknown): CanisterDeleteError | AgentError {
+	if (e instanceof CanisterDeleteError || e instanceof AgentError) return e
+	return new AgentError({ message: `removeCanister failed: ${fmt(e)}` })
+}
+
+function asCreateErr(
+	e: unknown,
+):
+	| CanisterCreateError
+	| CanisterCreateRangeError
+	| CanisterStatusError
+	| AgentError {
+	if (
+		e instanceof CanisterCreateError ||
+		e instanceof CanisterCreateRangeError ||
+		e instanceof CanisterStatusError ||
+		e instanceof AgentError
+	)
+		return e
+	return new AgentError({ message: `createCanister failed: ${fmt(e)}` })
+}
+
+const fmt = (e: unknown) =>
+	e instanceof Error
+		? e.message
+		: typeof e === "string"
+			? e
+			: JSON.stringify(e)
+
+// ---------- core helper: wrap a Promise-based replica into the Effect service ----------
+
+export function effectifyReplica(replica: ReplicaServiceClass): ReplicaService {
+	return {
+		host: replica.host,
+		port: replica.port,
+
+		installCode: (p) =>
+			Effect.tryPromise({
+				try: () => replica.installCode(p),
+				catch: asInstallErr,
+			}),
+
+		getCanisterStatus: (p) =>
+			Effect.tryPromise({
+				try: () => replica.getCanisterStatus(p),
+				catch: asStatusErr,
+			}),
+
+		getCanisterInfo: (p) =>
+			Effect.tryPromise({
+				try: () => replica.getCanisterInfo(p),
+				catch: asStatusErr,
+			}),
+
+		stopCanister: (p) =>
+			Effect.tryPromise({
+				try: () => replica.stopCanister(p),
+				catch: asStopErr,
+			}),
+
+		removeCanister: (p) =>
+			Effect.tryPromise({
+				try: () => replica.removeCanister(p),
+				catch: asDeleteErr,
+			}),
+
+		createCanister: (p) =>
+			Effect.tryPromise({
+				try: () => replica.createCanister(p),
+				catch: asCreateErr,
+			}),
+
+		createActor: <_SERVICE>(p: {
+			canisterId: string
+			canisterDID: any
+			identity: SignIdentity
+		}) =>
+			Effect.tryPromise<ActorSubclass<_SERVICE>, AgentError>({
+				try: () => replica.createActor<_SERVICE>(p),
+				catch: (e) =>
+					e instanceof AgentError
+						? e
+						: new AgentError({
+								message: `createActor failed: ${fmt(e)}`,
+							}),
+			}),
+
+		getTopology: () =>
+			Effect.tryPromise<SubnetTopology[], AgentError>({
+				try: () => replica.getTopology(),
+				catch: (e) =>
+					e instanceof AgentError
+						? e
+						: new AgentError({
+								message: `getTopology failed: ${fmt(e)}`,
+							}),
+			}),
+
+		stop: () =>
+			Effect.tryPromise({
+				try: () => replica.stop(),
+				catch: (e) =>
+					// keep it simple: rethrow as AgentError (your PlatformError type is a union in practice)
+					new ReplicaError({
+						message: `replica.stop failed: ${fmt(e)}`,
+					}),
+			}),
+	}
+}
+
+// ---------- convenience: build a scoped Layer from an async class with start/stop ----------
+//
+// Usage:
+//   const pic = new PICReplica(ctx, opts)
+//   const layer = layerFromAsyncReplica(pic)
+//   // provide Layer to your runtime; it will call start() on acquire and stop() on release
+//
+// export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
+// 	return Layer.scoped(
+// 		DefaultReplica,
+// 		Effect.acquireRelease(
+// 			Effect.tryPromise({
+// 				try: async () => {
+// 					await replica.start()
+// 					return effectifyReplica(replica)
+// 				},
+// 				catch: (e) =>
+// 					new ReplicaError({
+// 						message: `replica.start failed: ${fmt(e)}`,
+// 					}),
+// 			}),
+// 			// On scope release, stop the *original* replica (not the wrapped one),
+// 			// so we always hit the class' real shutdown logic.
+// 			() => Effect.tryPromise(() => replica.stop()).pipe(Effect.ignore),
+// 		),
+// 	)
+// }
+
+
+export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
+	return Layer.scoped(
+		DefaultReplica,
+		Effect.acquireRelease(
+			Effect.tryPromise({
+				try: async () => {
+					await replica.start()
+					return replica
+				},
+				catch: (e) =>
+					new ReplicaError({
+						message: `replica.start failed: ${fmt(e)}`,
+					}),
+			}),
+			// On scope release, stop the *original* replica (not the wrapped one),
+			// so we always hit the class' real shutdown logic.
+			() => Effect.tryPromise(() => replica.stop()).pipe(Effect.ignore),
+		),
+	)
+}
+
+// ---------- if you only need a pure (non-scoped) provider ----------
+//
+// If your runtime owns lifecycle elsewhere and start/stop are already managed,
+// you can just do:
+//   const svc = effectifyReplica(awaitAlreadyStartedInstance)
+//   const layer = Layer.succeed(DefaultReplica, svc)
+//
+export const layerFromStartedReplica = (replica: ReplicaServiceClass) =>
+	Layer.succeed(DefaultReplica, replica)

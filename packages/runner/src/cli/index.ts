@@ -16,7 +16,7 @@ import { Tags } from "../builders/lib.js"
 import { DeploymentError } from "../canister.js"
 import { CanisterIdsService } from "../services/canisterIds.js"
 import { ICEConfigService } from "../services/iceConfig.js"
-import { CanisterStatus, DefaultReplica, Replica } from "../services/replica.js"
+import { CanisterStatus, CanisterStatusError, DefaultReplica, Replica, ReplicaError } from "../services/replica.js"
 import {
 	filterNodes,
 	totalTaskCount,
@@ -48,9 +48,9 @@ import {
 } from "effect"
 import fs from "node:fs"
 import { DefaultConfig } from "../services/defaultConfig.js"
-import { DfxReplica } from "../services/dfx.js"
+// import { DfxReplica } from "../services/dfx.js"
 import { Moc } from "../services/moc.js"
-import { picReplicaImpl, PICReplicaLive } from "../services/pic/pic.js"
+import { PICReplica } from "../services/pic/pic.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type { ICEConfig, ICEConfigContext } from "../types/types.js"
 import {
@@ -176,7 +176,7 @@ export const makeCliRuntime = ({
 		throw new Error(globalArgs.summary)
 	}
 
-	const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
+	// const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
 
 	const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
 		Layer.provide(NodeContext.layer),
@@ -534,7 +534,10 @@ const deployRun = async ({
 		// TODO: clean up. use Replica
 		const replica = yield* DefaultReplica
 		yield* Effect.logInfo("Stopping replica")
-		yield* replica.stop()
+		yield* Effect.tryPromise({
+			try: () => replica.stop(),
+			catch: (e) => new ReplicaError({ message: String(e) }),
+		})
 		yield* Effect.logInfo("Stopped replica")
 
 		const count = yield* Metric.value(totalTaskCount)
@@ -1092,9 +1095,12 @@ const canistersStatusCommand = defineCommand({
 										}),
 									)
 								}
-								const status = yield* replica.getCanisterInfo({
-									canisterId,
-									identity,
+								const status = yield* Effect.tryPromise({
+									try: () => replica.getCanisterInfo({
+										canisterId,
+										identity,
+									}),
+									catch: (e) => new CanisterStatusError({ message: String(e) }),
 								})
 								return { canisterName, canisterId, status }
 							}),

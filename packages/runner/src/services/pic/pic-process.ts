@@ -1,437 +1,371 @@
-import { Deferred, Effect, Fiber, Option, Schedule, Stream } from "effect"
-import { FileSystem, Path, Command, CommandExecutor } from "@effect/platform"
+// pic-process.ts (async/await version, no effect-ts)
+
+import { spawn, ChildProcess } from "node:child_process"
+import * as fs from "node:fs/promises"
+import * as fssync from "node:fs"
+import * as path from "node:path"
 import * as url from "node:url"
+import net from "node:net"
+import find from "find-process"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 import { ReplicaError } from "../replica.js"
-import { PlatformError } from "@effect/platform/Error"
-import net from "node:net"
-import { Process } from "@effect/platform/CommandExecutor"
-import find from "find-process"
-import { ICEConfigContext } from "../../types/types.js"
+import type { ICEConfigContext } from "../../types/types.js"
 
-const statePathEffect = (iceDirPath: string) =>
-	Effect.gen(function* () {
-		const path = yield* Path.Path
-		const STATE_DIR = path.join(iceDirPath, "pocketic-server")
-		const STATE_FILE = "state.json"
-		return path.join(STATE_DIR, STATE_FILE)
-	})
+const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
+
+// ---------------- helpers ----------------
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+const statePath = (iceDirPath: string) =>
+  path.join(iceDirPath, "pocketic-server", "state.json")
+
+const ensureDir = async (p: string) => {
+  await fs.mkdir(p, { recursive: true }).catch(() => {})
+}
+
+const readJson = async <T>(p: string): Promise<T> => {
+  const txt = await fs.readFile(p, "utf8")
+  return JSON.parse(txt) as T
+}
+
+const writeJson = async (p: string, data: unknown) => {
+  await ensureDir(path.dirname(p))
+  await fs.writeFile(p, JSON.stringify(data, null, 2), "utf8")
+}
+
+const removeIfExists = async (p: string) => {
+  try {
+    await fs.unlink(p)
+  } catch {}
+}
+
+const exists = async (p: string) => {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const isPidAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const waitTcpReady = (host: string, port: number, perTryMs = 800) =>
+  new Promise<void>((resolve, reject) => {
+    const socket = net.connect({ host, port })
+    const to = setTimeout(() => socket.destroy(new Error("timeout")), perTryMs)
+
+    const cleanup = () => {
+      clearTimeout(to)
+      socket.removeAllListeners()
+      socket.end()
+      socket.destroy()
+    }
+    socket.once("connect", () => {
+      cleanup()
+      resolve()
+    })
+    socket.once("error", (err) => {
+      cleanup()
+      reject(err)
+    })
+  })
+
+// If a process is listening on <port> and looks like pocket-ic -> pid, else undefined
+async function pidByPortIfPocketIc(port: number): Promise<number | undefined> {
+  try {
+    const list = await find("port", port)
+    const match = list.find((p) => {
+      const cmd = (p as any).cmd as string | undefined
+      const name = (p as any).name as string | undefined
+      return (
+        (cmd && cmd.includes(pocketIcPath)) ||
+        (name && name.toLowerCase().includes("pocket-ic"))
+      )
+    })
+    return match ? ((match as any).pid as number) : undefined
+  } catch {
+    return undefined
+  }
+}
 
 type PocketIcState = {
-	pid: number
-	startedAt: number
-	binPath: string
-	args: string[]
-	version?: string
+  pid: number
+  startedAt: number
+  binPath: string
+  args: string[]
+  version?: string
 }
 
-const readState = (iceDirPath: string) =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
-		const path = yield* statePathEffect(iceDirPath)
-		const exists = yield* fs.exists(path)
-		if (!exists) return Option.none<PocketIcState>()
-		const txt = yield* fs.readFileString(path)
-		return Option.some(JSON.parse(txt) as PocketIcState)
-	})
+function buildMonitorArgs(opts: {
+  background: boolean
+  parentPid: number
+  stateFile?: string
+  ip: string
+  port: number
+  ttl: string
+}) {
+  const args: string[] = [
+    path.resolve(__dirname, "../../../bin/monitor.js"),
+  ]
+  if (opts.background) args.push("--background")
+  if (opts.stateFile) {
+    args.push("--state-file", opts.stateFile)
+  }
+  args.push(
+    "--parent",
+    String(opts.parentPid),
+    "--bin",
+    pocketIcPath,
+    "--",
+    "-i",
+    opts.ip,
+    "-p",
+    String(opts.port),
+    "--ttl",
+    opts.ttl,
+  )
+  return args
+}
 
-const writeState = (iceDirPath: string, state: PocketIcState) =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
-		const path = yield* statePathEffect(iceDirPath)
-		const dir = (yield* Path.Path).dirname(path)
-		yield* fs.makeDirectory(dir, { recursive: true })
-		yield* fs.writeFile(
-			path,
-			new TextEncoder().encode(JSON.stringify(state, null, 2)),
-		)
-	})
+function spawnMonitor(args: string[], bg: boolean): ChildProcess {
+  // In background, monitor itself will detach pocket-ic; we don't need to capture stdio
+  return spawn(process.execPath, args, {
+    detached: true,
+    stdio: bg ? "ignore" : ["ignore", "inherit", "pipe"], // capture stderr for fatal scan in foreground
+  })
+}
 
-const removeState = (iceDirPath: string) =>
-	Effect.gen(function* () {
-		const fs = yield* FileSystem.FileSystem
-		const path = yield* statePathEffect(iceDirPath)
-		const exists = yield* fs.exists(path)
-		if (exists) yield* fs.remove(path)
-	})
+function makeFatalStderrPromise(
+  proc: ChildProcess,
+  ip: string,
+  port: number,
+): Promise<never> {
+  if (!proc.stderr) {
+    // No stderr available → never resolve/reject (acts like Effect.never)
+    return new Promise<never>(() => {})
+  }
+  return new Promise<never>((_resolve, reject) => {
+    const onData = (chunk: Buffer | string) => {
+      const text = typeof chunk === "string" ? chunk : chunk.toString("utf8")
+      for (const line of text.split("\n")) {
+        if (!line) continue
+        if (/Failed to bind PocketIC server to address/i.test(line)) {
+          reject(
+            new ReplicaError({
+              message: `PocketIC failed to bind to ${ip}:${port}. Port likely in use.`,
+            }),
+          )
+        }
+        if (/thread 'main' panicked/i.test(line)) {
+          reject(
+            new ReplicaError({
+              message: `PocketIC panicked during startup: ${line}`,
+            }),
+          )
+        }
+      }
+    }
+    proc.stderr!.on("data", onData)
+    proc.on("exit", () => {
+      // If it exits before we ever became healthy, treat as fatal
+      reject(
+        new ReplicaError({
+          message: `PocketIC monitor exited unexpectedly during startup`,
+        }),
+      )
+    })
+  })
+}
 
-const isPidAlive = (pid: number) =>
-	Effect.try(() => process.kill(pid, 0) === undefined || true).pipe(
-		Effect.catchAll(() => Effect.succeed(false)),
-	)
-
-// wait until <host>:<port> accepts TCP (per-try timeout)
-const waitTcpReady = (host: string, port: number, perTryMs = 800) =>
-	Effect.tryPromise({
-		try: () =>
-			new Promise<void>((resolve, reject) => {
-				const socket = net.connect({ host, port })
-				const to = setTimeout(() => {
-					socket.destroy(new Error("timeout"))
-				}, perTryMs)
-				const cleanup = () => {
-					clearTimeout(to)
-					socket.removeAllListeners()
-					socket.end()
-					socket.destroy()
-				}
-				socket.once("connect", () => {
-					cleanup()
-					resolve()
-				})
-				socket.once("error", (err) => {
-					cleanup()
-					reject(err)
-				})
-			}),
-		catch: () =>
-			new ReplicaError({
-				message: `PocketIC not accepting connections on ${host}:${port}`,
-			}),
-	})
-
-// If a process is listening on <port> AND its command looks like pocket-ic -> Some(pid) else None
-const pidByPortIfPocketIc = (port: number) =>
-	Effect.tryPromise({
-		try: () => find("port", port),
-		catch: () =>
-			new ReplicaError({
-				message: `Failed to find process listening on ${port}`,
-			}),
-	}).pipe(
-		Effect.catchAll(() => Effect.succeed([])),
-		Effect.map((list) => {
-			const match = list.find((p) => {
-				const cmd = (p as any).cmd as string | undefined
-				const name = (p as any).name as string | undefined
-				return (
-					(cmd && cmd.includes(pocketIcPath)) ||
-					(name && name.toLowerCase().includes("pocket-ic"))
-				)
-			})
-			return match
-				? Option.some((match as any).pid as number)
-				: Option.none<number>()
-		}),
-	)
+// --------------- public API ---------------
 
 export type Monitor = {
-	stdErrFiber: Option.Option<Fiber.Fiber<never, ReplicaError | PlatformError>>
-	pid: number
-	host: string
-	port: number
-	reused: boolean
-	shutdown: () => void
+  pid: number
+  host: string // "http://<ip>"
+  port: number
+  reused: boolean
+  shutdown: () => void
+  fatalStderr?: Promise<never> // only for foreground; race this against client init
 }
 
-export const makeMonitor = (
-	ctx: ICEConfigContext,
-	opts: {
-		host: string
-		port: number
-		ttlSeconds?: number
-	},
-) =>
-	Effect.gen(function* () {
-		const host = opts.host
-		const port = opts.port
-		const fs = yield* FileSystem.FileSystem
-		const pathSvc = yield* Path.Path
-		const commandExec = yield* CommandExecutor.CommandExecutor
+export async function makeMonitor(
+  ctx: ICEConfigContext,
+  opts: {
+    host: string // ip (e.g. "0.0.0.0")
+    port: number
+    ttlSeconds?: number
+  },
+): Promise<Monitor> {
+  const ip = opts.host
+  const port = opts.port
+  const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
+  const stPath = statePath(ctx.iceDirPath)
 
-		const monitorPath = pathSvc.resolve(
-			url.fileURLToPath(new URL(".", import.meta.url)),
-			"../../../bin/monitor.js",
-		)
-		const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
-		const statePath = yield* statePathEffect(ctx.iceDirPath)
+  // --- Reuse: state exists & alive & version matches
+  if (await exists(stPath)) {
+    try {
+      const st = await readJson<PocketIcState>(stPath)
+      const alive = isPidAlive(st.pid)
+      const versionOk = (st.version ?? pocketIcVersion) === pocketIcVersion
+      if (alive && versionOk) {
+        // ensure accepting connections
+        await retry(async () => waitTcpReady(ip, port), 40, 120)
+        return {
+          pid: st.pid,
+          host: `http://${ip}`,
+          port,
+          reused: true,
+          shutdown: () => {
+            /* no-op for reused background */
+          },
+        }
+      }
+    } catch {
+      // fall through to remove
+    }
+    await removeIfExists(stPath)
+  }
 
-		// --- Reuse: if we have state and the PID is alive & version matches
-		const st = yield* readState(ctx.iceDirPath)
-		if (Option.isSome(st)) {
-			const alive = yield* isPidAlive(st.value.pid)
-			const versionOk =
-				(st.value.version ?? pocketIcVersion) === pocketIcVersion
-			if (alive && versionOk) {
-				yield* waitTcpReady(host, port).pipe(
-					Effect.retry(
-						Schedule.intersect(
-							Schedule.spaced("120 millis"),
-							Schedule.recurs(40),
-						),
-					),
-				)
-				const shutdown = () => {
-					// do NOT kill here automatically; this is a background server we reused
-					try {
-						/* noop or gentle signal if you decide */
-					} catch {}
-				}
-				return {
-					stdErrFiber: Option.none(),
-					reused: true,
-					pid: st.value.pid,
-					host: `http://${host}`,
-					port,
-					shutdown,
-				} satisfies Monitor
-			} else {
-				yield* removeState(ctx.iceDirPath)
-			}
-		}
+  // --- Adopt: something is already listening AND is pocket-ic → recreate state and reuse
+  {
+    const pid = await pidByPortIfPocketIc(port)
+    if (pid && isPidAlive(pid)) {
+      await writeJson(stPath, {
+        pid,
+        startedAt: Date.now(),
+        binPath: pocketIcPath,
+        args: ["-i", ip, "-p", String(port), "--ttl", ttl],
+        version: pocketIcVersion,
+      } satisfies PocketIcState)
+      await retry(async () => waitTcpReady(ip, port), 40, 120)
+      return {
+        pid,
+        host: `http://${ip}`,
+        port,
+        reused: true,
+        shutdown: () => {
+          /* adopted background → no-op by default */
+        },
+      }
+    }
+  }
 
-		// --- Adopt: no state, but something already listening and it is pocket-ic → recreate state, reuse
-		const maybePid = yield* pidByPortIfPocketIc(port)
-		if (Option.isSome(maybePid)) {
-			const pid = maybePid.value
-			const alive = yield* isPidAlive(pid)
-			if (alive) {
-				yield* writeState(ctx.iceDirPath, {
-					pid,
-					startedAt: Date.now(),
-					binPath: pocketIcPath,
-					args: ["-i", host, "-p", String(port), "--ttl", ttl],
-					version: pocketIcVersion,
-				})
-				yield* waitTcpReady(host, port).pipe(
-					Effect.retry(
-						Schedule.intersect(
-							Schedule.spaced("120 millis"),
-							Schedule.recurs(40),
-						),
-					),
-				)
-				const shutdown = () => {
-					// same: we adopted a background instance; don't kill by default
-					try {
-						/* noop or gentle signal if you decide */
-					} catch {}
-				}
-				return {
-					stdErrFiber: Option.none(),
-					reused: true,
-					pid,
-					host: `http://${host}`,
-					port,
-					shutdown,
-				} satisfies Monitor
-			}
-		}
+  // --- Start fresh (background or foreground)
+  if (ctx.background) {
+    // Background: monitor writes state and exits immediately
+    const args = buildMonitorArgs({
+      background: true,
+      parentPid: process.pid,
+      stateFile: stPath,
+      ip,
+      port,
+      ttl,
+    })
+    const proc = spawnMonitor(args, true)
+    try {
+      proc.unref()
+    } catch {}
 
-		// --- Start fresh
-		if (ctx.background) {
-			// Background via monitor.js (writes state + exits)
-			const cmd = Command.make(
-				process.execPath,
-				monitorPath,
-				...["--background"],
-				"--state-file",
-				statePath,
-				"--parent",
-				String(process.pid),
-				"--bin",
-				pocketIcPath,
-				"--",
-				"-i",
-				host,
-				"-p",
-				String(port),
-				"--ttl",
-				ttl,
-			)
+    // Wait: state file exists + parse + pid alive (soft retries)
+    const state = await retry(async () => {
+      if (!(await exists(stPath))) {
+        throw new ReplicaError({ message: "PocketIC background state file missing" })
+      }
+      const txt = await fs.readFile(stPath, "utf8")
+      if (!txt.trim()) {
+        throw new ReplicaError({ message: "PocketIC background state not ready" })
+      }
+      let parsed: PocketIcState
+      try {
+        parsed = JSON.parse(txt)
+      } catch {
+        throw new ReplicaError({ message: "Failed to parse PocketIC background state" })
+      }
+      if (!isPidAlive(parsed.pid)) {
+        throw new ReplicaError({ message: "PocketIC background process died" })
+      }
+      return parsed
+    }, 20, 25, true) // exponential-ish (25ms base)
 
-			yield* Effect.logDebug(`[pocket-ic] cmd: ${cmd.toString()}`)
-			const proc = yield* commandExec.start(cmd)
-			yield* Effect.logDebug(
-				`[pocket-ic] background monitor started (pid ${proc.pid})`,
-			)
+    // Verify listener ownership by pid, then TCP ready
+    await retry(async () => {
+      const owner = await pidByPortIfPocketIc(port)
+      if (owner !== state.pid) {
+        throw new ReplicaError({
+          message: `PocketIC did not take ownership of ${ip}:${port} (listener mismatch)`,
+        })
+      }
+    }, 50, 120)
+    await retry(async () => waitTcpReady(ip, port), 50, 120)
 
-			// Wait for state → parsed → pid alive
-			const state = yield* Effect.gen(function* () {
-				const exists = yield* fs.exists(statePath)
-				if (!exists) {
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC background state file missing`,
-						}),
-					)
-				}
-				const txt = yield* fs.readFileString(statePath)
-				if (!txt || txt.trim().length === 0) {
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC background state not ready`,
-						}),
-					)
-				}
-				const parsed = yield* Effect.try({
-					try: () => JSON.parse(txt) as PocketIcState,
-					catch: () =>
-						new ReplicaError({
-							message: `Failed to parse PocketIC background state`,
-						}),
-				})
-				const alive2 = yield* isPidAlive(parsed.pid)
-				if (!alive2) {
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC background process died`,
-						}),
-					)
-				}
-				return parsed
-			}).pipe(
-				Effect.retry(
-					Schedule.intersect(
-						Schedule.exponential("25 millis"),
-						Schedule.recurs(20),
-					),
-				),
-			)
+    // Stamp version if missing
+    if (!state.version) {
+      await writeJson(stPath, { ...state, version: pocketIcVersion })
+    }
 
-			// Verify listener ownership then TCP ready
-			yield* Effect.gen(function* () {
-				const owner = yield* pidByPortIfPocketIc(port)
-				if (Option.isNone(owner) || owner.value !== state.pid) {
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC did not take ownership of ${host}:${port} (listener mismatch)`,
-						}),
-					)
-				}
-				return void 0
-			}).pipe(
-				Effect.retry(
-					Schedule.intersect(
-						Schedule.spaced("120 millis"),
-						Schedule.recurs(50),
-					),
-				),
-			)
+    return {
+      pid: state.pid,
+      host: `http://${ip}`,
+      port,
+      reused: false,
+      shutdown: () => {
+        // design choice: keep background instance running
+      },
+    }
+  }
 
-			yield* waitTcpReady(host, port).pipe(
-				Effect.retry(
-					Schedule.intersect(
-						Schedule.spaced("120 millis"),
-						Schedule.recurs(50),
-					),
-				),
-			)
+  // Foreground: start monitor; keep stderr fatal watcher and provide shutdown
+  const args = buildMonitorArgs({
+    background: false,
+    parentPid: process.pid,
+    ip,
+    port,
+    ttl,
+  })
+  const proc = spawnMonitor(args, false)
 
-			if (!state.version) {
-				yield* writeState(ctx.iceDirPath, {
-					...state,
-					version: pocketIcVersion,
-				})
-			}
+  const fatalStderr = makeFatalStderrPromise(proc, ip, port)
+  const shutdown = () => {
+    try {
+      if (proc.pid) process.kill(proc.pid, "SIGTERM")
+    } catch {}
+  }
 
-			const shutdown = () => {
-				// background: by design we keep it running; leave as no-op
-				try {
-					/* noop */
-				} catch {}
-			}
-
-			return {
-				stdErrFiber: Option.none(),
-				reused: false,
-				pid: state.pid,
-				host: `http://${host}`,
-				port,
-				shutdown,
-			} satisfies Monitor
-		}
-
-		// Foreground: start monitor.js (no state-file); watch stderr for fatals
-		const cmd = Command.make(
-			process.execPath,
-			monitorPath,
-			// no --background
-			"--parent",
-			String(process.pid),
-			"--bin",
-			pocketIcPath,
-			"--",
-			"-i",
-			host,
-			"-p",
-			String(port),
-			"--ttl",
-			ttl,
-		)
-
-		yield* Effect.logDebug(`[pocket-ic] cmd: ${cmd.toString()}`)
-		const proc = yield* commandExec.start(cmd)
-		yield* Effect.logDebug(
-			`[pocket-ic] foreground monitor started (pid ${proc.pid})`,
-		)
-
-		const fatalStderrMonitor = makeStdErrMonitor(proc, host, port)
-		const stderrMonitorFiber = yield* Effect.forkScoped(fatalStderrMonitor)
-
-		const shutdownMonitor = () =>
-			Effect.sync(() => {
-				try {
-					if (proc.pid) process.kill(proc.pid, "SIGTERM")
-				} catch {}
-			})
-		yield* Effect.addFinalizer(shutdownMonitor)
-
-		const shutdown = () => {
-			try {
-				if (proc.pid) process.kill(proc.pid, "SIGTERM")
-			} catch {}
-		}
-
-		return {
-			stdErrFiber: Option.some(stderrMonitorFiber),
-			reused: false,
-			pid: proc.pid,
-			host: `http://${host}`,
-			port,
-			shutdown,
-		} satisfies Monitor
-	})
-
-const decodeChunk = (chunk: unknown): string => {
-	if (typeof chunk === "string") return chunk
-	try {
-		// @ts-ignore
-		if (chunk && typeof chunk.length === "number") {
-			return new TextDecoder().decode(chunk as any)
-		}
-	} catch {}
-	return String(chunk)
+  return {
+    pid: proc.pid ?? -1,
+    host: `http://${ip}`,
+    port,
+    reused: false,
+    shutdown,
+    fatalStderr,
+  }
 }
 
-export interface PocketIcOpts {
-	ip: string
-	port: number
-	ttlSeconds?: number
+// simple retry helper: attempts, spaced delayMs; if exponential=true use 2^n backoff on the base
+async function retry<T>(
+  fn: () => Promise<T>,
+  attempts: number,
+  delayMs: number,
+  exponential = false,
+): Promise<T> {
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (e) {
+      lastErr = e
+      const d = exponential ? delayMs * Math.max(1, 2 ** i) : delayMs
+      await sleep(d)
+    }
+  }
+  throw lastErr
 }
-
-export const makeStdErrMonitor = (proc: Process, ip: string, port: number) =>
-	Stream.runForEach(proc.stderr, (chunk) =>
-		Effect.gen(function* () {
-			const text = decodeChunk(chunk)
-			for (const line of text.split("\n")) {
-				if (!line) continue
-				if (/Failed to bind PocketIC server to address/i.test(line)) {
-					yield* Effect.logError(`[pocket-ic stderr] ${line}`)
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC failed to bind to ${ip}:${port}. Port likely in use.`,
-						}),
-					)
-				}
-				if (/thread 'main' panicked/i.test(line)) {
-					yield* Effect.logError(`[pocket-ic stderr] ${line}`)
-					return yield* Effect.fail(
-						new ReplicaError({
-							message: `PocketIC panicked during startup: ${line}`,
-						}),
-					)
-				}
-			}
-		}),
-	) as Effect.Effect<never, ReplicaError | PlatformError>

@@ -1,7 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import { Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
-import { DefaultReplica, ReplicaService } from "./replica.js"
+import { DefaultReplica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 
 // const DfxReplicaService = DfxReplica.pipe(
@@ -22,7 +22,7 @@ export type InitializedDefaultConfig = {
 	}
 	networks: {
 		[key: string]: {
-			replica: ReplicaService
+			replica: ReplicaServiceClass
 			host: string
 			port: number
 		}

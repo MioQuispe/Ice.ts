@@ -11,6 +11,7 @@ import type {
 	CanisterStatusError,
 	CanisterStopError,
 	ReplicaService,
+	ReplicaServiceClass,
 } from "../services/replica.js"
 import {
 	type TaskArgsParseError,
@@ -63,6 +64,20 @@ export type ICEConfig = {
 	networks: {
 		[key: string]: {
 			replica: ReplicaService
+		}
+	}
+}
+
+export type ICEConfigPromise = {
+	users: {
+		[key: string]: ICEUser
+	}
+	roles: {
+		[key: string]: string
+	}
+	networks: {
+		[key: string]: {
+			replica: ReplicaServiceClass
 		}
 	}
 }
@@ -219,8 +234,8 @@ export type ICEConfigContext = {
 // TODO: fix
 export type ICEConfigFile = {
 	default:
-		| Partial<ICEConfig>
-		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
+		| Partial<ICEConfigPromise>
+		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfigPromise>> | Partial<ICEConfigPromise>)
 } & {
 	[key: string]: TaskTreeNode
 }

@@ -87,7 +87,7 @@ const PROCESSING_TIME_VALUE_MS = 30_000
 export class PocketIcClient {
 	private isInstanceDeleted = false
 
-	private constructor(
+	constructor(
 		private readonly serverClient: Http2Client,
 		private readonly instancePath: string,
 	) {}

@@ -31,7 +31,12 @@ import { layerFileSystem, layerMemory } from "@effect/platform/KeyValueStore"
 import { CanisterIdsService } from "./canisterIds.js"
 import { DefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
-import { AgentError, DefaultReplica, ReplicaError } from "./replica.js"
+import {
+	AgentError,
+	DefaultReplica,
+	layerFromAsyncReplica,
+	ReplicaError,
+} from "./replica.js"
 import type { ICEConfig, ICEConfigContext } from "../types/types.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { TelemetryConfig } from "./telemetryConfig.js"
@@ -44,11 +49,12 @@ import { OtelTracer } from "@effect/opentelemetry/Tracer"
 import { Resource } from "@effect/opentelemetry/Resource"
 import { PlatformError } from "@effect/platform/Error"
 import { DeploymentsService } from "./deployments.js"
-import { DfxReplica } from "./dfx.js"
+// import { DfxReplica } from "./dfx.js"
 import { configLayer } from "./config.js"
 import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
-import { picReplicaImpl } from "./pic/pic.js"
+import { PICReplica } from "./pic/pic.js"
+import { effectifyReplica } from "./replica.js"
 import { GlobalArgs } from "../cli/index.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
@@ -120,7 +126,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 	}
 >() {}
 
-const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
+// const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
 
 // const DefaultsLayer = Layer
 // 	.mergeAll
@@ -258,17 +264,18 @@ export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 			iceDirPath: iceDir.path,
 		}
 
-		const DefaultReplicaService = Layer.scoped(
-			DefaultReplica,
-			picReplicaImpl(ctx, {
+		const DefaultReplicaService = layerFromAsyncReplica(
+			new PICReplica(ctx, {
 				host: "0.0.0.0",
 				port: 8081,
 				ttlSeconds: 9_999_999_999,
 			}),
-		).pipe(
-			Layer.provide(NodeContext.layer),
-			// Layer.provide(PromptsLayer),
 		)
+		// picReplicaImpl(ctx, {
+		// 	host: "0.0.0.0",
+		// 	port: 8081,
+		// 	ttlSeconds: 9_999_999_999,
+		// }),
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
 		const taskLayer = Layer.mergeAll(

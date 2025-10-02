@@ -2,6 +2,7 @@ import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
 	ICEConfig,
 	ICEConfigFile,
+	ICEConfigPromise,
 	TaskTree,
 	TaskTreeNode,
 } from "../types/types.js"
@@ -92,7 +93,7 @@ const createService = (globalArgs: {
 		) as TaskTree
 		const transformedTaskTree = yield* applyPlugins(taskTree)
 		const iceCtx = { iceDirPath, ...globalArgs }
-		let config: Partial<ICEConfig>
+		let config: Partial<ICEConfigPromise>
 		const d = mod.default
 		if (typeof d === "function") {
 			// TODO: both sync and async in type signature
@@ -147,7 +148,7 @@ export class ICEConfigInject extends Context.Tag("ICEConfigInject")<
 export class ICEConfigService extends Context.Tag("ICEConfigService")<
 	ICEConfigService,
 	{
-		readonly config: Partial<ICEConfig>
+		readonly config: Partial<ICEConfigPromise>
 		readonly taskTree: TaskTree
 		readonly globalArgs: {
 			network: string
@@ -169,7 +170,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			background: boolean
 		},
 		taskTree: TaskTree,
-		config: Partial<ICEConfig>,
+		config: Partial<ICEConfigPromise>,
 	) =>
 		Layer.effect(
 			ICEConfigService,

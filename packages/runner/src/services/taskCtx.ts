@@ -9,7 +9,7 @@ import {
 	ManagedRuntime,
 	Option,
 } from "effect"
-import { type ReplicaService } from "../services/replica.js"
+import { ReplicaServiceClass, type ReplicaService } from "../services/replica.js"
 import {
 	CanisterIds,
 	ProgressUpdate,
@@ -60,10 +60,10 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	}
 
 	readonly currentNetwork: string
-	readonly replica: ReplicaService
+	readonly replica: ReplicaServiceClass
 	readonly networks: {
 		[key: string]: {
-			replica: ReplicaService
+			replica: ReplicaServiceClass
 		}
 	}
 	readonly args: A
