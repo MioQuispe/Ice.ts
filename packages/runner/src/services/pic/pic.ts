@@ -11,6 +11,7 @@ import { PocketIcClient as CustomPocketIcClient } from "./pocket-ic-client.js"
 import {
 	ChunkHash,
 	encodeInstallCodeChunkedRequest,
+    encodeInstallCodeRequest,
 } from "../../canisters/pic_management/index.js"
 import {
 	AgentError,
@@ -36,6 +37,7 @@ import {
 import { ActorSubclass, Actor } from "../../types/actor.js"
 import { makeMonitor, type Monitor } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
+import { poll as httpPoll } from "./http2-client.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -111,12 +113,10 @@ export class PICReplica implements ReplicaServiceClass {
 		// @ts-ignore constructor is private in types but needed here
 		this.pic = new PocketIc(this.client)
 
-		// makeLive (best effort)
+		// makeLive (best effort) to enable auto-progress and avoid routing races
 		try {
 			await this.client.makeLive({ artificialDelayMs: 0 })
-		} catch {
-			// ignore best-effort failure
-		}
+		} catch {}
 
 		this.started = true
 	}
@@ -153,6 +153,19 @@ export class PICReplica implements ReplicaServiceClass {
 		const mgmt = new Mgmt()
 		mgmt.setIdentity(identity)
 		return mgmt
+	}
+
+	private async waitForCanisterSubnet(canisterId: Principal): Promise<Principal> {
+		assertStarted(this.client, "PICReplica.waitForCanisterSubnet")
+		const { subnetId } = await httpPoll(
+			async () => {
+				const res = await this.client!.getSubnetId({ canisterId })
+				if (!res.subnetId) throw new Error("subnet_not_ready")
+				return res
+			},
+			{ intervalMs: 50, timeoutMs: 2000 },
+		)
+		return subnetId!
 	}
 
 	async getCanisterStatus(params: {
@@ -283,6 +296,16 @@ export class PICReplica implements ReplicaServiceClass {
 				...(targetSubnetId ? { targetSubnetId } : {}),
 				sender: identity.getPrincipal(),
 			})
+			// Wait until routing is ready for the created canister
+			try {
+				await this.waitForCanisterSubnet(created)
+			} catch {
+				throw new CanisterCreateError({
+					message:
+						`Canister created (${created.toText()}) but routing not ready within timeout. ` +
+						`Enable auto-progress or increase readiness wait.`,
+				})
+			}
 			return created.toText()
 		} catch (error) {
 			if (
@@ -344,7 +367,20 @@ export class PICReplica implements ReplicaServiceClass {
 		assertStarted(this.pic, "PICReplica.installCode")
 		const { canisterId, wasm, encodedArgs, identity, mode } = params
 		const mgmt = await this.getMgmt(identity)
-		const targetSubnetId = undefined as string | undefined
+		// Ensure routing is ready before install and capture subnet id
+		let targetSubnetId = undefined as string | undefined
+		try {
+			const subnetPrincipal = await this.waitForCanisterSubnet(
+				Principal.fromText(canisterId),
+			)
+			targetSubnetId = subnetPrincipal.toText()
+		} catch {
+			throw new CanisterInstallError({
+				message:
+					`Routing not ready for canister ${canisterId} before install. ` +
+					`Enable auto-progress or increase readiness wait.`,
+			})
+		}
 		const modePayload: {
 			reinstall?: null
 			upgrade?: null
@@ -392,7 +428,7 @@ export class PICReplica implements ReplicaServiceClass {
 				payload: encodedPayload,
 				effectivePrincipal: (targetSubnetId
 					? { subnetId: Principal.fromText(targetSubnetId) }
-					: undefined) as EffectivePrincipal,
+					: { canisterId: Principal.fromText(canisterId) }) as EffectivePrincipal,
 			}
 
 			try {
@@ -402,33 +438,41 @@ export class PICReplica implements ReplicaServiceClass {
 					message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
 				})
 			}
+			// Best-effort ticks to ensure the module is fully active
+			try {
+				await this.client!.tick()
+				await this.client!.tick()
+			} catch {}
 			return
 		}
 
-		// non-chunked
+		// non-chunked: management call via client with explicit effective principal
 		try {
-			if (mode === "reinstall") {
-				await this.pic!.reinstallCode({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			} else if (mode === "install") {
-				await this.pic!.installCode({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			} else {
-				await this.pic!.upgradeCanister({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			}
+			const payload = encodeInstallCodeRequest({
+				arg: encodedArgs,
+				canister_id: Principal.fromText(canisterId),
+				mode:
+					mode === "reinstall"
+						? { reinstall: null }
+						: mode === "upgrade"
+							? { upgrade: null }
+							: { install: null },
+				wasm_module: new Uint8Array(wasm),
+			})
+			await this.client!.updateCall({
+				canisterId: Principal.fromText("aaaaa-aa"),
+				sender: identity.getPrincipal(),
+				method: "install_code",
+				payload,
+				effectivePrincipal: (targetSubnetId
+					? { subnetId: Principal.fromText(targetSubnetId) }
+					: { canisterId: Principal.fromText(canisterId) }) as EffectivePrincipal,
+			})
+			// Best-effort ticks to ensure the module is fully active
+			try {
+				await this.client!.tick()
+				await this.client!.tick()
+			} catch {}
 		} catch (error) {
 			throw new CanisterInstallError({
 				message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
@@ -474,3 +518,25 @@ function assertStarted<T>(x: T | undefined, where: string): asserts x is T {
 }
 
 // export const 
+
+// ---------------- internals ----------------
+
+export interface PICReplica {
+	waitForCanisterSubnet: (canisterId: Principal) => Promise<Principal>
+}
+
+PICReplica.prototype.waitForCanisterSubnet = async function (
+	this: PICReplica,
+	canisterId: Principal,
+): Promise<Principal> {
+	assertStarted(this.client, "PICReplica.waitForCanisterSubnet")
+	const { subnetId } = await httpPoll(
+		async () => {
+			const res = await this.client!.getSubnetId({ canisterId })
+			if (!res.subnetId) throw new Error("subnet_not_ready")
+			return res
+		},
+		{ intervalMs: 50, timeoutMs: 2000 },
+	)
+	return subnetId!
+}

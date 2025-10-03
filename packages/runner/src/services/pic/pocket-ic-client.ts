@@ -327,6 +327,16 @@ export class PocketIcClient {
 	): Promise<SubmitCanisterCallResponse> {
 		this.assertInstanceNotDeleted()
 
+		// Default effective principal for non-management calls to canisterId when absent
+		if (
+			req.canisterId.toText() !== "aaaaa-aa" &&
+			(req as SubmitCanisterCallRequest).effectivePrincipal == null
+		) {
+			(req as SubmitCanisterCallRequest).effectivePrincipal = {
+				canisterId: req.canisterId,
+			}
+		}
+
 		let res: EncodedSubmitCanisterCallResponse
 		// TODO: this might cause issues if call fails for some other reason
 		if (
