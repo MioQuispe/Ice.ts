@@ -10,6 +10,7 @@ import {
 	LogLevel,
 	ConfigProvider,
 	Config,
+	Option,
 } from "effect"
 import type { Task } from "../types/types.js"
 import { TaskParamsToArgs, TaskSuccess } from "../tasks/lib.js"
@@ -264,18 +265,19 @@ export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 			iceDirPath: iceDir.path,
 		}
 
-		const DefaultReplicaService = layerFromAsyncReplica(
-			new PICReplica(ctx, {
-				host: "0.0.0.0",
-				port: 8081,
-				ttlSeconds: 9_999_999_999,
-			}),
-		)
-		// picReplicaImpl(ctx, {
-		// 	host: "0.0.0.0",
-		// 	port: 8081,
-		// 	ttlSeconds: 9_999_999_999,
-		// }),
+		// Reuse an already-provided DefaultReplica if available in the current Effect environment
+		const existingDefaultReplica =
+			yield* Effect.serviceOption(DefaultReplica)
+
+		const DefaultReplicaService = Option.isNone(existingDefaultReplica)
+			? layerFromAsyncReplica(
+					new PICReplica(ctx, {
+						host: "0.0.0.0",
+						port: 8081,
+						ttlSeconds: 9_999_999_999,
+					}),
+				)
+			: Layer.succeed(DefaultReplica, existingDefaultReplica.value)
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
 		const taskLayer = Layer.mergeAll(

@@ -134,7 +134,8 @@ const allScenarios = parseCsv(csv)
 // const scenarios = allScenarios.slice(0, 10)
 const globalArgs = {
 	network: "local",
-	logLevel: LogLevel.Debug,
+	logLevel: "debug",
+	background: false,
 } as const
 
 // const scenarios = [parseCsv(csv)[24]!]
@@ -290,7 +291,7 @@ describe("deployments & caching decision table", () => {
 					)
 
 					const { taskLayer: taskLayerSeed, runtime: runtimeSeed } =
-						yield* makeTaskLayer()
+						yield* makeTaskLayer(globalArgs)
 							// inject layer at call site
 							.pipe(
 								Effect.provide(ICEConfigSeed),
@@ -313,7 +314,7 @@ describe("deployments & caching decision table", () => {
 							const {
 								taskLayer: taskLayerSeedInstall,
 								runtime: runtimeSeedInstall,
-							} = yield* makeTaskLayer()
+							} = yield* makeTaskLayer(globalArgs)
 								// inject layer at call site
 								.pipe(
 									Effect.provide(ICEConfigSeed),
@@ -348,7 +349,7 @@ describe("deployments & caching decision table", () => {
 								const {
 									taskLayer: taskLayerSeedUpgrade,
 									runtime: runtimeSeedUpgrade,
-								} = yield* makeTaskLayer()
+								} = yield* makeTaskLayer(globalArgs)
 									// inject layer at call site
 									.pipe(
 										Effect.provide(ICEConfigSeed),
@@ -379,7 +380,7 @@ describe("deployments & caching decision table", () => {
 								const {
 									taskLayer: taskLayerSeedLastDeployment,
 									runtime: runtimeSeedLastDeployment,
-								} = yield* makeTaskLayer()
+								} = yield* makeTaskLayer(globalArgs)
 									// inject layer at call site
 									.pipe(
 										Effect.provide(ICEConfigSeed),
@@ -509,7 +510,7 @@ describe("deployments & caching decision table", () => {
 					const {
 						taskLayer: taskLayerScenario,
 						runtime: runtimeScenario,
-					} = yield* makeTaskLayer()
+					} = yield* makeTaskLayer(globalArgs)
 						// inject layer at call site
 						.pipe(
 							Effect.provide(ICEConfigScenario),

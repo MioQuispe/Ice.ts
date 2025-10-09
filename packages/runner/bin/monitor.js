@@ -30,24 +30,35 @@ function isAlive(pid) {
 	}
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-function killGroup(pid, sig = "SIGTERM") {
-	try {
-		process.kill(-pid, sig)
-	} catch {}
+function killOne(pid, sig = "SIGINT") {
+    try {
+        process.kill(pid, sig)
+    } catch {}
 }
-async function gracefulKillGroup(pid, timeout = 2500) {
-	killGroup(pid, "SIGTERM")
-	const t0 = Date.now()
-	for (;;) {
-		try {
-			process.kill(pid, 0)
-		} catch {
-			return
-		}
-		if (Date.now() - t0 > timeout) break
-		await sleep(50)
-	}
-	killGroup(pid, "SIGKILL")
+async function gracefulStop(pid, timeout = 10000) {
+    const t0 = Date.now()
+    killOne(pid, "SIGINT")
+    for (;;) {
+        try {
+            process.kill(pid, 0)
+        } catch {
+            return
+        }
+        if (Date.now() - t0 > timeout) break
+        await sleep(50)
+    }
+    const t1 = Date.now()
+    killOne(pid, "SIGTERM")
+    for (;;) {
+        try {
+            process.kill(pid, 0)
+        } catch {
+            return
+        }
+        if (Date.now() - t1 > 3000) break
+        await sleep(50)
+    }
+    killOne(pid, "SIGKILL")
 }
 
 function parse(argv) {
@@ -57,6 +68,7 @@ function parse(argv) {
 		args: [],
 		stateFile: undefined,
 		background: false,
+		logFile: undefined,
 	}
 	const sep = argv.indexOf("--")
 	const head = sep === -1 ? argv : argv.slice(0, sep)
@@ -67,13 +79,14 @@ function parse(argv) {
 		else if (k === "--bin") out.bin = head[++i]
 		else if (k === "--state-file") out.stateFile = head[++i]
 		else if (k === "--background") out.background = true
+		else if (k === "--log-file") out.logFile = head[++i]
 	}
 	out.args = tail
 	return out
 }
 
 async function main() {
-	const { parent, background, bin, args, stateFile } = parse(
+	const { parent, background, bin, args, stateFile, logFile } = parse(
 		process.argv.slice(2),
 	)
 	if (!parent || !bin || !fs.existsSync(bin)) {
@@ -82,10 +95,20 @@ async function main() {
 	}
 
 	// Use isolated stdio in background so the child isn't tied to the monitor's fds
-	const spawnOpts = background
+	// const spawnOpts = background
+	// 	? { detached: true, stdio: "ignore" }
+	// 	: { detached: true, stdio: ["ignore", "inherit", "inherit"] }
+const spawnOpts = background
 		? { detached: true, stdio: "ignore" }
-		: { detached: true, stdio: ["ignore", "inherit", "inherit"] }
+		: { detached: true, stdio: ["ignore", "pipe", "pipe"] }
 
+        // * const subprocess = child_process.spawn('ls', {
+        // *   stdio: [
+        // *     0, // Use parent's stdin for child.
+        // *     'pipe', // Pipe child's stdout to parent.
+        // *     fs.openSync('err.out', 'w'), // Direct child's stderr to a file.
+        // *   ],
+        // * });
 	const child = spawn(bin, args, spawnOpts)
 
 	// Write state file ASAP (no require; ESM-safe)
@@ -110,6 +133,14 @@ async function main() {
 			// not fatal in foreground; background will still proceed
 		}
 	}
+	if (logFile) {
+		try {
+			fs.mkdirSync(path.dirname(logFile), { recursive: true })
+			const ws = fs.createWriteStream(logFile, { flags: "a" })
+			child.stdout?.pipe(ws)
+			child.stderr?.pipe(ws)
+		} catch {}
+	}
 
 	if (background) {
 		// Fully detach and exit now; leave server running
@@ -120,9 +151,13 @@ async function main() {
 	}
 
 	// Foreground behavior only below
-	for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-		process.on(sig, () => killGroup(child.pid, sig))
-	}
+  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(sig, async () => {
+      try {
+        await gracefulStop(child.pid)
+      } catch {}
+    })
+  }
 
 	child.on("exit", (code, signal) => {
 		process.exit(signal ? 1 : (code ?? 0))
@@ -132,7 +167,7 @@ async function main() {
 	;(async () => {
 		while (true) {
 			if (!isAlive(parent)) {
-				await gracefulKillGroup(child.pid)
+				await gracefulStop(child.pid)
 				process.exit(0)
 			}
 			await sleep(500)

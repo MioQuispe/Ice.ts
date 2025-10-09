@@ -49,6 +49,12 @@ export interface CreateInstanceRequest {
 	verifiedApplication?: VerifiedApplicationSubnetConfig[]
 	processingTimeoutMs?: number
 	nonmainnetFeatures?: boolean
+	/** Absolute path on the server where instance state is persisted */
+	stateDir?: string
+	/** Whether the provided state_dir might be incomplete and should be accepted */
+	incompleteState?: boolean
+	/** Enable ICP system canisters/features (e.g., registry) */
+	icpFeatures?: IcpFeatures
 }
 
 export interface SubnetConfig<
@@ -105,6 +111,12 @@ export enum SubnetStateType {
 export interface EncodedCreateInstanceRequest {
 	subnet_config_set: EncodedCreateInstanceSubnetConfig
 	nonmainnet_features: boolean
+	/** Absolute path on the server where instance state is persisted */
+	state_dir?: string
+	/** Accept incomplete state in state_dir */
+	incomplete_state?: "Enabled" | "Disabled"
+	/** Enable ICP system canisters/features (e.g., registry) */
+	icp_features?: EncodedIcpFeatures
 }
 
 export interface EncodedCreateInstanceSubnetConfig {
@@ -122,6 +134,44 @@ export interface EncodedSubnetConfig {
 	dts_flag: "Enabled" | "Disabled"
 	instruction_config: "Production" | "Benchmarking"
 	state_config: "New" | { FromPath: string }
+}
+
+export interface IcpFeatures {
+	/** Registry canister / services. */
+	registry?: boolean
+	/** Cycles minting feature. */
+	cycles_minting?: boolean
+	/** ICP ledger/token feature. */
+	icp_token?: boolean
+	/** Cycles ledger/token feature. */
+	cycles_token?: boolean
+	/** NNS governance feature. */
+	nns_governance?: boolean
+	/** SNS feature. */
+	sns?: boolean
+	/** Internet Identity. */
+	ii?: boolean
+	/** NNS UI (requires an HTTP gateway and explicit values for other toggles). */
+	nns_ui?: boolean
+}
+
+export interface EncodedIcpFeatures {
+	registry?: "DefaultConfig"
+}
+
+function encodeIcpFeatures(
+	features?: IcpFeatures,
+): EncodedIcpFeatures | undefined {
+	if (isNil(features)) {
+		return undefined
+	}
+
+	const encoded: EncodedIcpFeatures = {}
+	if (features.registry === true) {
+		encoded.registry = "DefaultConfig"
+	}
+
+	return encoded
 }
 
 function encodeManySubnetConfigs<T extends SubnetConfig>(
@@ -207,6 +257,12 @@ export function encodeCreateInstanceRequest(
 			),
 		},
 		nonmainnet_features: defaultOptions.nonmainnetFeatures ?? false,
+		state_dir: defaultOptions.stateDir,
+		incomplete_state:
+			defaultOptions.stateDir !== undefined
+				? (defaultOptions.incompleteState === false ? "Disabled" : "Enabled")
+				: undefined,
+		icp_features: encodeIcpFeatures(defaultOptions.icpFeatures)
 	}
 
 	if (
@@ -227,6 +283,157 @@ export function encodeCreateInstanceRequest(
 }
 
 //#endregion CreateInstance
+
+/**
+ * REST create-instance additions (superset over existing types):
+ * - Adds structured fields expected by pocket_ic_server while preserving legacy ones.
+ * - No removals; safe to adopt incrementally.
+ */
+
+/** Log level accepted by the server (tracing::Level). */
+export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error'
+
+/** Range of canister IDs that can be routed to a subnet. */
+export interface CanisterIdRange {
+	start: string
+	end: string
+}
+
+/** Per-subnet instruction/metering knobs. */
+export interface SubnetInstructionConfig {
+	maxInstructionsPerRound?: number
+	maxInstructionsPerMessage?: number
+	maxInstructionsPerSlice?: number
+	instructionOverheadPerMessage?: number
+	instructionOverheadPerReply?: number
+	instructionOverheadPerInputSlice?: number
+	instructionOverheadPerOutputSlice?: number
+}
+
+/** Kinds the server exposes in topology summaries and configs. */
+export type SubnetKind =
+	| 'NNS'
+	| 'System'
+	| 'Application'
+	| 'VerifiedApplication'
+	| 'Fiduciary'
+	| 'SNS'
+	| 'II'
+	| 'Bitcoin'
+
+/** Advanced topology settings (opaque; server-validated). */
+export interface TopologyConfig {
+	[k: string]: unknown
+}
+
+/** Detailed subnet config for explicit topology. */
+export interface ExplicitSubnetConfig {
+	subnetKind: SubnetKind
+	subnetSeed?: string
+	canisterRanges?: CanisterIdRange[]
+	instructionConfig?: SubnetInstructionConfig
+}
+
+/** Explicit subnet sets by kind (alternative to counts). */
+export interface ExtendedSubnetConfigSet {
+	nns?: ExplicitSubnetConfig[]
+	system?: ExplicitSubnetConfig[]
+	application?: ExplicitSubnetConfig[]
+	verifiedApplication?: ExplicitSubnetConfig[]
+	fiduciary?: ExplicitSubnetConfig[]
+	sns?: ExplicitSubnetConfig[]
+	ii?: ExplicitSubnetConfig[]
+	bitcoin?: ExplicitSubnetConfig[]
+}
+
+/** Structured ICP network layout inputs: counts and/or explicit sets. */
+export interface IcpConfig {
+	system?: number
+	application?: number
+	verifiedApplication?: number
+	subnetConfigSet?: ExtendedSubnetConfigSet
+}
+
+/** Feature toggles for which ICP subsystems to include (REST shape). */
+// removed: IcpFeaturesBooleans (merged into IcpFeatures)
+
+/** Auto-progress configuration used by the server to advance time/rounds. */
+export interface AutoProgressConfig {
+	artificialDelayMs?: number
+}
+
+/**
+ * Initial time enum (serde externally-tagged):
+ *   { "AutoProgress": { artificial_delay_ms?: number } }
+ *   { "Timestamp":   { nanos_since_epoch: number } }
+ */
+export type InitialTime =
+	| { AutoProgress: AutoProgressConfig }
+	| { Timestamp: { nanosSinceEpoch: number } }
+
+/** TLS material for the HTTP gateway. */
+export interface HttpsConfig {
+	certPath: string
+	keyPath: string
+}
+
+/** Per-instance HTTP gateway config. */
+export interface HttpGatewayConfig {
+	ipAddr?: string
+	port?: number
+	domains?: string[]
+	httpsConfig?: HttpsConfig
+}
+
+/**
+ * Extend existing CreateInstanceRequest with REST fields while preserving legacy ones.
+ */
+export interface CreateInstanceRequest {
+	/** New structured topology input. */
+	icpConfig?: IcpConfig
+	/** New REST icp_features (boolean toggles). */
+	icpFeatures?: IcpFeatures
+	/** Instance-scoped HTTP gateway config. */
+	httpGatewayConfig?: HttpGatewayConfig
+	/** Initial time behavior (auto-progress or fixed timestamp). */
+	initialTime?: InitialTime
+	/** Bitcoind address for BTC integration, e.g. "127.0.0.1:18444" */
+	bitcoindAddr?: string
+	/** Server logging verbosity for this instance. */
+	logLevel?: LogLevel
+	/** Top-level alias for explicit subnet sets (compat path). */
+	subnetConfigSet?: ExtendedSubnetConfigSet
+	/** Optional server-side topology tweaks (opaque). */
+	topologyConfig?: TopologyConfig
+	/** Optional explicit rerouting table. */
+	reroutingTable?: [string, string][]
+	/** Allow update_settings acknowledgement in some server builds. */
+	allowUpdateSettingsAcknowledgement?: boolean
+}
+
+/** REST response from POST /instances (distinct name to avoid conflicts). */
+export interface CreateInstanceRestResponse {
+	id: number
+	url?: string
+	state_dir?: string
+	incomplete_state?: boolean
+	auto_progress?: AutoProgressConfig | null
+	http_gateway?: {
+		ip_addr?: string
+		port?: number
+		domains?: string[]
+		https?: boolean
+	} | null
+}
+
+/** Optional minimal topology summary helpers for diagnostics. */
+export interface TopologySummaryItem {
+	subnet: string
+	kind: SubnetKind
+	rangesCount: number
+	firstRanges: CanisterIdRange[]
+}
+export type TopologySummary = TopologySummaryItem[]
 
 //#region GetPubKey
 

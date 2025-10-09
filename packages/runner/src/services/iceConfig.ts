@@ -115,6 +115,20 @@ const createService = (globalArgs: {
 		} else {
 			config = d
 		}
+		const currentNetwork = globalArgs.network ?? "local"
+		yield* Effect.tryPromise({
+			try: () => {
+				return (
+					config.networks?.[currentNetwork]?.replica.start() ??
+					Promise.resolve()
+				)
+			},
+			catch: (error) => {
+				return new ICEConfigError({
+					message: `Failed to start replicas in config ${error}`,
+				})
+			},
+		})
 		return {
 			taskTree: transformedTaskTree,
 			config,

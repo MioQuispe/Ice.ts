@@ -1,16 +1,22 @@
 // pic.ts (async/await version, no effect-ts)
 
 import * as url from "node:url"
+import * as path from "node:path"
+import * as fs from "node:fs/promises"
 import { Principal } from "@icp-sdk/core/principal"
 import {
 	//   ActorSubclass,
 	type SignIdentity,
 } from "@icp-sdk/core/agent"
 import { CreateInstanceOptions, PocketIc, createActorClass } from "@dfinity/pic"
-import { PocketIcClient as CustomPocketIcClient } from "./pocket-ic-client.js"
+import {
+	PocketIcClient as CustomPocketIcClient,
+	logStateDir,
+} from "./pocket-ic-client.js"
 import {
 	ChunkHash,
 	encodeInstallCodeChunkedRequest,
+	encodeInstallCodeRequest,
 } from "../../canisters/pic_management/index.js"
 import {
 	AgentError,
@@ -24,20 +30,35 @@ import {
 	CanisterStatusResult,
 	CanisterCreateRangeError,
 	ReplicaError,
-    ReplicaServiceClass,
+	ReplicaServiceClass,
 } from "../replica.js"
 import { idlFactory } from "../../canisters/management_latest/management.did.js"
 import { sha256 } from "js-sha256"
 import { Opt } from "../../index.js"
 import {
+	CreateInstanceRequest,
 	EffectivePrincipal,
+	IcpFeatures,
+	isNotNil,
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
 import { ActorSubclass, Actor } from "../../types/actor.js"
-import { makeMonitor, type Monitor } from "./pic-process.js"
+import { makeMonitor, type Monitor, awaitPortClosed } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
+import { Record as EffectRecord, Array as EffectArray } from "effect"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
+
+async function resolveEffectiveStateDir(
+	stateRoot: string,
+): Promise<{ dir: string; incomplete: boolean }> {
+	// Minimal rule: always point at parent, and flip incomplete based on presence of any checkpoint subdir
+	const children = await fs
+		.readdir(stateRoot, { withFileTypes: true })
+		.catch(() => [])
+	const hasCheckpoint = children.some((e) => e.isDirectory())
+	return { dir: stateRoot, incomplete: !hasCheckpoint }
+}
 
 // ---------------- default PIC topology config ----------------
 
@@ -83,6 +104,10 @@ export class PICReplica implements ReplicaServiceClass {
 	async start(): Promise<void> {
 		if (this.started) return
 
+		await logStateDir(
+			this.ctx.iceDirPath + "/replica-state",
+			"before start",
+		)
 		// Start/adopt/reuse monitor
 		const monitor = await makeMonitor(this.ctx, {
 			host: this.host,
@@ -90,43 +115,176 @@ export class PICReplica implements ReplicaServiceClass {
 			ttlSeconds: this.ttlSeconds,
 		})
 		this.monitor = monitor
-
-		// Build client; in foreground, fail fast on fatal stderr
+		await logStateDir(this.ctx.iceDirPath + "/replica-state", "after start")
 		const baseUrl = `${monitor.host}:${monitor.port}` // monitor.host already includes http://
-		const createClient = CustomPocketIcClient.create(
-			baseUrl,
-			this.picConfig,
+		const stateRoot = path.resolve(
+			path.join(this.ctx.iceDirPath, "replica-state"),
 		)
+		// try {
+		// 	await fs.mkdir(stateRoot, { recursive: true })
+		// } catch {}
 
-		this.client = (
-			monitor.fatalStderr
-				? await Promise.race([
-						monitor.fatalStderr, // rejects on fatal
-						createClient,
-					])
-				: await createClient
-		) as InstanceType<typeof CustomPocketIcClient>
-
-		// Construct PocketIc on top of the custom client
-		// @ts-ignore constructor is private in types but needed here
-		this.pic = new PocketIc(this.client)
-
-		// makeLive (best effort)
 		try {
-			await this.client.makeLive({ artificialDelayMs: 0 })
-		} catch {
-			// ignore best-effort failure
-		}
+			const { dir: effectiveStateDir, incomplete } =
+				await resolveEffectiveStateDir(stateRoot)
+			console.log(
+				`[PICReplica] effective state_dir=${effectiveStateDir} incomplete_state=${incomplete}`,
+			)
 
-		this.started = true
+			const icpFeatures = this.picConfig?.icpFeatures ?? {}
+			const fixedArray = EffectArray.map(
+				Object.entries(icpFeatures),
+				([key, value]) => [
+					key,
+					value === "DefaultConfig" ? true : false,
+				],
+			) as [keyof IcpFeatures, boolean][]
+			const fixedIcpFeatures = Object.fromEntries(
+				fixedArray,
+			) as IcpFeatures
+			// const fixedPicConfig = {
+			// 	...this.picConfig,
+			// 	icpFeatures: fixedIcpFeatures,
+			// }
+			const fixedPicConfig = Object.fromEntries(
+				Object.entries(this.picConfig).filter(
+					([K, V]) =>
+						K !== "icpFeatures" &&
+						K !== "icpConfig" &&
+						(!incomplete
+							? K !== "nns" &&
+								K !== "application" &&
+								K !== "sns" &&
+								K !== "ii" &&
+								K !== "fiduciary" &&
+								K !== "bitcoin"
+							: true),
+				),
+			)
+
+			console.log("fixedPicConfig", fixedPicConfig)
+
+			const baseRequest: CreateInstanceRequest = {
+				stateDir: effectiveStateDir,
+				initialTime: {
+					AutoProgress: { artificialDelayMs: 0 },
+				},
+				...(incomplete ? { incompleteState: true } : {}),
+			}
+			const createRequest: CreateInstanceRequest = incomplete
+				? { ...fixedPicConfig, ...baseRequest }
+				: { ...baseRequest }
+			console.log("createRequest", createRequest)
+
+			const createClient = CustomPocketIcClient.create(
+				baseUrl,
+				createRequest,
+			)
+
+			this.client = (
+				monitor.fatalStderr
+					? await Promise.race([
+							monitor.fatalStderr, // rejects on fatal
+							createClient,
+						])
+					: await createClient
+			) as InstanceType<typeof CustomPocketIcClient>
+
+			try {
+				console.log(`[PICReplica] client created, instance ready`)
+			} catch {}
+
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"after client created",
+			)
+			// Construct PocketIc on top of the custom client
+			// @ts-ignore constructor is private in types but needed here
+			this.pic = new PocketIc(this.client)
+
+			// Enable auto-progress explicitly (best effort) in case server ignored initial_time
+			try {
+				await this.client.makeLive({ artificialDelayMs: 0 })
+			} catch {
+				// best-effort: ignore
+			}
+
+			// Deep diagnostics: confirm routing of created canister (if known later)
+			try {
+				await this.client.debugTopologySummary("after-create")
+			} catch {}
+
+			this.started = true
+
+			return
+		} catch {}
+
+		throw new Error("Failed to initialize PocketIC client")
 	}
 
 	async stop(): Promise<void> {
-		// Foreground: actively shut down the monitor (which kills the group)
-		// Background/adopted: no-op by design
+		await logStateDir(
+			this.ctx.iceDirPath + "/replica-state",
+			"before delete instance",
+		)
+		// If we adopted/reused an external server, do not manage lifecycle
+		if (this.monitor?.reused) return
+
+		// Minimal shutdown: stop progress and allow short file settle
 		try {
+			await this.client!.stopProgress()
+            await this.client!.tick()
+		} catch (e) {
+			console.error(
+				`[PICReplica] stop(): failed to stop_progress: ${e instanceof Error ? e.message : String(e)}`,
+			)
+			throw e
+		}
+		try {
+			await this.client!.deleteInstance()
+			await awaitPortClosed(this.port, this.host.replace("http://", ""))
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"after delete instance",
+			)
+			// console.log("instance deleted.....")
+			// await this.pic!.tearDown()
+		} catch (e) {
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"after failed to delete instance",
+			)
+			console.error(
+				`[PICReplica] stop(): failed to deleteInstance: ${String(e)}`,
+			)
+			throw e
+		}
+
+		// Graceful shutdown and bounded wait
+		try {
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"before shutdown",
+			)
 			this.monitor?.shutdown()
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"after shutdown",
+			)
 		} catch {}
+		try {
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"before wait for exit",
+			)
+			await this.monitor?.waitForExit?.()
+			await logStateDir(
+				this.ctx.iceDirPath + "/replica-state",
+				"after wait for exit",
+			)
+		} catch {}
+
+		// No extra verification; rely on strict restore (incomplete_state=false when complete state present)
 	}
 
 	// ---------------- operations ----------------
@@ -173,7 +331,10 @@ export class PICReplica implements ReplicaServiceClass {
 				if (key === CanisterStatus.STOPPED)
 					return CanisterStatus.STOPPED
 				return CanisterStatus.NOT_FOUND
-			} catch {
+			} catch (e) {
+				try {
+					await this.client?.debugCheckCanisterRouting(canisterId)
+				} catch {}
 				return CanisterStatus.NOT_FOUND
 			}
 		} catch (error) {
@@ -392,7 +553,9 @@ export class PICReplica implements ReplicaServiceClass {
 				payload: encodedPayload,
 				effectivePrincipal: (targetSubnetId
 					? { subnetId: Principal.fromText(targetSubnetId) }
-					: undefined) as EffectivePrincipal,
+					: {
+							canisterId: Principal.fromText(canisterId),
+						}) as EffectivePrincipal,
 			}
 
 			try {
@@ -405,30 +568,30 @@ export class PICReplica implements ReplicaServiceClass {
 			return
 		}
 
-		// non-chunked
+		// non-chunked: call management canister with proper effective principal
 		try {
-			if (mode === "reinstall") {
-				await this.pic!.reinstallCode({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			} else if (mode === "install") {
-				await this.pic!.installCode({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			} else {
-				await this.pic!.upgradeCanister({
-					arg: encodedArgs.buffer,
-					sender: identity.getPrincipal(),
-					canisterId: Principal.fromText(canisterId),
-					wasm: wasm.buffer,
-				})
-			}
+			const payload = encodeInstallCodeRequest({
+				arg: encodedArgs,
+				canister_id: Principal.fromText(canisterId),
+				mode:
+					mode === "reinstall"
+						? { reinstall: null }
+						: mode === "upgrade"
+							? { upgrade: null }
+							: { install: null },
+				wasm_module: new Uint8Array(wasm),
+			})
+			await this.client!.updateCall({
+				canisterId: Principal.fromText("aaaaa-aa"),
+				sender: identity.getPrincipal(),
+				method: "install_code",
+				payload,
+				effectivePrincipal: (targetSubnetId
+					? { subnetId: Principal.fromText(targetSubnetId) }
+					: {
+							canisterId: Principal.fromText(canisterId),
+						}) as EffectivePrincipal,
+			})
 		} catch (error) {
 			throw new CanisterInstallError({
 				message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
@@ -473,4 +636,4 @@ function assertStarted<T>(x: T | undefined, where: string): asserts x is T {
 	if (!x) throw new ReplicaError({ message: `${where}: replica not started` })
 }
 
-// export const 
+// export const

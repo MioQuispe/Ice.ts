@@ -19,8 +19,11 @@ import { CanisterIdsService } from "../../src/services/canisterIds.js"
 import { DefaultConfig } from "../../src/services/defaultConfig.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { Moc } from "../../src/services/moc.js"
-import { picReplicaImpl } from "../../src/services/pic/pic.js"
-import { DefaultReplica } from "../../src/services/replica.js"
+import { PICReplica } from "../../src/services/pic/pic.js"
+import {
+	DefaultReplica,
+	layerFromAsyncReplica,
+} from "../../src/services/replica.js"
 import { TaskRegistry } from "../../src/services/taskRegistry.js"
 import {
 	ProgressUpdate,
@@ -58,6 +61,7 @@ import { runTask, runTasks } from "../../src/tasks/run.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
 import { BuilderLayer } from "../../src/builders/lib.js"
 import { PromptsService } from "../../src/services/prompts.js"
+import { logLevelMap } from "../../src/cli/index.js"
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
 export const makeTestEnv = (iceDirName: string = ".ice_test") => {
@@ -102,10 +106,25 @@ export const makeTestEnv = (iceDirName: string = ".ice_test") => {
 		Layer.provide(NodeContext.layer),
 		Layer.provide(configLayer),
 	)
-	const DefaultReplicaService = Layer.scoped(
-		DefaultReplica,
-		picReplicaImpl,
-	).pipe(Layer.provide(NodeContext.layer), Layer.provide(iceDirLayer))
+	// const DefaultReplicaService = Layer.scoped(
+	// 	DefaultReplica,
+	// 	picReplicaImpl,
+	// ).pipe(Layer.provide(NodeContext.layer), Layer.provide(iceDirLayer))
+	const DefaultReplicaService = layerFromAsyncReplica(
+		new PICReplica(
+			{
+				iceDirPath: iceDirName,
+				network: globalArgs.network,
+				logLevel: "debug",
+				background: false,
+			},
+			{
+				host: "0.0.0.0",
+				port: 8081,
+				ttlSeconds: 9_999_999_999,
+			},
+		),
+	)
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(DefaultReplicaService),
 	)
@@ -219,10 +238,12 @@ export const makeTestEnvEffect = (
 	iceDirName: string = ".ice_test",
 	globalArgs: {
 		network: string
-		logLevel: LogLevel.LogLevel
+		logLevel: "debug" | "info" | "error"
+		background: boolean
 	} = {
 		network: "local",
-		logLevel: LogLevel.Debug,
+		logLevel: "debug",
+		background: false,
 	} as const,
 ) => {
 	// const globalArgs = {
@@ -245,10 +266,22 @@ export const makeTestEnvEffect = (
 		Layer.provide(configLayer),
 	)
 
-	const DefaultReplicaService = Layer.scoped(
-		DefaultReplica,
-		picReplicaImpl,
-	).pipe(Layer.provide(NodeContext.layer), Layer.provide(iceDirLayer))
+	const DefaultReplicaService = layerFromAsyncReplica(
+		new PICReplica(
+			{
+				iceDirPath: iceDirName,
+				network: globalArgs.network,
+				logLevel: "debug",
+				background: false,
+			},
+			{
+				host: "0.0.0.0",
+				port: 8081,
+				ttlSeconds: 9_999_999_999,
+			},
+		),
+	)
+
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(DefaultReplicaService),
 	)
@@ -291,7 +324,7 @@ export const makeTestEnvEffect = (
 		telemetryLayer,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		Logger.pretty,
-		Logger.minimumLogLevel(globalArgs.logLevel),
+		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		NodeContext.layer,
 		KVStorageLayer,
 		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
@@ -305,7 +338,7 @@ export const makeTestEnvEffect = (
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		configLayer,
 		Logger.pretty,
-		Logger.minimumLogLevel(globalArgs.logLevel),
+		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		NodeContext.layer,
 		telemetryConfigLayer,
 		telemetryLayer,
@@ -369,14 +402,15 @@ export const makeTaskRunner = (taskTree: TaskTree) =>
 	Effect.gen(function* () {
 		const globalArgs = {
 			network: "local",
-			logLevel: LogLevel.Debug,
+			logLevel: "debug",
+			background: false,
 		} as const
 		const config = {} satisfies Partial<ICEConfig>
 		const ICEConfig = ICEConfigService.Test(globalArgs, taskTree, config)
 		const KVStorageLayer = layerMemory
 		const IceDirLayer = IceDir.Test({ iceDirName: ".ice_test" })
 
-		const { runtime, taskLayer } = yield* makeTaskLayer().pipe(
+		const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs).pipe(
 			Effect.provide(ICEConfig),
 			// Effect.provide(uncachedLayer),
 			// Effect.provide(DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer))),
@@ -400,7 +434,7 @@ export const makeTaskRunner = (taskTree: TaskTree) =>
 			),
 		)
 		const { runtime: runtimeUncached, taskLayer: taskLayerUncached } =
-			yield* makeTaskLayer().pipe(
+			yield* makeTaskLayer(globalArgs).pipe(
 				Effect.provide(ICEConfig),
 				Effect.provide(uncachedLayer),
 				// Effect.provide(Layer.effect(DeploymentsService, Effect.succeed({

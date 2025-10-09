@@ -1,8 +1,8 @@
 import { Principal } from '@icp-sdk/core/principal';
 import { IDL } from '@icp-sdk/core/candid';
-import { optional, readFileAsBytes } from './util';
-import { PocketIcClient } from './pocket-ic-client';
-import { ActorInterface, Actor, createActorClass } from './pocket-ic-actor';
+import { optional, readFileAsBytes } from './util.js';
+import { PocketIcClient } from './pocket-ic-client.js';
+import { ActorInterface, Actor, createActorClass } from './pocket-ic-actor.js';
 import {
   CanisterFixture,
   CreateCanisterOptions,
@@ -20,7 +20,7 @@ import {
   UpdateCallOptions,
   PendingHttpsOutcall,
   MockPendingHttpsOutcallOptions,
-} from './pocket-ic-types';
+} from './pocket-ic-types.js';
 import {
   MANAGEMENT_CANISTER_ID,
   decodeCreateCanisterResponse,
@@ -29,7 +29,7 @@ import {
   encodeInstallCodeChunkedRequest,
   encodeStartCanisterRequest,
   encodeUpdateCanisterSettingsRequest,
-} from '../../canisters/pic_management';
+} from '../../canisters/pic_management/index.js';
 // } from './management-canister';
 import {
   createDeferredActorClass,
@@ -388,10 +388,8 @@ export class PocketIc {
       method: 'install_code',
       payload,
       effectivePrincipal: targetSubnetId
-        ? {
-            subnetId: targetSubnetId,
-          }
-        : undefined,
+        ? { subnetId: targetSubnetId }
+        : { canisterId },
     });
   }
 
@@ -422,10 +420,8 @@ export class PocketIc {
       method: 'install_chunked_code',
       payload,
       effectivePrincipal: targetSubnetId
-        ? {
-            subnetId: targetSubnetId,
-          }
-        : undefined,
+        ? { subnetId: targetSubnetId }
+        : { canisterId },
     });
   }
 
@@ -481,6 +477,7 @@ export class PocketIc {
       sender,
       method: 'install_code',
       payload,
+      effectivePrincipal: { canisterId },
     });
   }
 
@@ -536,6 +533,7 @@ export class PocketIc {
       sender,
       method: 'install_code',
       payload,
+      effectivePrincipal: { canisterId },
     });
   }
 
