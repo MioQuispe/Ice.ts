@@ -1040,8 +1040,8 @@ export type AllowedDep = Task | CanisterScopeSimple
 export type NormalizeDep<T> = T extends Task
 	? T
 	: T extends CanisterScopeSimple
-		? T["children"]["install"] extends Task
-			? T["children"]["install"]
+		? T["children"]["deploy"] extends Task
+			? T["children"]["deploy"]
 			: never
 		: never
 
@@ -1058,7 +1058,7 @@ export type NormalizeDeps<Deps extends Record<string, AllowedDep>> = {
 	[K in keyof Deps]: Deps[K] extends Task
 		? Deps[K]
 		: Deps[K] extends CanisterScopeSimple
-			? Deps[K]["children"]["install"]
+			? Deps[K]["children"]["deploy"]
 			: never
 }
 
@@ -1136,8 +1136,8 @@ export type IsValid<S extends CanisterScopeSimple> =
 // TODO: arktype match?
 export function normalizeDep(dep: Task | CanisterScopeSimple): Task {
 	if ("_tag" in dep && dep._tag === "task") return dep
-	if ("_tag" in dep && dep._tag === "scope" && dep.children?.install)
-		return dep.children.install as Task
+	if ("_tag" in dep && dep._tag === "scope" && dep.children?.deploy)
+		return dep.children.deploy as Task
 	throw new Error("Invalid dependency type provided to normalizeDep")
 }
 

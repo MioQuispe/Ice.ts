@@ -9,10 +9,7 @@ import {
 	type SignIdentity,
 } from "@icp-sdk/core/agent"
 import { CreateInstanceOptions, PocketIc, createActorClass } from "@dfinity/pic"
-import {
-	PocketIcClient as CustomPocketIcClient,
-	logStateDir,
-} from "./pocket-ic-client.js"
+import { PocketIcClient as CustomPocketIcClient } from "./pocket-ic-client.js"
 import {
 	ChunkHash,
 	encodeInstallCodeChunkedRequest,
@@ -43,7 +40,7 @@ import {
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
 import { ActorSubclass, Actor } from "../../types/actor.js"
-import { makeMonitor, type Monitor, awaitPortClosed } from "./pic-process.js"
+import { makeMonitor, type Monitor } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
 import { Record as EffectRecord, Array as EffectArray } from "effect"
 
@@ -103,11 +100,6 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async start(): Promise<void> {
 		if (this.started) return
-
-		await logStateDir(
-			this.ctx.iceDirPath + "/replica-state",
-			"before start",
-		)
 		// Start/adopt/reuse monitor
 		const monitor = await makeMonitor(this.ctx, {
 			host: this.host,
@@ -115,37 +107,15 @@ export class PICReplica implements ReplicaServiceClass {
 			ttlSeconds: this.ttlSeconds,
 		})
 		this.monitor = monitor
-		await logStateDir(this.ctx.iceDirPath + "/replica-state", "after start")
 		const baseUrl = `${monitor.host}:${monitor.port}` // monitor.host already includes http://
 		const stateRoot = path.resolve(
 			path.join(this.ctx.iceDirPath, "replica-state"),
 		)
-		// try {
-		// 	await fs.mkdir(stateRoot, { recursive: true })
-		// } catch {}
 
 		try {
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
-			console.log(
-				`[PICReplica] effective state_dir=${effectiveStateDir} incomplete_state=${incomplete}`,
-			)
-
-			const icpFeatures = this.picConfig?.icpFeatures ?? {}
-			const fixedArray = EffectArray.map(
-				Object.entries(icpFeatures),
-				([key, value]) => [
-					key,
-					value === "DefaultConfig" ? true : false,
-				],
-			) as [keyof IcpFeatures, boolean][]
-			const fixedIcpFeatures = Object.fromEntries(
-				fixedArray,
-			) as IcpFeatures
-			// const fixedPicConfig = {
-			// 	...this.picConfig,
-			// 	icpFeatures: fixedIcpFeatures,
-			// }
+			// TODO: clean up this mess
 			const fixedPicConfig = Object.fromEntries(
 				Object.entries(this.picConfig).filter(
 					([K, V]) =>
@@ -162,8 +132,6 @@ export class PICReplica implements ReplicaServiceClass {
 				),
 			)
 
-			console.log("fixedPicConfig", fixedPicConfig)
-
 			const baseRequest: CreateInstanceRequest = {
 				stateDir: effectiveStateDir,
 				initialTime: {
@@ -174,7 +142,6 @@ export class PICReplica implements ReplicaServiceClass {
 			const createRequest: CreateInstanceRequest = incomplete
 				? { ...fixedPicConfig, ...baseRequest }
 				: { ...baseRequest }
-			console.log("createRequest", createRequest)
 
 			const createClient = CustomPocketIcClient.create(
 				baseUrl,
@@ -190,29 +157,16 @@ export class PICReplica implements ReplicaServiceClass {
 					: await createClient
 			) as InstanceType<typeof CustomPocketIcClient>
 
-			try {
-				console.log(`[PICReplica] client created, instance ready`)
-			} catch {}
-
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"after client created",
-			)
 			// Construct PocketIc on top of the custom client
 			// @ts-ignore constructor is private in types but needed here
 			this.pic = new PocketIc(this.client)
 
-			// Enable auto-progress explicitly (best effort) in case server ignored initial_time
-			try {
-				await this.client.makeLive({ artificialDelayMs: 0 })
-			} catch {
-				// best-effort: ignore
-			}
-
-			// Deep diagnostics: confirm routing of created canister (if known later)
-			try {
-				await this.client.debugTopologySummary("after-create")
-			} catch {}
+			// // Not necessary because its specified in createInstanceRequest?
+			// try {
+			// 	await this.client.makeLive({ artificialDelayMs: 0 })
+			// } catch {
+			// 	// best-effort: ignore
+			// }
 
 			this.started = true
 
@@ -223,68 +177,14 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async stop(): Promise<void> {
-		await logStateDir(
-			this.ctx.iceDirPath + "/replica-state",
-			"before delete instance",
-		)
 		// If we adopted/reused an external server, do not manage lifecycle
 		if (this.monitor?.reused) return
 
-		// Minimal shutdown: stop progress and allow short file settle
-		try {
-			await this.client!.stopProgress()
-            await this.client!.tick()
-		} catch (e) {
-			console.error(
-				`[PICReplica] stop(): failed to stop_progress: ${e instanceof Error ? e.message : String(e)}`,
-			)
-			throw e
-		}
-		try {
-			await this.client!.deleteInstance()
-			await awaitPortClosed(this.port, this.host.replace("http://", ""))
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"after delete instance",
-			)
-			// console.log("instance deleted.....")
-			// await this.pic!.tearDown()
-		} catch (e) {
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"after failed to delete instance",
-			)
-			console.error(
-				`[PICReplica] stop(): failed to deleteInstance: ${String(e)}`,
-			)
-			throw e
-		}
-
 		// Graceful shutdown and bounded wait
 		try {
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"before shutdown",
-			)
 			this.monitor?.shutdown()
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"after shutdown",
-			)
-		} catch {}
-		try {
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"before wait for exit",
-			)
 			await this.monitor?.waitForExit?.()
-			await logStateDir(
-				this.ctx.iceDirPath + "/replica-state",
-				"after wait for exit",
-			)
 		} catch {}
-
-		// No extra verification; rely on strict restore (incomplete_state=false when complete state present)
 	}
 
 	// ---------------- operations ----------------
@@ -332,9 +232,6 @@ export class PICReplica implements ReplicaServiceClass {
 					return CanisterStatus.STOPPED
 				return CanisterStatus.NOT_FOUND
 			} catch (e) {
-				try {
-					await this.client?.debugCheckCanisterRouting(canisterId)
-				} catch {}
 				return CanisterStatus.NOT_FOUND
 			}
 		} catch (error) {

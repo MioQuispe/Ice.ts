@@ -4,7 +4,11 @@ import type { CachedTask, Task } from "../types/types.js"
 import { FileSystem, Path } from "@effect/platform"
 // TODO: move to ./lib.ts
 import { compileMotokoCanister, generateDIDJS } from "../canister.js"
-import { ResolvedParamsToArgs } from "../tasks/lib.js"
+import {
+	ParamsToArgs,
+	ResolvedParamsToArgs,
+	TaskParamsToArgs,
+} from "../tasks/lib.js"
 import { InstallModes } from "../services/replica.js"
 import {
 	AllowedDep,
@@ -20,9 +24,9 @@ import {
 	RemoveTask,
 	StatusTask,
 	StopTask,
-    ValidProvidedDeps,
-    baseLayer,
-    type BuilderLayer,
+	ValidProvidedDeps,
+	baseLayer,
+	type BuilderLayer,
 } from "./lib.js"
 import { type TaskCtxShape } from "../services/taskCtx.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -144,9 +148,7 @@ export const motokoDeployParams = deployParams
 // 	},
 // }
 
-export type MotokoDeployTask<
-	_SERVICE = unknown,
-> = Omit<
+export type MotokoDeployTask<_SERVICE = unknown> = Omit<
 	Task<
 		{
 			canisterId: string
@@ -162,16 +164,14 @@ export type MotokoDeployTask<
 	params: typeof motokoDeployParams
 }
 
-export type MotokoDeployTaskArgs = ResolvedParamsToArgs<typeof motokoDeployParams>
+export type MotokoDeployTaskArgs = ResolvedParamsToArgs<
+	typeof motokoDeployParams
+>
 
-export const makeMotokoDeployTask = <
-	_SERVICE,
->(
+export const makeMotokoDeployTask = <_SERVICE>(
 	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
-		| ((args: {
-				ctx: TaskCtxShape
-		  }) => Promise<MotokoCanisterConfig>)
+		| ((args: { ctx: TaskCtxShape }) => Promise<MotokoCanisterConfig>)
 		| ((args: { ctx: TaskCtxShape }) => MotokoCanisterConfig)
 		| MotokoCanisterConfig,
 ): MotokoDeployTask<_SERVICE> => {
@@ -247,7 +247,10 @@ export const makeMotokoDeployTask = <
 											},
 										})
 									yield* Effect.logDebug(
-										"Now running bindings task",
+										"Now running bindings task with args",
+										{
+											candid: candidPath,
+										},
 									)
 									const { didJSPath, didTSPath } =
 										yield* Effect.tryPromise({
@@ -255,7 +258,9 @@ export const makeMotokoDeployTask = <
 												runTask(
 													parentScope.children
 														.bindings,
-													{},
+													{
+														candid: candidPath,
+													},
 												),
 											catch: (error) => {
 												return new TaskError({
@@ -304,30 +309,41 @@ export const makeMotokoDeployTask = <
 	}
 }
 
-export type MotokoBindingsTask = CachedTask<
-	{
-		didJSPath: string
-		didTSPath: string
-	},
-	{},
-	{},
-	{
-		taskPath: string
-		depCacheKeys: Record<string, string | undefined>
-	}
->
-
 const motokoBindingsParams = {
 	// TODO:
-	wasm: {
-		type: "string",
-		description: "Path to the wasm file",
-	},
 	candid: {
-		type: "string",
+		type: type("string"),
 		description: "Path to the candid file",
+		name: "candid",
+		isFlag: true as const,
+		parse: (value: string) => value,
+		isOptional: false as const,
+		isVariadic: false as const,
 	},
 }
+export type MotokoBindingsTaskArgs = ResolvedParamsToArgs<
+	typeof motokoBindingsParams
+>
+
+export type MotokoBindingsTask = Omit<
+	CachedTask<
+		{
+			didJSPath: string
+			didTSPath: string
+		},
+		{},
+		{},
+		{
+			taskPath: string
+			depCacheKeys: Record<string, string | undefined>
+		}
+	>,
+	"params" | "namedParams"
+> & {
+	params: typeof motokoBindingsParams
+	namedParams: typeof motokoBindingsParams
+}
+
 export const makeMotokoBindingsTask = (
 	builderLayer: BuilderLayer,
 ): MotokoBindingsTask => {
@@ -337,9 +353,9 @@ export const makeMotokoBindingsTask = (
 		id: Symbol("motokoCanister/bindings"),
 		dependsOn: {},
 		dependencies: {},
-		namedParams: {},
+		namedParams: motokoBindingsParams,
 		positionalParams: [],
-		params: {},
+		params: motokoBindingsParams,
 		// TODO: do we allow a fn as args here?
 		effect: (taskCtx) =>
 			builderRuntime.runPromise(
@@ -347,6 +363,10 @@ export const makeMotokoBindingsTask = (
 					const path = yield* Path.Path
 					const fs = yield* FileSystem.FileSystem
 					const { taskPath, appDir, iceDir } = taskCtx
+					const { candid } = taskCtx.args as MotokoBindingsTaskArgs
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as MotokoCanisterConfig
 					const canisterName = taskPath
 						.split(":")
 						.slice(0, -1)
@@ -360,26 +380,37 @@ export const makeMotokoBindingsTask = (
 							`${canisterName}.wasm.gz`,
 						),
 					)
-					const wasmPath = path.join(
-						iceDir,
-						"canisters",
-						canisterName,
-						isGzipped
-							? `${canisterName}.wasm.gz`
-							: `${canisterName}.wasm`,
-					)
-					const didPath = path.join(
-						iceDir,
-						"canisters",
-						canisterName,
-						`${canisterName}.did`,
-					)
-					// TODO: convert to task params instead. the above can be the defaults
-					// const wasmPath = taskArgs.wasm
-					// const candidPath = taskArgs.candid
-
-					yield* Effect.logDebug("Artifact paths", {
-						wasmPath,
+					// const wasmPath = path.join(
+					// 	iceDir,
+					// 	"canisters",
+					// 	canisterName,
+					// 	isGzipped
+					// 		? `${canisterName}.wasm.gz`
+					// 		: `${canisterName}.wasm`,
+					// )
+					// const didPath = path.join(
+					// 	iceDir,
+					// 	"canisters",
+					// 	canisterName,
+					// 	`${canisterName}.did`,
+					// )
+					// const canisterConfig = depResults["config"]
+					// ?.result as CustomCanisterConfig
+					// const canisterConfig = yield* resolveConfig(
+					// 	taskCtx,
+					// 	canisterConfigOrFn,
+					// )
+					// const didPath = canisterConfig.src
+					console.log("motoko bindings task", candid, taskCtx.args)
+					const didPath =
+						candid ??
+						path.join(
+							iceDir,
+							"canisters",
+							canisterName,
+							`${canisterName}.did`,
+						)
+					yield* Effect.logDebug("Bindings task", canisterName, {
 						didPath,
 					})
 
@@ -388,6 +419,11 @@ export const makeMotokoBindingsTask = (
 					yield* Effect.logDebug(
 						`Generated DID JS for ${canisterName}`,
 					)
+					yield* Effect.logDebug("Artifact paths", {
+						// wasmPath,
+						didJSPath: didJSPath,
+						didTSPath: didTSPath,
+					})
 					return {
 						didJSPath,
 						didTSPath,
@@ -448,165 +484,171 @@ export type MotokoBuildTask = CachedTask<
 >
 
 export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
-    builderLayer: BuilderLayer,
-    configTask: ConfigTask<C>,
+	builderLayer: BuilderLayer,
+	configTask: ConfigTask<C>,
 ): MotokoBuildTask => {
-    const builderRuntime = ManagedRuntime.make(builderLayer)
-    return {
-        _tag: "task",
-        id: Symbol("motokoCanister/build"),
-        dependsOn: {},
-        dependencies: {
-            config: configTask,
-        },
-        effect: (taskCtx) =>
-            builderRuntime.runPromise(
-                Effect.fn("task_effect")(function* () {
-                    yield* Effect.logDebug("Building Motoko canister")
-                    const path = yield* Path.Path
-                    const fs = yield* FileSystem.FileSystem
-                    const { appDir, iceDir, taskPath } = taskCtx
-                    const depResults = taskCtx.depResults
-                    const canisterConfig = depResults["config"]
-                        ?.result as MotokoCanisterConfig
-                    const canisterName = taskPath
-                        .split(":")
-                        .slice(0, -1)
-                        .join(":")
-                    const isGzipped = yield* fs.exists(
-                        path.join(
-                            iceDir,
-                            "canisters",
-                            canisterName,
-                            `${canisterName}.wasm.gz`,
-                        ),
-                    )
-                    const wasmOutputFilePath = path.join(
-                        iceDir,
-                        "canisters",
-                        canisterName,
-                        isGzipped
-                            ? `${canisterName}.wasm.gz`
-                            : `${canisterName}.wasm`,
-                    )
-                    const outCandidPath = path.join(
-                        iceDir,
-                        "canisters",
-                        canisterName,
-                        `${canisterName}.did`,
-                    )
-                    // Ensure the directory exists
-                    yield* fs.makeDirectory(path.dirname(wasmOutputFilePath), {
-                        recursive: true,
-                    })
-                    yield* Effect.logDebug("Compiling Motoko canister")
-                    yield* compileMotokoCanister(
-                        path.resolve(appDir, canisterConfig.src),
-                        canisterName,
-                        wasmOutputFilePath,
-                    )
-                    yield* Effect.logDebug(
-                        "Motoko canister built successfully",
-                        {
-                            wasmPath: wasmOutputFilePath,
-                            candidPath: outCandidPath,
-                        },
-                    )
-                    return {
-                        wasmPath: wasmOutputFilePath,
-                        candidPath: outCandidPath,
-                    }
-                })(),
-            ),
-        computeCacheKey: (input) => {
-            // TODO: pocket-ic could be restarted?
-            const installInput = {
-                taskPath: input.taskPath,
-                depsHash: hashJson(input.depCacheKeys),
-                // TODO: should we hash all fields though?
-                srcHash: hashJson(input.src.map((s) => s.sha256)),
-            }
-            const cacheKey = hashJson(installInput)
-            return cacheKey
-        },
-        input: (taskCtx) =>
-            builderRuntime.runPromise(
-                Effect.fn("task_input")(function* () {
-                    const { taskPath, depResults } = taskCtx
-                    const dependencies = depResults
-                    const depCacheKeys = Record.map(
-                        dependencies,
-                        (dep) => dep.cacheKey,
-                    )
-                    const canisterConfig = depResults["config"]
-                        ?.result as MotokoCanisterConfig
-                    const path = yield* Path.Path
-                    const fs = yield* FileSystem.FileSystem
-                    const srcDir = path.dirname(canisterConfig.src)
-                    const entries = yield* fs.readDirectory(srcDir, {
-                        recursive: true,
-                    })
-                    const srcFiles = entries.filter((entry) =>
-                        entry.endsWith(".mo"),
-                    )
-                    const prevSrcDigests: Array<FileDigest> = []
-                    const srcDigests: Array<FileDigest> = []
-                    for (const [index, file] of srcFiles.entries()) {
-                        const prevSrcDigest = prevSrcDigests?.[index]
-                        const filePath = path.join(srcDir, file)
-                        const { fresh: srcFresh, digest: srcDigest } =
-                            yield* Effect.tryPromise({
-                                try: () =>
-                                    isArtifactCached(filePath, prevSrcDigest),
-                                catch: (e) =>
-                                    new TaskError({
-                                        message:
-                                            "Failed to check if artifact is cached",
-                                    }),
-                            })
-                        srcDigests.push(srcDigest)
-                    }
-                    const input = {
-                        taskPath,
-                        src: srcDigests,
-                        depCacheKeys,
-                    }
-                    return input
-                })(),
-            ),
-        encode: (taskCtx, value) =>
-            builderRuntime.runPromise(
-                Effect.fn("task_encode")(function* () {
-                    return JSON.stringify(value)
-                })(),
-            ),
-        decode: (taskCtx, value) =>
-            builderRuntime.runPromise(
-                Effect.fn("task_decode")(function* () {
-                    return JSON.parse(value as string)
-                })(),
-            ),
-        encodingFormat: "string",
-        description: "Build Motoko canister",
-        tags: [Tags.CANISTER, Tags.MOTOKO, Tags.BUILD],
-        namedParams: {},
-        positionalParams: [],
-        params: {},
-    }
+	const builderRuntime = ManagedRuntime.make(builderLayer)
+	return {
+		_tag: "task",
+		id: Symbol("motokoCanister/build"),
+		dependsOn: {},
+		dependencies: {
+			config: configTask,
+		},
+		effect: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_effect")(function* () {
+					yield* Effect.logDebug("Building Motoko canister")
+					const path = yield* Path.Path
+					const fs = yield* FileSystem.FileSystem
+					const { appDir, iceDir, taskPath } = taskCtx
+					const depResults = taskCtx.depResults
+					const canisterConfig = depResults["config"]
+						?.result as MotokoCanisterConfig
+					const canisterName = taskPath
+						.split(":")
+						.slice(0, -1)
+						.join(":")
+					// const isGzipped = yield* fs.exists(
+					// 	path.join(
+					// 		iceDir,
+					// 		"canisters",
+					// 		canisterName,
+					// 		`${canisterName}.wasm.gz`,
+					// 	),
+					// )
+					const wasmOutputFilePath = path.join(
+						iceDir,
+						"canisters",
+						canisterName,
+						`${canisterName}.wasm`,
+					)
+					const outCandidPath = path.join(
+						iceDir,
+						"canisters",
+						canisterName,
+						`${canisterName}.did`,
+					)
+					// Ensure the directory exists
+					yield* fs.makeDirectory(path.dirname(wasmOutputFilePath), {
+						recursive: true,
+					})
+					yield* Effect.logDebug(
+						"Compiling Motoko canister with args",
+						{
+							wasmOutputFilePath,
+							outCandidPath,
+						},
+						"with src",
+						path.resolve(appDir, canisterConfig.src),
+					)
+					yield* compileMotokoCanister(
+						path.resolve(appDir, canisterConfig.src),
+						canisterName,
+						wasmOutputFilePath,
+					)
+					yield* Effect.logDebug(
+						"Motoko canister built successfully",
+						{
+							wasmPath: wasmOutputFilePath,
+							candidPath: outCandidPath,
+						},
+					)
+					return {
+						wasmPath: wasmOutputFilePath,
+						candidPath: outCandidPath,
+					}
+				})(),
+			),
+		computeCacheKey: (input) => {
+			// TODO: pocket-ic could be restarted?
+			const installInput = {
+				taskPath: input.taskPath,
+				depsHash: hashJson(input.depCacheKeys),
+				// TODO: should we hash all fields though?
+				srcHash: hashJson(input.src.map((s) => s.sha256)),
+			}
+			const cacheKey = hashJson(installInput)
+			return cacheKey
+		},
+		input: (taskCtx) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_input")(function* () {
+					const { taskPath, depResults } = taskCtx
+					const dependencies = depResults
+					const depCacheKeys = Record.map(
+						dependencies,
+						(dep) => dep.cacheKey,
+					)
+					const canisterConfig = depResults["config"]
+						?.result as MotokoCanisterConfig
+					const path = yield* Path.Path
+					const fs = yield* FileSystem.FileSystem
+					const srcDir = path.dirname(canisterConfig.src)
+					const entries = yield* fs.readDirectory(srcDir, {
+						recursive: true,
+					})
+					const srcFiles = entries.filter((entry) =>
+						entry.endsWith(".mo"),
+					)
+					const prevSrcDigests: Array<FileDigest> = []
+					const srcDigests: Array<FileDigest> = []
+					for (const [index, file] of srcFiles.entries()) {
+						const prevSrcDigest = prevSrcDigests?.[index]
+						const filePath = path.join(srcDir, file)
+						const { fresh: srcFresh, digest: srcDigest } =
+							yield* Effect.tryPromise({
+								try: () =>
+									isArtifactCached(filePath, prevSrcDigest),
+								catch: (e) =>
+									new TaskError({
+										message:
+											"Failed to check if artifact is cached",
+									}),
+							})
+						srcDigests.push(srcDigest)
+					}
+					const input = {
+						taskPath,
+						src: srcDigests,
+						depCacheKeys,
+					}
+					return input
+				})(),
+			),
+		encode: (taskCtx, value) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_encode")(function* () {
+					return JSON.stringify(value)
+				})(),
+			),
+		decode: (taskCtx, value) =>
+			builderRuntime.runPromise(
+				Effect.fn("task_decode")(function* () {
+					return JSON.parse(value as string)
+				})(),
+			),
+		encodingFormat: "string",
+		description: "Build Motoko canister",
+		tags: [Tags.CANISTER, Tags.MOTOKO, Tags.BUILD],
+		namedParams: {},
+		positionalParams: [],
+		params: {},
+	}
 }
 
 type ArgsFields<
-    I,
-    D extends Record<string, Task>,
-    P extends Record<string, Task>,
+	I,
+	D extends Record<string, Task>,
+	P extends Record<string, Task>,
 > = {
-    fn: (args: {
-        ctx: TaskCtxShape
-        deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-    }) => I | Promise<I>
-    customEncode:
-        | undefined
-        | ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+	fn: (args: {
+		ctx: TaskCtxShape
+		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+	}) => I | Promise<I>
+	customEncode:
+		| undefined
+		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
 }
 
 export class MotokoCanisterBuilder<
@@ -656,11 +698,9 @@ export class MotokoCanisterBuilder<
 			children: {
 				...this.#scope.children,
 				config,
-				create: makeCreateTask<Config>(
-					this.#builderLayer,
-					config,
-					[Tags.MOTOKO],
-				),
+				create: makeCreateTask<Config>(this.#builderLayer, config, [
+					Tags.MOTOKO,
+				]),
 				build: makeMotokoBuildTask(this.#builderLayer, config),
 			},
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, D, P>
@@ -937,7 +977,10 @@ export const makeMotokoCanister = <
 					{} as {},
 				),
 			),
-			deploy: makeMotokoDeployTask<_SERVICE>(builderLayer, canisterConfigOrFn),
+			deploy: makeMotokoDeployTask<_SERVICE>(
+				builderLayer,
+				canisterConfigOrFn,
+			),
 			status: makeCanisterStatusTask(builderLayer, [Tags.MOTOKO]),
 		},
 	} satisfies MotokoCanisterScope<_SERVICE, I, U, {}, {}>

@@ -852,7 +852,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								try: () => cachedTask.effect(taskCtx),
 								catch: (error) => {
 									return new TaskRuntimeError({
-										message: `Error executing cached task ${taskPath}`,
+										message: `Error executing cached task ${taskPath}, ${String(error)}`,
 										error,
 									})
 								},
@@ -867,7 +867,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 									cachedTask.encode(taskCtx, result, input),
 								catch: (error) => {
 									return new TaskRuntimeError({
-										message: `Error encoding cached task ${taskPath}`,
+										message: `Error encoding cached task ${taskPath}, ${String(error)}`,
 										error,
 									})
 								},
@@ -900,7 +900,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							try: () => task.effect(taskCtx),
 							catch: (error) => {
 								return new TaskRuntimeError({
-									message: `Error executing task ${taskPath}`,
+									message: `Error executing task ${taskPath}, ${String(error)}`,
 									error,
 								})
 							},

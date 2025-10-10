@@ -35,12 +35,6 @@ const writeJson = async (p: string, data: unknown) => {
 	await fs.writeFile(p, JSON.stringify(data, null, 2), "utf8")
 }
 
-const removeIfExists = async (p: string) => {
-	try {
-		await fs.unlink(p)
-	} catch {}
-}
-
 const exists = async (p: string) => {
 	try {
 		await fs.access(p)
@@ -82,33 +76,6 @@ const waitTcpReady = (host: string, port: number, perTryMs = 800) =>
 			reject(err)
 		})
 	})
-
-// TODO: fix:
-export async function awaitPortClosed(
-	port: number,
-	host = "0.0.0.0",
-	timeoutMs = 15000,
-): Promise<void> {
-	const deadline = Date.now() + timeoutMs
-	while (Date.now() < deadline) {
-		const closed = await new Promise<boolean>((resolve) => {
-			const s = net.connect({ port, host }, () => {
-				s.destroy()
-				resolve(false) // still open
-			})
-			s.on("error", () => resolve(true)) // connection refused => closed
-			s.setTimeout(200, () => {
-				s.destroy()
-				resolve(false)
-			})
-		})
-		if (closed) return
-		await sleep(100)
-	}
-	throw new ReplicaError({
-		message: `port ${host}:${port} still open after ${timeoutMs}ms`,
-	})
-}
 
 // If a process is listening on <port> and looks like pocket-ic -> pid, else undefined
 async function pidByPortIfPocketIc(port: number): Promise<number | undefined> {
@@ -249,6 +216,7 @@ export async function makeMonitor(
 	const port = opts.port
 	const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
 	const stPath = statePath(ctx.iceDirPath)
+	const logFilePath = path.join(ctx.iceDirPath, "pocket-ic.log")
 
 	// --- Reuse: state exists & alive & version matches
 	if (await exists(stPath)) {
@@ -277,20 +245,32 @@ export async function makeMonitor(
 		} catch {
 			// fall through to remove
 		}
-		await removeIfExists(stPath)
+		try {
+			await fs.unlink(stPath)
+		} catch {}
 	}
 
 	// --- Adopt: something is already listening AND is pocket-ic → recreate state and reuse
 	{
 		const pid = await pidByPortIfPocketIc(port)
 		if (pid && isPidAlive(pid)) {
-			await writeJson(stPath, {
-				pid,
-				startedAt: Date.now(),
-				binPath: pocketIcPath,
-				args: ["-i", ip, "-p", String(port), "--ttl", ttl],
-				version: pocketIcVersion,
-			} satisfies PocketIcState)
+			await ensureDir(path.dirname(stPath))
+			await fs.writeFile(
+				stPath,
+				JSON.stringify(
+					{
+						pid,
+						startedAt: Date.now(),
+						binPath: pocketIcPath,
+						args: ["-i", ip, "-p", String(port), "--ttl", ttl],
+						version: pocketIcVersion,
+					},
+					null,
+					2,
+				),
+				"utf8",
+			)
+
 			await retry(async () => waitTcpReady(ip, port), 40, 120)
 			return {
 				pid,
@@ -308,16 +288,14 @@ export async function makeMonitor(
 		}
 	}
 
-	console.log("iceDirPath", ctx.iceDirPath, "logPathBase", logBasePath(ctx.iceDirPath))
 	// --- Start fresh (background or foreground)
 	if (ctx.background) {
 		// Background: monitor writes state and exits immediately
-		const logPathBase = logBasePath(ctx.iceDirPath)
 		const args = buildMonitorArgs({
 			background: true,
 			parentPid: process.pid,
 			stateFile: stPath,
-			logFile: `${logPathBase}/pocket-ic.log`,
+			logFile: logFilePath,
 			ip,
 			port,
 			ttl,
@@ -378,7 +356,12 @@ export async function makeMonitor(
 
 		// Stamp version if missing
 		if (!state.version) {
-			await writeJson(stPath, { ...state, version: pocketIcVersion })
+			await ensureDir(path.dirname(stPath))
+			await fs.writeFile(
+				stPath,
+				JSON.stringify({ ...state, version: pocketIcVersion }, null, 2),
+				"utf8",
+			)
 		}
 
 		return {
@@ -397,12 +380,11 @@ export async function makeMonitor(
 		}
 	}
 
-	const logPathBase = logBasePath(ctx.iceDirPath)
 	// Foreground: start monitor; keep stderr fatal watcher and provide shutdown
 	const args = buildMonitorArgs({
 		background: false,
 		parentPid: process.pid,
-		logFile: `${logPathBase}.log`,
+		logFile: logFilePath,
 		ip,
 		port,
 		ttl,

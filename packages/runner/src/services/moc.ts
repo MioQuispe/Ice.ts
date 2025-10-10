@@ -67,13 +67,16 @@ export class Moc extends Context.Tag("Moc")<
               "-o",
               output,
             )
+            console.log("Compiling Motoko", command.toString())
             // TODO: this swallows all errors!
             yield* commandExecutor.string(command).pipe(
               Effect.mapError(
-                (err) =>
-                  new MocError({
+                (err) => {
+                  console.error("Failed to compile Motoko", err)
+                  return new MocError({
                     message: `Failed to compile Motoko: ${err.message}`,
-                  }),
+                  })
+                }
               ),
             )
           }),

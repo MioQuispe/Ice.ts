@@ -24,21 +24,35 @@ export const compileMotokoCanister = (
 ) =>
 	Effect.gen(function* () {
 		const moc = yield* Moc
+		const fs = yield* FileSystem.FileSystem
+		const path = yield* Path.Path
 		// Create output directories if they don't exist
 		yield* Effect.logDebug(
 			`Compiling from ${src}, with name ${canisterName} to ${wasmOutputFilePath}`,
 		)
+		if (!(yield* fs.exists(path.dirname(wasmOutputFilePath)))) {
+			yield* fs.makeDirectory(path.dirname(wasmOutputFilePath), {
+				recursive: true,
+			})
+		}
 		// TODO: we need to make dirs if they don't exist
 		yield* moc.compile(src, wasmOutputFilePath)
 		yield* Effect.logDebug(
 			`Successfully compiled ${src} ${canisterName} outputFilePath: ${wasmOutputFilePath}`,
 		)
+		yield* Effect.logDebug(
+			"Contents of output directory:",
+			yield* fs.readDirectory(path.dirname(wasmOutputFilePath)),
+		)
 		return wasmOutputFilePath
 	})
 
-
 // TODO: types for DIDJS
-export const generateDIDJS = (taskCtx: TaskCtxShape, canisterName: string, didPath: string) =>
+export const generateDIDJS = (
+	taskCtx: TaskCtxShape,
+	canisterName: string,
+	didPath: string,
+) =>
 	Effect.gen(function* () {
 		const fs = yield* FileSystem.FileSystem
 		const path = yield* Path.Path
@@ -95,7 +109,9 @@ export const encodeArgs = (args: unknown[], canisterDID: CanisterDidModule) =>
 		return yield* Effect.try({
 			try: () => {
 				const encodedArgs = args
-					? new Uint8Array(IDL.encode(canisterDID.init({ IDL }), args))
+					? new Uint8Array(
+							IDL.encode(canisterDID.init({ IDL }), args),
+						)
 					: new Uint8Array()
 				return encodedArgs
 			},
@@ -107,12 +123,17 @@ export const encodeArgs = (args: unknown[], canisterDID: CanisterDidModule) =>
 			},
 		})
 	})
-export const encodeUpgradeArgs = (args: unknown[], canisterDID: CanisterDidModule) =>
+export const encodeUpgradeArgs = (
+	args: unknown[],
+	canisterDID: CanisterDidModule,
+) =>
 	Effect.gen(function* () {
 		return yield* Effect.try({
 			try: () => {
 				const encodedArgs = args
-					? new Uint8Array(IDL.encode(canisterDID.init({ IDL }), args))
+					? new Uint8Array(
+							IDL.encode(canisterDID.init({ IDL }), args),
+						)
 					: new Uint8Array()
 				return encodedArgs
 			},
