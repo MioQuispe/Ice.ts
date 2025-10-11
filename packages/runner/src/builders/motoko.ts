@@ -401,7 +401,6 @@ export const makeMotokoBindingsTask = (
 					// 	canisterConfigOrFn,
 					// )
 					// const didPath = canisterConfig.src
-					console.log("motoko bindings task", candid, taskCtx.args)
 					const didPath =
 						candid ??
 						path.join(

@@ -101,6 +101,11 @@ type PocketIcState = {
 	binPath: string
 	args: string[]
 	version?: string
+    managed?: boolean
+    mode?: "foreground" | "background"
+    port?: number
+    bind?: string
+    monitorPid?: number
 }
 
 function buildMonitorArgs(opts: {
@@ -117,7 +122,7 @@ function buildMonitorArgs(opts: {
 	if (opts.stateFile) {
 		args.push("--state-file", opts.stateFile)
 	}
-	console.log("creating monitor with logFile", opts.logFile)
+	// console.log("creating monitor with logFile", opts.logFile)
 	if (opts.logFile) {
 		args.push("--log-file", path.resolve(opts.logFile))
 	}
@@ -134,7 +139,7 @@ function buildMonitorArgs(opts: {
 		"--ttl",
 		opts.ttl,
 	)
-	console.log("monitor args", args)
+	// console.log("monitor args", args)
 	return args
 }
 
@@ -218,7 +223,7 @@ export async function makeMonitor(
 	const stPath = statePath(ctx.iceDirPath)
 	const logFilePath = path.join(ctx.iceDirPath, "pocket-ic.log")
 
-	// --- Reuse: state exists & alive & version matches
+    // --- Reuse: state exists & alive & version matches
 	if (await exists(stPath)) {
 		try {
 			const st = await readJson<PocketIcState>(stPath)
@@ -250,7 +255,7 @@ export async function makeMonitor(
 		} catch {}
 	}
 
-	// --- Adopt: something is already listening AND is pocket-ic → recreate state and reuse
+    // --- Adopt: something is already listening AND is pocket-ic → recreate state and reuse
 	{
 		const pid = await pidByPortIfPocketIc(port)
 		if (pid && isPidAlive(pid)) {
@@ -263,7 +268,12 @@ export async function makeMonitor(
 						startedAt: Date.now(),
 						binPath: pocketIcPath,
 						args: ["-i", ip, "-p", String(port), "--ttl", ttl],
-						version: pocketIcVersion,
+                        version: pocketIcVersion,
+                        managed: false, // manual
+                        mode: undefined,
+                        monitorPid: process.pid,
+                        bind: ip,
+                        port,
 					},
 					null,
 					2,
@@ -290,7 +300,7 @@ export async function makeMonitor(
 
 	// --- Start fresh (background or foreground)
 	if (ctx.background) {
-		// Background: monitor writes state and exits immediately
+    // Background: monitor writes state and exits immediately
 		const args = buildMonitorArgs({
 			background: true,
 			parentPid: process.pid,
@@ -380,10 +390,11 @@ export async function makeMonitor(
 		}
 	}
 
-	// Foreground: start monitor; keep stderr fatal watcher and provide shutdown
+    // Foreground: start monitor; keep stderr fatal watcher and provide shutdown
 	const args = buildMonitorArgs({
 		background: false,
 		parentPid: process.pid,
+		stateFile: stPath,
 		logFile: logFilePath,
 		ip,
 		port,
@@ -397,15 +408,15 @@ export async function makeMonitor(
 			fatalStderr,
 			retry(async () => waitTcpReady(ip, port), 60, 100, true),
 		])
-		console.log(
-			`[PICMonitor] foreground pocket-ic ready ${ip}:${port} (pid=${proc.pid ?? "unknown"})`,
-		)
+		// console.log(
+		// 	`[PICMonitor] foreground pocket-ic ready ${ip}:${port} (pid=${proc.pid ?? "unknown"})`,
+		// )
 	} catch (error) {
-		console.error(
-			`[PICMonitor] failed to observe pocket-ic readiness on ${ip}:${port}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		)
+		// console.error(
+		// 	`[PICMonitor] failed to observe pocket-ic readiness on ${ip}:${port}: ${
+		// 		error instanceof Error ? error.message : String(error)
+		// 	}`,
+		// )
 		try {
 			if (proc.pid) process.kill(proc.pid, "SIGKILL")
 		} catch {}

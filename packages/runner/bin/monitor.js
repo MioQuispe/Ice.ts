@@ -111,7 +111,19 @@ const spawnOpts = background
         // * });
 	const child = spawn(bin, args, spawnOpts)
 
-	// Write state file ASAP (no require; ESM-safe)
+    // Extract bind/port from args tail for richer state
+    const extractNet = (argv) => {
+        let bind = undefined
+        let port = undefined
+        for (let i = 0; i < argv.length; i++) {
+            if (argv[i] === "-i" && argv[i + 1]) bind = argv[i + 1]
+            if (argv[i] === "-p" && argv[i + 1]) port = Number(argv[i + 1])
+        }
+        return { bind, port }
+    }
+    const { bind, port } = extractNet(args)
+
+    // Write state file ASAP (no require; ESM-safe)
 	if (stateFile) {
 		try {
 			fs.mkdirSync(path.dirname(stateFile), { recursive: true })
@@ -119,10 +131,15 @@ const spawnOpts = background
 				stateFile,
 				JSON.stringify(
 					{
-						pid: child.pid,
+                        pid: child.pid,
 						startedAt: Date.now(),
 						binPath: bin,
 						args,
+                        managed: true,
+                        mode: background ? "background" : "foreground",
+                        monitorPid: process.pid,
+                        bind: bind ?? undefined,
+                        port: port ?? undefined,
 					},
 					null,
 					2,

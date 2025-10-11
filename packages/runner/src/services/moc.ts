@@ -67,7 +67,6 @@ export class Moc extends Context.Tag("Moc")<
               "-o",
               output,
             )
-            console.log("Compiling Motoko", command.toString())
             // TODO: this swallows all errors!
             yield* commandExecutor.string(command).pipe(
               Effect.mapError(

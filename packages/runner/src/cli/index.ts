@@ -16,7 +16,13 @@ import { Tags } from "../builders/lib.js"
 import { DeploymentError } from "../canister.js"
 import { CanisterIdsService } from "../services/canisterIds.js"
 import { ICEConfigService } from "../services/iceConfig.js"
-import { CanisterStatus, CanisterStatusError, DefaultReplica, Replica, ReplicaError } from "../services/replica.js"
+import {
+	CanisterStatus,
+	CanisterStatusError,
+	DefaultReplica,
+	Replica,
+	ReplicaError,
+} from "../services/replica.js"
 import {
 	filterNodes,
 	totalTaskCount,
@@ -414,9 +420,23 @@ const runCommand = defineCommand({
 				yield* Effect.tryPromise({
 					try: () =>
 						runtime.runPromise(
-							runTaskByPath(args.taskPath, cliTaskArgs).pipe(
-								Effect.provide(ChildTaskRuntimeLayer),
-							),
+							Effect.gen(function* () {
+								yield* runTaskByPath(
+									args.taskPath,
+									cliTaskArgs,
+								).pipe(Effect.provide(ChildTaskRuntimeLayer))
+								// TODO: clean up. use Replica
+								const replica = yield* DefaultReplica
+								yield* Effect.logDebug("Stopping replica")
+								yield* Effect.tryPromise({
+									try: () => replica.stop(),
+									catch: (e) =>
+										new ReplicaError({
+											message: String(e),
+										}),
+								})
+								yield* Effect.logInfo("Stopped replica")
+							}),
 						),
 					catch: (error) => {
 						return new TaskRuntimeError({
@@ -425,6 +445,7 @@ const runCommand = defineCommand({
 						})
 					},
 				})
+
 				// yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
 				// 	Effect.provide(ChildTaskRuntimeLayer),
 				// 	Effect.tap((result) =>
@@ -533,7 +554,7 @@ const deployRun = async ({
 
 		// TODO: clean up. use Replica
 		const replica = yield* DefaultReplica
-		yield* Effect.logInfo("Stopping replica")
+		yield* Effect.logDebug("Stopping replica")
 		yield* Effect.tryPromise({
 			try: () => replica.stop(),
 			catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1096,11 +1117,15 @@ const canistersStatusCommand = defineCommand({
 									)
 								}
 								const status = yield* Effect.tryPromise({
-									try: () => replica.getCanisterInfo({
-										canisterId,
-										identity,
-									}),
-									catch: (e) => new CanisterStatusError({ message: String(e) }),
+									try: () =>
+										replica.getCanisterInfo({
+											canisterId,
+											identity,
+										}),
+									catch: (e) =>
+										new CanisterStatusError({
+											message: String(e),
+										}),
 								})
 								return { canisterName, canisterId, status }
 							}),
@@ -1478,9 +1503,7 @@ const taskCommand = defineCommand({
 							s.message(`Completed ${update.taskPath}`)
 						}
 					},
-				).pipe(
-					Effect.annotateLogs("caller", "canistersTaskCommand"),
-				)
+				).pipe(Effect.annotateLogs("caller", "canistersTaskCommand"))
 				yield* s.stop(`Completed ${task}`)
 			})
 

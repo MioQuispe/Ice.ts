@@ -1,65 +1,88 @@
-taskParams mode,installArgsChanged,upgradeArgsChanged,canisterExists,modulePresent,cacheExists,resolvedMode,cacheUsed,expectedOutcome,notes
-auto,FALSE,FALSE,FALSE,FALSE,FALSE,install,FALSE,OK,"first deploy, fresh replica state, no canister"
-auto,TRUE,FALSE,FALSE,FALSE,FALSE,install,FALSE,OK,same as above. technically this cant happen since installArgs cant have changed without a previous cached result
-auto,FALSE,TRUE,FALSE,FALSE,FALSE,install,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
-auto,FALSE,FALSE,TRUE,FALSE,FALSE,install,FALSE,OK,first deploy on existing but empty canister
-auto,FALSE,FALSE,TRUE,TRUE,FALSE,reinstall,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
-auto,TRUE,TRUE,FALSE,FALSE,FALSE,install,FALSE,OK,"both args changed, but no canister exists. just install"
-auto,TRUE,FALSE,TRUE,FALSE,FALSE,install,FALSE,OK,
-auto,FALSE,TRUE,TRUE,FALSE,FALSE,install,FALSE,OK,just install. cant upgrade empty canister
-auto,FALSE,FALSE,FALSE,FALSE,TRUE,install,FALSE,OK,"canister empty, cache not valid"
-auto,FALSE,FALSE,TRUE,TRUE,TRUE,latest,TRUE,OK,"canister exists and not empty, but should reuse install cache despite resolvedMode?"
-auto,TRUE,FALSE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,"installArgsFn changed, cant reuse cache, need to reinstall on existing canister"
-auto,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,FALSE,OK,"upgradeArgsFn changed, cant reuse cache, need to upgrade"
-auto,TRUE,TRUE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,"both changed, install takes priority, but canister already exists -> so need to reinstall"
-auto,FALSE,TRUE,TRUE,TRUE,FALSE,upgrade,FALSE,OK,"Canister exists, but we have no cache and only upgradeArgs changed? how do we detect this?"
-auto,TRUE,FALSE,TRUE,TRUE,FALSE,reinstall,FALSE,OK,"same as above, but install takes priority so this one should work"
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-,,,,,,,,,
-install,FALSE,FALSE,FALSE,FALSE,FALSE,install,FALSE,OK,"first intsall, fresh replica state, no canister"
-install,TRUE,FALSE,FALSE,FALSE,FALSE,install,FALSE,OK,same as above. technically this cant happen since installArgs cant have changed without a previous cached result
-install,FALSE,TRUE,FALSE,FALSE,FALSE,install,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
-install,FALSE,FALSE,TRUE,FALSE,FALSE,install,FALSE,OK,first install on existing but empty canister
-install,FALSE,FALSE,TRUE,TRUE,FALSE,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
-install,TRUE,TRUE,FALSE,FALSE,FALSE,install,FALSE,OK,"both args changed, param takes precedence always"
-install,TRUE,FALSE,TRUE,FALSE,FALSE,install,FALSE,OK,param takes precendence. install still works on empty canisters
-install,FALSE,TRUE,TRUE,FALSE,FALSE,install,FALSE,OK,param takes precedence. install
-install,FALSE,FALSE,FALSE,FALSE,TRUE,install,FALSE,OK,"canister empty, cache not valid"
-install,FALSE,FALSE,TRUE,TRUE,TRUE,install,TRUE,OK,"canister exists and not empty, reuse cache"
-install,TRUE,FALSE,TRUE,TRUE,TRUE,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
-install,FALSE,TRUE,TRUE,TRUE,TRUE,install,TRUE,OK,"upgradeArgsFn changed, but params take precedence, cache still valid so reuse it"
-install,TRUE,TRUE,TRUE,TRUE,TRUE,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
-,,,,,,,,,
-reinstall,FALSE,FALSE,FALSE,FALSE,FALSE,reinstall,FALSE,ERROR!,Cant reinstall non-existent canister
-reinstall,TRUE,FALSE,FALSE,FALSE,FALSE,reinstall,FALSE,ERROR!,same as above
-reinstall,FALSE,TRUE,FALSE,FALSE,FALSE,reinstall,FALSE,ERROR!,same as above
-reinstall,FALSE,FALSE,TRUE,FALSE,FALSE,reinstall,FALSE,ERROR!,Not sure? first time probably needs to be install
-reinstall,FALSE,FALSE,TRUE,TRUE,FALSE,reinstall,FALSE,OK,just reinstall
-reinstall,TRUE,TRUE,FALSE,FALSE,FALSE,reinstall,FALSE,ERROR!,Cant reinstall non-existent canister
-reinstall,TRUE,FALSE,TRUE,FALSE,FALSE,reinstall,FALSE,ERROR!,Cant reinstall empty canister
-reinstall,FALSE,TRUE,TRUE,FALSE,FALSE,reinstall,FALSE,ERROR!,Cant reinstall empty canister. upgradeArgs irrelevant
-reinstall,FALSE,FALSE,FALSE,FALSE,TRUE,reinstall,FALSE,ERROR!,Cache irrelevant for reinstall. cant reinstall non-existen canister
-reinstall,FALSE,FALSE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,"Reinstall canister, cache irrelevant for reinstall"
-reinstall,TRUE,FALSE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,just reinstall
-reinstall,FALSE,TRUE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,just reinstall. upgradeArgs irrelevant
-reinstall,TRUE,TRUE,TRUE,TRUE,TRUE,reinstall,FALSE,OK,same as above
-,,,,,,,,,
-upgrade,FALSE,FALSE,FALSE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
-upgrade,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
-upgrade,FALSE,TRUE,FALSE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
-upgrade,FALSE,FALSE,TRUE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade empty canister
-upgrade,FALSE,FALSE,TRUE,TRUE,FALSE,upgrade,FALSE,OK,just upgrade
-upgrade,TRUE,TRUE,FALSE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
-upgrade,TRUE,FALSE,TRUE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade empty canister. installArgs irrelevant
-upgrade,FALSE,TRUE,TRUE,FALSE,FALSE,upgrade,FALSE,ERROR!,Cant upgrade empty canister.
-upgrade,FALSE,FALSE,FALSE,FALSE,TRUE,upgrade,FALSE,ERROR!,"Cant upgrade empty canister, cache not valid"
-upgrade,FALSE,FALSE,TRUE,TRUE,TRUE,upgrade,TRUE,OK,"canister exists and not empty, reuse cache"
-upgrade,TRUE,FALSE,TRUE,TRUE,TRUE,upgrade,TRUE,OK,"installArgsFn changed but irrelevant because params take precedence, reuse cache"
-upgrade,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,FALSE,OK,"upgradeArgsFn changed, cant reuse cache, need to upgrade"
-upgrade,TRUE,TRUE,TRUE,TRUE,TRUE,upgrade,FALSE,OK,"both changed, upgrade takes priority due to params"
+taskParams mode,installArgsChanged,upgradeArgsChanged,canisterExists,modulePresent,installCacheExists,upgradeCacheExists,lastDeployment,resolvedMode,cacheUsed,expectedOutcome,notes
+auto,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,"first deploy, fresh replica state, no canister"
+auto,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,install,install,FALSE,OK,same as above. technically this cant happen since installArgs cant have changed without a previous cached result
+auto,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
+auto,FALSE,FALSE,TRUE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,first deploy on existing but empty canister
+auto,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,reinstall,FALSE,OK,same as above. 
+auto,TRUE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,"both args changed, but no canister exists. just install"
+auto,TRUE,FALSE,TRUE,FALSE,FALSE,FALSE,install,install,FALSE,OK,
+auto,FALSE,TRUE,TRUE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,just install. cant upgrade empty canister
+auto,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,install,FALSE,OK,"canister empty, cache not valid"
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,FALSE,install,install,install,OK,"canister exists and not empty, but should reuse install cache despite upgrade being more logical?"
+auto,TRUE,FALSE,TRUE,TRUE,TRUE,FALSE,install,reinstall,FALSE,OK,"installArgsFn changed, cant reuse cache, need to reinstall on existing canister"
+auto,FALSE,TRUE,TRUE,TRUE,TRUE,FALSE,upgrade,upgrade,FALSE,OK,"upgradeArgsFn changed, cant reuse cache, need to upgrade"
+auto,TRUE,TRUE,TRUE,TRUE,TRUE,FALSE,upgrade,reinstall,FALSE,OK,"both changed, install takes priority, but canister already exists -> so need to reinstall"
+auto,FALSE,TRUE,TRUE,TRUE,FALSE,FALSE,upgrade,upgrade,FALSE,OK,"Canister exists, but we have no cache and only upgradeArgs changed? how do we detect this?"
+auto,TRUE,FALSE,TRUE,TRUE,FALSE,FALSE,install,reinstall,FALSE,OK,"same as above, but install takes priority so this one should work"
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+install,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,"first intsall, fresh replica state, no canister"
+install,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,install,install,FALSE,OK,same as above. technically this cant happen since installArgs cant have changed without a previous cached result
+install,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
+install,FALSE,FALSE,TRUE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,first install on existing but empty canister
+install,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
+install,TRUE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,"both args changed, param takes precedence always"
+install,TRUE,FALSE,TRUE,FALSE,FALSE,FALSE,install,install,FALSE,OK,param takes precendence. install still works on empty canisters
+install,FALSE,TRUE,TRUE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,param takes precedence. install
+install,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,install,FALSE,OK,"canister empty, cache not valid"
+install,FALSE,FALSE,TRUE,TRUE,TRUE,FALSE,install,install,install,OK,"canister exists and not empty, reuse cache"
+install,TRUE,FALSE,TRUE,TRUE,TRUE,FALSE,install,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
+install,FALSE,TRUE,TRUE,TRUE,TRUE,FALSE,install,install,install,OK,"upgradeArgsFn changed, but params take precedence, cache still valid so reuse it"
+install,TRUE,TRUE,TRUE,TRUE,TRUE,FALSE,upgrade,install,FALSE,ERROR!,"Cant install on existing canister, must use reinstall"
+,,,,,,,,,,,
+reinstall,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,undefined,reinstall,FALSE,ERROR!,Cant reinstall non-existent canister
+reinstall,TRUE,FALSE,FALSE,FALSE,TRUE,FALSE,install,reinstall,FALSE,ERROR!,same as above
+reinstall,FALSE,TRUE,FALSE,FALSE,FALSE,TRUE,upgrade,reinstall,FALSE,ERROR!,same as above
+reinstall,FALSE,FALSE,TRUE,FALSE,FALSE,FALSE,undefined,reinstall,FALSE,ERROR!,Not sure? first time probably needs to be install
+reinstall,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,reinstall,FALSE,OK,just reinstall
+reinstall,TRUE,TRUE,FALSE,FALSE,FALSE,TRUE,upgrade,reinstall,FALSE,ERROR!,Cant reinstall non-existent canister
+reinstall,TRUE,FALSE,TRUE,FALSE,TRUE,FALSE,install,reinstall,FALSE,ERROR!,Cant reinstall empty canister
+reinstall,FALSE,TRUE,TRUE,FALSE,FALSE,TRUE,upgrade,reinstall,FALSE,ERROR!,Cant reinstall empty canister. upgradeArgs irrelevant
+reinstall,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,reinstall,FALSE,ERROR!,Cache irrelevant for reinstall. cant reinstall non-existen canister
+reinstall,FALSE,FALSE,TRUE,TRUE,TRUE,FALSE,install,reinstall,FALSE,OK,"Reinstall canister, cache irrelevant for reinstall"
+reinstall,TRUE,FALSE,TRUE,TRUE,TRUE,FALSE,install,reinstall,FALSE,OK,just reinstall
+reinstall,FALSE,TRUE,TRUE,TRUE,TRUE,FALSE,install,reinstall,FALSE,OK,just reinstall. upgradeArgs irrelevant
+reinstall,TRUE,TRUE,TRUE,TRUE,TRUE,FALSE,install,reinstall,FALSE,OK,same as above
+,,,,,,,,,,,
+upgrade,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,undefined,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
+upgrade,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,install,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
+upgrade,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
+upgrade,FALSE,FALSE,TRUE,FALSE,FALSE,FALSE,undefined,upgrade,FALSE,ERROR!,Cant upgrade empty canister
+upgrade,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,upgrade,FALSE,OK,just upgrade
+upgrade,TRUE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,upgrade,FALSE,ERROR!,Cant upgrade non-existent canister
+upgrade,TRUE,FALSE,TRUE,FALSE,FALSE,FALSE,install,upgrade,FALSE,ERROR!,Cant upgrade empty canister. installArgs irrelevant
+upgrade,FALSE,TRUE,TRUE,FALSE,FALSE,FALSE,upgrade,upgrade,FALSE,ERROR!,Cant upgrade empty canister.
+upgrade,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,upgrade,FALSE,ERROR!,"Cant upgrade empty canister, cache not valid"
+upgrade,FALSE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,upgrade,OK,"canister exists and not empty, reuse cache"
+upgrade,TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,upgrade,OK,"installArgsFn changed but irrelevant because params take precedence, reuse cache"
+upgrade,FALSE,TRUE,TRUE,TRUE,TRUE,FALSE,install,upgrade,FALSE,OK,"upgradeArgsFn changed, cant reuse cache, need to upgrade"
+upgrade,TRUE,TRUE,TRUE,TRUE,TRUE,FALSE,install,upgrade,FALSE,OK,"both changed, upgrade takes priority due to params"
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+,,,,,,,,,,,
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; use latest cache
+auto,FALSE,TRUE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,FALSE,OK,both caches exist; upgrade args changed; still upgrade
+auto,TRUE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,reinstall,FALSE,OK,both caches exist; install args changed → reinstall; do not use execute caches
+auto,TRUE,TRUE,TRUE,TRUE,TRUE,TRUE,upgrade,reinstall,FALSE,OK,both caches exist; both args changed → reinstall
+install,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,install,install,install,OK,explicit install with both caches; Install cache is however latest so it should use that one
+upgrade,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,explicit upgrade with both caches; must use upgrade cache
+reinstall,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,reinstall,FALSE,OK,explicit reinstall; ignore execute caches (args/build caches may still be reused internally)
+auto,FALSE,FALSE,TRUE,FALSE,FALSE,TRUE,upgrade,install,FALSE,OK,empty canister; ignore upgrade cache; install
+upgrade,FALSE,FALSE,TRUE,FALSE,FALSE,TRUE,upgrade,upgrade,FALSE,ERROR!,cannot upgrade empty canister even if upgrade cache exists
+reinstall,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,reinstall,FALSE,ERROR!,cannot reinstall non-existing canister even if install cache exists
+auto,FALSE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,upgrade,OK,only upgrade cache present; module present
+auto,FALSE,TRUE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,FALSE,OK,upgrade args changed; upgrade cache present; upgrade
+auto,TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,reinstall,FALSE,OK,install args changed; only upgrade cache present → reinstall
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; lastDeployment=install; use latest cache
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; lastDeployment=upgrade; use latest cache

@@ -127,7 +127,7 @@ const parseCsv = (txt: string): Scenario[] => {
 	return rows
 }
 
-const csvPath = path.resolve(__dirname, "../fixtures/deploytable.csv")
+const csvPath = path.resolve(__dirname, "../fixtures/deploy_table.csv")
 const csv = fs.readFileSync(csvPath, "utf8")
 const allScenarios = parseCsv(csv)
 // const scenarios = allScenarios
