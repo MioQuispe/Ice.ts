@@ -320,6 +320,8 @@ function boolOrUndefinedToMode(v: boolean | undefined): string | undefined {
 
 describe.sequential("Pocket-IC process monitor — decision table", () => {
 	const scenarios = readCsv(CSV_PATH)
+	const scenarioPorts = new Map<number, number>()
+	const handledParallel = new Set<number>()
 
 	it.each(
 		scenarios.map((s, idx) => [idx + 1, s, s.lineNumber]) as Array<[
@@ -328,15 +330,323 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 			number,
 		]>,
 	)("scenario #%s (csv line %s): %o", async (idx, s, line) => {
-    const iceDirName = `.ice_test/monitor_${idx}`
-    const host = "0.0.0.0"
-    const port = await getFreePort(host)
-		const ttlSeconds = 9_999_999_999
+		// Helper to run a task with a live lease heartbeat until stopped
+		const startLeasedTask = async (params: {
+			iceDirName: string
+			host: string
+			port: number
+			ttlSeconds: number
+			background: boolean
+			forceArgsMismatch: boolean
+			argsMismatchSelection: "reuse" | "restart"
+			leaseId: string
+		}) => {
+			const {
+				iceDirName,
+				host,
+				port,
+				ttlSeconds,
+				background,
+				forceArgsMismatch,
+				argsMismatchSelection,
+				leaseId,
+			} = params
+			const ctx = makeCtx(iceDirName, background)
+			const lease = await writeLease(iceDirName, leaseId, 15000)
+			let timer: NodeJS.Timeout | undefined
+			// keep the lease alive during the task lifetime
+			timer = setInterval(() => {
+				lease.heartbeat().catch(() => {})
+			}, 1000)
+			timer.unref?.()
+			let monitor: Monitor | undefined
+			const run = async () => {
+				monitor = await makeMonitor(ctx, {
+					host,
+					port,
+					ttlSeconds,
+					forceArgsMismatch,
+					argsMismatchSelection,
+				})
+				await waitTcpReady(host, port, 20_000)
+				return monitor
+			}
+			const stop = async () => {
+				if (timer) clearInterval(timer)
+				await lease.remove()
+			}
+			return { run, stop, leasePath: lease.path }
+		}
 
-		// clean slate
-		try {
-			fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
-		} catch {}
+		// Real concurrent execution for parallel pairs
+		if (s.concurrency === "parallel" && s.parallelRole === "first") {
+			const baseIdx = idx
+			const iceDirName = `.ice_test/monitor_${baseIdx}`
+			const host = "0.0.0.0"
+			let port = scenarioPorts.get(baseIdx)
+			if (!port) {
+				port = await getFreePort(host)
+				scenarioPorts.set(baseIdx, port)
+			}
+			const ttlSeconds = 9_999_999_999
+
+			// clean slate
+			try {
+				fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
+			} catch {}
+
+			// locate the paired second scenario
+			const second = scenarios[idx]!
+			if (!second || second.concurrency !== "parallel" || second.parallelRole !== "second") {
+				throw new Error(`Expected a paired 'second' scenario after line ${line}`)
+			}
+
+			// Arrange any existing server state for the first scenario
+			let existingManual: ChildProcess | undefined
+			if (s.existingServer === "manual") {
+				existingManual = await spawnManualPocketIc(host, port, ttlSeconds)
+			} else if (s.existingServer === "managed") {
+				const ctxExisting = makeCtx(iceDirName, s.existingMode === "background")
+				await makeMonitor(ctxExisting, { host, port, ttlSeconds })
+				await waitTcpReady(host, port, 20_000)
+			}
+
+			// Seed active leases before pair starts
+			if (s.activeLeasesBefore === "1") {
+				await writeLease(iceDirName, `seed_${idx}_1`)
+			} else if (s.activeLeasesBefore === ">0") {
+				await writeLease(iceDirName, `seed_${idx}_1`)
+				await writeLease(iceDirName, `seed_${idx}_2`)
+			}
+
+			const beforeStateFirst = await readState(iceDirName)
+			const beforePidFirst = beforeStateFirst?.pid ?? null
+
+			// Start first task with live lease
+			const firstTask = await startLeasedTask({
+				iceDirName,
+				host,
+				port,
+				ttlSeconds,
+				background: s.modeRun === "background",
+				forceArgsMismatch: s.argsMismatch,
+				argsMismatchSelection: s.argsMismatchSelection,
+				leaseId: `task_${idx}_first`,
+			})
+			await firstTask.run()
+
+			// DURING asserts for first (before second starts)
+			const duringStateFirst = await readState(iceDirName)
+			const duringPidFirst = duringStateFirst?.pid ?? null
+			if (s.expectServerRunningDuring) {
+				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+			} else {
+				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+			}
+			const stateDuringExistsFirst = fs.existsSync(stateFilePath(iceDirName))
+			expect(stateDuringExistsFirst).toBe(s.expectStateJsonPresentDuring)
+			if (s.expectedPidChange !== "n/a") {
+				if (s.expectedPidChange === "same") {
+					expect(duringPidFirst).toBe(beforePidFirst)
+				} else {
+					expect(duringPidFirst && beforePidFirst ? duringPidFirst !== beforePidFirst : true).toBe(true)
+				}
+			}
+			if (s.expectedManagedAfter !== undefined) {
+				expect(Boolean(duringStateFirst?.managed)).toBe(s.expectedManagedAfter)
+			}
+			if (s.expectedModeAfter !== "n/a" && s.expectedModeAfter !== "—") {
+				expect(duringStateFirst?.mode ?? null).toBe(s.expectedModeAfter)
+			}
+			const activeDuringFirst = await countActiveLeases(iceDirName)
+			expect(cmpCountToExpectation(activeDuringFirst, s.expectedLeasesAfter)).toBe(true)
+
+			// Capture second's before after first is up
+			const beforeStateSecond = await readState(iceDirName)
+			const beforePidSecond = beforeStateSecond?.pid ?? null
+
+			// Start second task concurrently
+			const secondTask = await startLeasedTask({
+				iceDirName,
+				host,
+				port,
+				ttlSeconds,
+				background: second.modeRun === "background",
+				forceArgsMismatch: second.argsMismatch,
+				argsMismatchSelection: second.argsMismatchSelection,
+				leaseId: `task_${idx}_second`,
+			})
+			await secondTask.run()
+
+			// DURING asserts for second
+			const duringStateSecond = await readState(iceDirName)
+			const duringPidSecond = duringStateSecond?.pid ?? null
+			if (second.expectServerRunningDuring) {
+				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+			} else {
+				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+			}
+			const stateDuringExistsSecond = fs.existsSync(stateFilePath(iceDirName))
+			expect(stateDuringExistsSecond).toBe(second.expectStateJsonPresentDuring)
+			if (second.expectedPidChange !== "n/a") {
+				if (second.expectedPidChange === "same") {
+					expect(duringPidSecond).toBe(beforePidSecond)
+				} else {
+					expect(duringPidSecond && beforePidSecond ? duringPidSecond !== beforePidSecond : true).toBe(true)
+				}
+			}
+			if (second.expectedManagedAfter !== undefined) {
+				expect(Boolean(duringStateSecond?.managed)).toBe(second.expectedManagedAfter)
+			}
+			if (second.expectedModeAfter !== "n/a" && second.expectedModeAfter !== "—") {
+				expect(duringStateSecond?.mode ?? null).toBe(second.expectedModeAfter)
+			}
+			const activeDuringSecond = await countActiveLeases(iceDirName)
+			expect(cmpCountToExpectation(activeDuringSecond, second.expectedLeasesAfter)).toBe(true)
+
+			// Exit: end both, then assert each row's after-exit expectations
+			await firstTask.stop()
+			await secondTask.stop()
+			await sleep(250)
+			const afterExists = fs.existsSync(stateFilePath(iceDirName))
+			// After both tasks exit, server presence should match both rows' expectations
+			if (s.expectStateJsonPresentAfterExit) {
+				expect(afterExists).toBe(true)
+			} else {
+				expect(afterExists).toBe(false)
+			}
+			if (second.expectStateJsonPresentAfterExit) {
+				expect(afterExists).toBe(true)
+			} else {
+				expect(afterExists).toBe(false)
+			}
+			if (s.expectServerRunningAfterExit) {
+				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+			} else {
+				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+			}
+			if (second.expectServerRunningAfterExit) {
+				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+			} else {
+				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+			}
+
+			await killTree(existingManual)
+			handledParallel.add(baseIdx)
+			return
+		}
+
+		// For parallel-second-only rows, skip if already covered with first
+		if (s.concurrency === "parallel" && s.parallelRole === "second") {
+			const baseIdx = idx - 1
+			if (handledParallel.has(baseIdx)) return
+			const iceDirName = `.ice_test/monitor_${baseIdx}`
+			const host = "0.0.0.0"
+			let port = scenarioPorts.get(baseIdx)
+			if (!port) {
+				port = await getFreePort(host)
+				scenarioPorts.set(baseIdx, port)
+			}
+			const ttlSeconds = 9_999_999_999
+
+			// clean slate only if not already created by paired first
+			if (!fs.existsSync(path.resolve(process.cwd(), iceDirName))) {
+				try {
+					fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
+				} catch {}
+			}
+
+			// Holder to create/manage the existing server per CSV
+			let existingManual: ChildProcess | undefined
+			if (s.existingServer === "manual") {
+				existingManual = await spawnManualPocketIc(host, port, ttlSeconds)
+				await waitTcpReady(host, port, 20_000)
+			} else if (s.existingServer === "managed") {
+				const holderTask = await startLeasedTask({
+					iceDirName,
+					host,
+					port,
+					ttlSeconds,
+					background: s.existingMode === "background",
+					forceArgsMismatch: false,
+					argsMismatchSelection: "reuse",
+					leaseId: `holder_${idx}`,
+				})
+				await holderTask.run()
+				// Seed extra leases if requested
+				if (s.activeLeasesBefore === ">0") {
+					await writeLease(iceDirName, `seed_${idx}_extra1`)
+				}
+				// Run the actual second task now
+				const currentTask = await startLeasedTask({
+					iceDirName,
+					host,
+					port,
+					ttlSeconds,
+					background: s.modeRun === "background",
+					forceArgsMismatch: s.argsMismatch,
+					argsMismatchSelection: s.argsMismatchSelection,
+					leaseId: `task_${idx}`,
+				})
+				if (s.expectedError !== "—") {
+					await expect(currentTask.run()).rejects.toThrow()
+					await currentTask.stop()
+					await holderTask.stop()
+					await killTree(existingManual)
+					return
+				}
+				await currentTask.run()
+				// DURING
+				if (s.expectServerRunningDuring) {
+					await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+				} else {
+					await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+				}
+				const duringState = await readState(iceDirName)
+				if (s.expectedManagedAfter !== undefined) {
+					expect(Boolean(duringState?.managed)).toBe(s.expectedManagedAfter)
+				}
+				if (s.expectedModeAfter !== "n/a" && s.expectedModeAfter !== "—") {
+					expect(duringState?.mode ?? null).toBe(s.expectedModeAfter)
+				}
+				// Exit only the current task; holder keeps server alive
+				await currentTask.stop()
+				await sleep(200)
+				const afterExists = fs.existsSync(stateFilePath(iceDirName))
+				if (s.expectStateJsonPresentAfterExit) {
+					expect(afterExists).toBe(true)
+				} else {
+					expect(afterExists).toBe(false)
+				}
+				if (s.expectServerRunningAfterExit) {
+					await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
+				} else {
+					await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
+				}
+				await holderTask.stop()
+				await killTree(existingManual)
+				return
+			}
+		}
+    const baseIdx =
+     s.concurrency === "parallel" && s.parallelRole === "second"
+      ? idx - 1
+      : idx
+    const iceDirName = `.ice_test/monitor_${baseIdx}`
+    const host = "0.0.0.0"
+    let port = scenarioPorts.get(baseIdx)
+    if (!port) {
+     port = await getFreePort(host)
+     scenarioPorts.set(baseIdx, port)
+    }
+ 		const ttlSeconds = 9_999_999_999
+
+		// clean slate (skip for parallel second to preserve shared state)
+		if (!(s.concurrency === "parallel" && s.parallelRole === "second")) {
+			try {
+				fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
+			} catch {}
+		}
 
 		let existingManual: ChildProcess | undefined
 		let currentMonitor: Monitor | undefined
@@ -344,6 +654,9 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 		let afterState: PocketIcStateFile | undefined
 		const taskLeaseId = `task_${idx}`
 		let taskLease: { heartbeat: () => Promise<void>; remove: () => Promise<void>; path: string } | undefined
+		let bootstrapLease: { heartbeat: () => Promise<void>; remove: () => Promise<void>; path: string } | undefined
+		let keepAlivePath: string | undefined
+		let keepAliveCreated = false
 
 		// Arrange: existing server state
 		if (s.existingServer === "manual") {
@@ -351,9 +664,30 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 			// adoption of manual happens when monitor starts
 		} else if (s.existingServer === "managed") {
 			const ctxExisting = makeCtx(iceDirName, s.existingMode === "background")
-			const m = await makeMonitor(ctxExisting, { host, port, ttlSeconds })
+			await makeMonitor(ctxExisting, {
+				host,
+				port,
+				ttlSeconds,
+			})
 			// keep managed server alive
 			// ensure state file exists for background; foreground may not have state file yet
+			await waitTcpReady(host, port, 20_000)
+			if (s.existingMode === "foreground") {
+				keepAlivePath = path.join(path.dirname(stateFilePath(iceDirName)), ".keepalive")
+				await fsp.writeFile(keepAlivePath, JSON.stringify({ keepAlive: true }), "utf8")
+				keepAliveCreated = true
+			}
+		} else if (s.concurrency === "parallel" && s.parallelRole === "second") {
+			bootstrapLease = await writeLease(iceDirName, `${taskLeaseId}_bootstrap`)
+			await bootstrapLease.heartbeat()
+			const ctxBootstrap = makeCtx(iceDirName, s.modeRun === "background")
+			await makeMonitor(ctxBootstrap, {
+				host,
+				port,
+				ttlSeconds,
+				forceArgsMismatch: false,
+				argsMismatchSelection: "reuse",
+			})
 			await waitTcpReady(host, port, 20_000)
 		}
 
@@ -376,7 +710,13 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 			// minimal heartbeat once
 			await taskLease.heartbeat()
 			// start/coordinate via monitor
-			currentMonitor = await makeMonitor(ctxCurrent, { host, port, ttlSeconds })
+			currentMonitor = await makeMonitor(ctxCurrent, {
+				host,
+				port,
+				ttlSeconds,
+				forceArgsMismatch: s.argsMismatch,
+				argsMismatchSelection: s.argsMismatchSelection,
+			})
 			await waitTcpReady(host, port, 20_000)
 		}
 
@@ -385,6 +725,12 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 			// No further asserts when expecting error
 			// Cleanup
 			await taskLease?.remove()
+			if (bootstrapLease) {
+				await bootstrapLease.remove()
+			}
+			if (keepAliveCreated && keepAlivePath) {
+				await fsp.unlink(keepAlivePath).catch(() => {})
+			}
 			await killTree(existingManual)
 			return
 		}
@@ -424,6 +770,14 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 		// Exit: release this task's lease; foreground semantics may stop the server when leases reach 0 per spec
 		await taskLease?.remove()
 		await sleep(200)
+		if (bootstrapLease) {
+			await bootstrapLease.remove()
+			await sleep(200)
+		}
+		if (keepAliveCreated && keepAlivePath && !s.expectServerRunningAfterExit) {
+			await fsp.unlink(keepAlivePath).catch(() => {})
+			await sleep(200)
+		}
 
 		afterState = await readState(iceDirName)
 		const afterStateExists = fs.existsSync(stateFilePath(iceDirName))
@@ -443,5 +797,3 @@ describe.sequential("Pocket-IC process monitor — decision table", () => {
 		await killTree(existingManual)
 	})
 })
-
-

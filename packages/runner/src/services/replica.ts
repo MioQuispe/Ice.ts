@@ -538,7 +538,7 @@ export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
 				},
 				catch: (e) =>
 					new ReplicaError({
-						message: `replica.start failed: ${fmt(e)}`,
+						message: `replica.start failed: ${String(e)}`,
 					}),
 			}),
 			// On scope release, stop the *original* replica (not the wrapped one),
