@@ -1,259 +1,319 @@
-Pocket-IC Runner/Monitor — Functional Spec (rev)
+Pocket-IC Process Orchestration — Unified Spec (FG + BG via Leases)
 
-1) Scope & goals
-	•	Works on macOS/Linux/Windows using Node core only.
-	•	Supports foreground, background, and manual (user-started) Pocket-IC.
-	•	Prevents duplicate servers and monitors; tolerates concurrent tasks from multiple terminals/editors/CI.
-	•	Uses file-based admin lock + per-task leases (with heartbeats) for safe coordination.
-	•	Single state file (state.json) represents both managed and manual servers.
-	•	Args mismatch is handled via a single flag: reuse or restart. (No interactive flow for now.)
+This document defines a complete, self-contained design for starting, adopting, monitoring, and stopping a local Pocket-IC replica across foreground (FG) and background (BG) usage. It assumes a single local “network” instance (single bind/port pair) managed by us, and supports manual instances started by users that we must not touch.
 
-2) Terminology
-	•	Server: the pocket-ic process.
-	•	Monitor: Node wrapper that spawns/adopts server and manages locks/leases/state.
-	•	Managed server: started by our monitor; we control lifecycle.
-	•	Manual server: user started it; we never stop it.
-	•	Lease: a per-task file indicating “this task is using the server”.
-	•	Config: normalized JSON of everything that affects server semantics (CLI args + instance create payload).
+The core idea is simple: there is at most one monitor process per managed server, and leases determine the server’s lifetime. FG and BG are just different kinds of leases; the behavior otherwise is identical.
 
-3) On-disk layout (no restructure; add only under .ice/pocketic-server/)
+⸻
+	1.	Components & Roles
 
-Existing (unchanged elsewhere):
+	•	Runner (task launcher): the CLI/integration that needs a replica. It ensures a monitor/server exists (adopt or spawn), creates a lease for the duration of the task, and cleans the lease up when done.
+	•	Monitor: a small companion process that owns state.json, watches leases, and controls the Pocket-IC server process. It stops the server when (and only when) the last lease disappears.
+	•	Pocket-IC server: the third-party binary (pocket-ic) we don’t modify.
+	•	Manual server: a Pocket-IC process started outside our system (no monitor, no state). We never modify/stop it.
 
-.ice/cache/...
-.ice/canisters/<name>/{did,wasm,...}
-.ice/logs/instrumentation.json
-.ice/replica-state/{topology.json, registry.proto, ...}
-.ice/canister_ids.json
-.ice/pocket-ic.log
+⸻
+	2.	Directory Layout (current tree respected; all new files live under pocketic-server/)
 
-Additions (all under .ice/pocketic-server/):
+.ice/
+  pocketic-server/
+    state.json          # written & owned by the monitor (managed-only)
+    leases/             # per-task lease files (created by runners)
+      <uuid>.json
+    spawn.lock          # best-effort lock to serialize spawn/adopt
+  # (existing paths unchanged)
+  pocket-ic.log
+  replica-state/...
+  canisters/...
+  canister_ids.json
+  logs/instrumentation.json
+  cache/...
 
-.ice/pocketic-server/
-  state.json                 // authoritative state (managed OR manual)
-  state.json.tmp             // for atomic writes
-  locks/
-    admin.lock               // admin lock (exclusive ops)
-  leases/
-    <leaseId>.json           // per-task lease files (+ heartbeat)
-  .pid                       // monitor PID (present while FG monitor is alive; optional in BG)
-  .server.pid                // server PID (best-effort; mirrors state.json.pid)
+⸻
+	3.	File Formats
 
-Atomic write rule: write *.tmp, fsync, rename to final, then fsync directory (where supported).
+3.1 state.json (authoritative, monitor-owned)
 
-4) state.json schema (single file for both managed + manual)
+Written by the monitor on spawn or adopt. Deleted by the monitor when the last lease goes away and the server is stopped.
 
 {
-  "schemaVersion": 1,
-  "managed": true,                  // true if we spawned it; false if manual
-  "mode": "foreground" | "background",  // only meaningful when managed=true
-  "binPath": "<abs path to pocket-ic>" | null,
-  "version": "10.0.0" | null,
-  "pid": <server_pid or null>,      // null if unknown
-  "monitorPid": <monitor_pid or null>,
-  "port": <number>,
-  "bind": "<ip or host>",
-  "startedAt": <ms epoch>,
-  "args": [ /* raw argv passed to pocket-ic, if known */ ] | null,
-  "config": { /* normalized config object; see §5 */ } | null,
-  "configHash": "<sha256 over normalized config>" | null,
-  "instanceRoot": "<abs path to .ice/pocketic-server/>"
+  "managed": true,
+  "monitorPid": 12345,
+  "serverPid": 23456,
+  "binPath": "/abs/path/to/pocket-ic",
+  "version": "10.0.0",
+  "args": ["-i","0.0.0.0","-p","8081","--ttl","9999999999"],
+  "config": { /* full resolved replica config incl. subnets, etc. */ },
+  "configHash": "sha256:...",
+  "bind": "0.0.0.0",
+  "port": 8081,
+  "startedAt": 1730000000000,
+  "instanceRoot": "/abs/path/to/.ice/replica-state"
 }
 
-	•	Managed=true: we must populate binPath, pid, args, config, configHash, mode.
-	•	Managed=false (manual): fill what we can (port/bind, maybe pid if we can detect); args/config may be null.
+Invariant: If state.json exists, it describes a managed instance and must reflect live monitor and server PIDs (or we are in a recovery/adopt path).
 
-Foreground note: we also write state.json in FG. On a clean FG shutdown, we remove state.json only if no other leases remain (see §8).
+3.2 Lease files (runner-created, one per task)
 
-5) Normalized config (for mismatch detection)
-
-Normalized config is the canonical JSON we compare (stringified with sorted keys, absolute paths only):
+Stored under leases/<uuid>.json. The monitor never writes leases; it only reads and reaps them.
 
 {
-  "pocketIcCli": {
-    "bind": "0.0.0.0",
-    "port": 8081,
-    "ttl": 9999999999
-  },
-  "instance": {
-    "stateDir": "<absolute path to .ice/replica-state>",
-    "initialTime": { "AutoProgress": { "artificialDelayMs": 0 } },
-    "topology": {
-      "nns": {...}, "ii": {...}, "sns": {...}, "bitcoin": {...}, "application": [...]
-    },
-    "incompleteState": true | false,
-    "nonmainnet": true | false,
-    "verifiedApplication": 0 | 1 | <int>
-  }
+  "id": "uuid-4",
+  "ownerPid": 56789,
+  "mode": "foreground" | "background",
+  "createdAt": 1730000000000,
+  "expiresAt": null | 1730003600000,  // BG: null (persistent). FG: usually null; liveness is ownerPid.
+  "policy": "reuse" | "restart",       // runner’s args-mismatch policy for this task (for audit)
+  "configHash": "sha256:..."           // desired config hash (optional, for audits/debug)
 }
 
-	•	Put this object in state.json.config when managed=true.
-	•	Also compute configHash = SHA256 over the normalized JSON string (optional but recommended).
-	•	Test matrix column: args_mismatch_selection ∈ {reuse|restart} controls the decision when mismatch is detected.
+3.3 spawn.lock (best-effort serialization)
 
-6) Admin lock (exclusive operations)
+A single file created exclusively by the first runner entering spawn/adopt. Contains { "pid": <runnerPid>, "createdAt": <ms> }. Runners that can’t acquire it immediately should retry briefly. If the lock holder process is dead, the next runner can safely remove the stale lock and proceed.
 
-File: .ice/pocketic-server/locks/admin.lock
-	•	Acquire by creating the file with flag: 'wx'. Contents:
+⸻
+	4.	Global Invariants
 
-{ "pid": <process.pid>, "acquiredAt": <ms epoch> }
+	•	Single monitor per managed server (per bind/port).
+	•	Server lifetime = number of active leases > 0.
+	•	Monitor owns state.json (runners never write or delete it).
+	•	Runners only create/remove their own lease.
+	•	If a server is found without a monitor/state.json, it is manual; do not touch or adopt (unless there is a valid state.json recorded from a previous managed session and the server PID matches; see §6.2).
 
+⸻
+	5.	Modes and Policies
 
-	•	Release by unlinking the file.
-	•	If it exists:
-	•	Read PID; if not alive and modified time older than staleAdminMs (default 30s), we can steal the lock (unlink then acquire).
-	•	All destructive or mutating ops require the admin lock:
-	•	Spawn server, write/replace state.json
-	•	Stop server, restart server
-	•	Crash/stale cleanup of state.json, .server.pid, .pid
-	•	Lease sweeping (you may also allow sweeping without the lock, but final removal of state requires the lock)
+	•	FG task ⇒ creates a foreground lease. Ends when the task ends (lease file removed by runner; monitor reaps if the runner crashes).
+	•	BG server ⇒ creates a background lease (persistent; no expiresAt). Stays until explicitly removed by an explicit “stop” command.
+	•	Args mismatch policy (decided by the runner, not the monitor):
+	•	reuse — use the existing managed server regardless of arg/config differences.
+	•	restart — fail-fast if the server is in use by any lease not owned by the requester; otherwise replace with a new managed server (details in §8).
+	•	Manual server — never stopped or modified by us. We do not spawn a monitor or create state.json or leases for manual servers.
 
-7) Leases (shared, per-task)
+⸻
+	6.	Lifecycle Flows
 
-Dir: .ice/pocketic-server/leases/
-	•	On task start, create leases/<leaseId>.json:
+6.1 Runner: “I need a replica” (FG or BG)
 
-{
-  "pid": <client_pid>,
-  "createdAt": <ms>,
-  "heartbeatAt": <ms>,
-  "ttlMs": <int>        // default 5000 (see below)
-}
+Input: desired { binPath, args, config, bind, port }, policy ∈ {reuse|restart}, mode ∈ {foreground|background}.
 
+Pseudocode:
 
-	•	Heartbeat: update heartbeatAt at ~1–2s interval during long operations.
-	•	A lease is active if pid is alive and (now - heartbeatAt) <= ttlMs.
-	•	Defaults: leaseHeartbeatMs = 1500, leaseTtlMs = 5000.
-	•	On normal task exit: delete its lease (best effort). If not, it will expire.
-	•	FG auto-stop condition (managed only): When the last lease goes inactive/removed, FG instance may shut down (see §8).
-	•	BG persistence: Background instances do not auto-stop just because leases drop to zero (they stay up until an explicit restart/stop is requested).
+BEGIN RUNNER_SESSION
+1) Attempt to acquire spawn.lock (exclusive open 'wx').
+   - If taken, retry briefly.
+   - If holder pid is dead, remove stale lock and retry.
 
-Heartbeats are made only by clients holding leases. Background mode is fine: if no tasks are running, there are simply no active leases; the server remains up until an operation needs to stop/restart it.
+2) Determine current state:
+   a) If state.json exists:
+        - Read state.
+        - If monitorPid and serverPid are alive:
+             -> Managed instance present.
+             -> Compare desired configHash to state.configHash.
+                * If policy = restart and hashes differ:
+                     - Inspect active leases:
+                       - If any lease exists that is NOT owned by this runner:
+                           -> return error "in-use" (fail-fast). Do nothing.
+                       - Else (no leases, or only runner-owned BG lease):
+                           -> If runner owns any BG lease(s), remove them now.
+                           -> Release spawn.lock.
+                           -> Wait until state.json disappears (monitor stops server when leases drop to 0).
+                           -> Re-acquire spawn.lock and go to step 3 (spawn fresh).
+                * Else (policy = reuse OR hashes equal):
+                     -> proceed to step 4 (leasing).
+        - If monitorPid dead but serverPid alive:
+             -> Stale managed state (monitor crash). Re-adopt is allowed.
+             -> Spawn a new monitor in adopt mode (attach to serverPid).
+             -> Proceed to step 4.
+        - If serverPid dead (or both dead):
+             -> Remove stale state.json (safe).
+             -> Proceed to step 3 (spawn).
 
-8) Lifecycle by mode
+   b) If no state.json exists:
+        - Check if a server is listening on (bind, port).
+           * If yes => manual server. Do not spawn monitor. Do not write state.json.
+             - Mark context="manual". Do NOT create leases. Release spawn.lock and go to step 5.
+           * If no => proceed to step 3 (spawn).
 
-Foreground (managed=true, mode="foreground")
-	1.	Acquire admin lock.
-	2.	Discovery (§9).
-	3.	If nothing running → spawn the server; write state.json.
-	4.	If a managed server exists → compare configs:
-	•	If mismatch:
-	•	Apply args_mismatch_selection:
-	•	reuse: keep running server as-is.
-	•	restart: allowed only if active lease count == 0. Otherwise reject and report “in use”.
-	•	If no mismatch: reuse.
-	5.	If a manual server exists: mark managed=false in state.json and reuse only (we never restart/stop manual).
-	6.	Release admin lock.
-	7.	Create a lease for the current task.
-	8.	On task end:
-	•	Remove the lease.
-	•	If managed=true and no active leases remain, perform a clean FG stop (see §10) and then remove state.json.
-	•	If any lease remains, do not stop.
+3) Spawn managed server:
+   - Start monitor in spawn mode with desired args/config.
+   - Monitor launches pocket-ic, writes state.json, and begins its loop.
 
-Background (managed=true, mode="background")
-	•	Same as FG for startup decisions (including mismatch), but the monitor exits after initial coordination.
-	•	The server stays up regardless of leases dropping to zero.
-	•	Stop/restart occurs only when a later operation (with admin lock) requests it, and only if active leases == 0.
+4) Create lease (managed only):
+   - Create leases/<uuid>.json with ownerPid=this runner's pid, mode, policy, etc.
 
-Manual (managed=false)
-	•	We never spawn/stop.
-	•	On discovery, write/update state.json with managed=false (fill what we can).
-	•	Tasks still use leases for coordination among themselves, but lifecycle is not ours to control.
-	•	If args_mismatch_selection=restart, we reject (cannot restart manual).
+5) Release spawn.lock.
 
-9) Discovery & adoption (single-file state)
-	1.	If .ice/pocketic-server/state.json exists:
-	•	Parse it; validate recorded PIDs.
-	•	If managed=true and both pid(server) and monitorPid (if present) are dead → under admin lock, cleanup stale files (state.json, .server.pid, .pid) and treat as “nothing running”.
-	•	If managed=false (manual) and the port still answers like Pocket-IC → keep state.json as is and treat as manual.
-	2.	If state.json absent:
-	•	Probe the configured port for a Pocket-IC response.
-	•	If it responds: create state.json with managed=false (manual adoption).
-	•	If not: treat as “nothing running”.
+6) Run the task against the replica.
 
-10) Stop / Restart (managed only)
+7) On task completion (or explicit stop):
+   - If managed: delete this lease file.
+   - Exit.
+END RUNNER_SESSION
 
-Only when active leases == 0.
+Note on manual servers: For a manual server, runners must not create leases (there is no monitor to observe them). They just connect and run. If args mismatch exists and policy=restart, the runner must fail fast with a clear error (“Manual server present on port; cannot restart. Stop it or change configuration.”).
 
-	•	Stop:
-	1.	Acquire admin lock.
-	2.	Verify active leases == 0; if not, reject with “in use”.
-	3.	Send standard graceful termination (e.g., server’s own HTTP stop if available; else process.kill(pid, 'SIGTERM')).
-	4.	Wait for exit in a bounded loop.
-	5.	On exit, remove state.json, .server.pid, .pid.
-	6.	Release admin lock.
-	•	Restart:
-	1.	Ensure active leases == 0. If not, reject.
-	2.	Perform Stop → Start with the new config and update state.json.
+6.2 Monitor: startup & loop
 
-11) Concurrency rules
-	•	Every task must hold a lease while it interacts with the server.
-	•	Admin operations (spawn/stop/restart/cleanup) require the admin lock.
-	•	A FG task must not stop a server if any other lease is still active.
-	•	BG instances persist; they are only stopped when a restart/stop is requested and leases are zero.
+The monitor has two entry modes:
+	•	Spawn mode (fresh managed server)
+	1.	Launch Pocket-IC with provided args/config.
+	2.	Record serverPid and full metadata to state.json.
+	3.	Enter the loop.
+	•	Adopt mode (recover stale managed state)
+	1.	Validate serverPid from state.json is alive.
+	2.	Write/refresh state.json with this monitorPid (leave other fields intact).
+	3.	Enter the loop.
 
-12) Cleanup & recovery (performed on any task start)
+Monitor loop pseudocode:
 
-Under the admin lock:
-	1.	Sweep leases/: remove those whose process is dead or heartbeatAt expired.
-	2.	If state.json exists but the recorded pid is dead:
-	•	If managed=true: remove state.json, .server.pid, .pid (stale crash).
-	•	If managed=false: leave as-is (manual; lifecycle not ours).
-	3.	Release admin lock.
+WHILE true:
+  - If serverPid is not alive:
+       -> Remove state.json (best effort).
+       -> Exit (nonzero exit ok; tasks will fail and re-init).
 
-13) Args mismatch logic (and test matrix column)
-	•	Normalized config (§5) is compared to state.json.config if managed=true.
-	•	If mismatch:
-	•	args_mismatch_selection=reuse → keep the current server as-is.
-	•	args_mismatch_selection=restart →
-	•	If managed=false (manual) → reject (“cannot restart manual”).
-	•	If managed=true and active leases == 0 → restart with new config.
-	•	If managed=true and active leases > 0 → reject with “in use”.
-	•	If no mismatch: reuse.
+  - Scan leases dir:
+       -> For each lease file:
+            * If ownerPid is not alive => delete that lease (reap stale).
+       -> Count remaining leases.
 
-For your CSV: include a column args_mismatch_selection with values reuse or restart. Expected outcomes should assert:
-	•	Whether a spawn occurs or not,
-	•	Whether a stop/restart occurs or is rejected,
-	•	Final managed value, server PID continuity (same/different), and lease counts.
+  - If lease count == 0:
+       -> Gracefully stop the server (official mechanism if available, else TERM).
+       -> Wait until server exits.
+       -> Remove state.json.
+       -> Exit (0).
 
-14) Defaults
-	•	leaseHeartbeatMs = 1500
-	•	leaseTtlMs = 5000
-	•	staleAdminMs = 30000
-	•	args_mismatch_selection default: reuse (unless explicitly set to restart)
+  - Sleep small interval and repeat.
+
+Ownership: Only the monitor writes/deletes state.json. Runners never modify it. Runners only add/remove leases. The monitor never modifies leases except to reap obviously stale ones (dead ownerPid).
+
+⸻
+	7.	Concurrency Guarantees
+
+	•	Multiple tasks in parallel: each creates its own lease; none can accidentally tear down the server while others are running. The monitor stops the server only when the last lease disappears.
+	•	FG + BG together: BG holds a persistent lease; FG tasks come and go. The server remains until the BG lease is removed (explicit stop).
+	•	Race-free spawn/adopt: spawn.lock ensures only one runner at a time performs the spawn/adopt decision. Others either wait briefly or proceed directly to leasing once the first runner finishes spawning/adopting.
+
+⸻
+	8.	Args / Config Mismatch Behavior
+
+	•	The runner compares desired.configHash vs state.configHash (managed only).
+	•	If policy = reuse: proceed (create a lease, run work).
+	•	If policy = restart and hashes differ:
+	•	Fail-fast non-blocking rule:
+If any active lease exists that is not owned by the requester, immediately return error “in-use”. The runner does not wait for other leases to end and does not modify the server.
+	•	Allowed restart cases:
+	•	No leases: spawn a new managed server immediately.
+	•	Only requester-owned BG lease(s): the runner may delete its own BG lease(s), then wait for state.json to disappear (monitor stops the old server), re-acquire spawn.lock, and spawn a fresh managed server with the new args/config. This waiting is only for the effect of self lease removal, not for others.
+	•	If manual server is present:
+	•	We do not manage/stop it.
+	•	policy = restart ⇒ error (“Manual server present on port; cannot restart.”).
+	•	policy = reuse ⇒ attach and run (no leases).
+
+⸻
+	9.	Edge Cases & Recovery
+
+	•	Runner crashes: its lease is reaped by the monitor (ownerPid not alive).
+	•	Monitor crashes:
+	•	If state.json exists and the server is still alive, the next runner can adopt (using the recorded serverPid).
+	•	If both are gone, the next runner spawns fresh.
+	•	Server crashes while leases exist: the monitor detects serverPid dead and exits after removing state.json. Tasks fail; subsequent runs spawn fresh.
+	•	Stale spawn.lock: if lock holder pid is dead, the next runner removes the lock and proceeds.
+	•	Manual server present: never touched. No monitor, no state.json, no leases. Runners can run against it but cannot orchestrate restart; mismatch with restart yields a clear error.
+
+⸻
+	10.	Health & Validation
+
+	•	Liveness checks: use OS-level PID liveness (cross-platform best effort). For managed instances, state.json PIDs are the source of truth.
+	•	Port binding check: before spawning, runners check if (bind, port) is already occupied; if so and no state.json exists → treat as manual.
+	•	Sanity fields: startedAt, binPath, args, config are captured for audit and reproducibility.
+
+⸻
+	11.	Minimal External Interface (from the runner’s POV)
+
+	•	Start (FG/BG): perform the Runner flow (§6.1) with policy ∈ {reuse|restart} and the desired config. Returns a “session” tied to the lease id (managed) or a manual context (no lease).
+	•	Stop (BG): delete the BG lease. The monitor will stop the server once all other leases (if any) are gone.
+	•	No server control from tasks: tasks never signal or kill the server. They only add/remove leases.
+
+⸻
+	12.	Why this model fixes concurrency tear-downs
+
+	•	Shutdown is not tied to parent processes or terminal lifetimes.
+	•	Only the monitor may stop the server, and it does so strictly when there are zero leases.
+	•	FG and BG are unified by the same lease semantics; their difference is only the lease’s persistence.
+	•	restart is fail-fast when other parties hold leases, preventing accidental disruption of concurrent work.
+
+⸻
+	13.	Pseudocode Summary (one place)
+
+Runner (FG/BG):
+
+startRunner(mode, policy, desiredConfig):
+  acquireSpawnLock()
+  try:
+    if exists(state.json):
+      st = read(state.json)
+      if alive(st.monitorPid) and alive(st.serverPid):
+        if policy == "restart" and hash(desiredConfig) != st.configHash:
+          leases = listActiveLeases()
+          if exists(lease not owned by me):
+            error("in-use")   # fail-fast
+          else:
+            # only my own BG lease(s), or none
+            removeMyBgLeasesIfAny()
+            releaseSpawnLock()
+            waitUntil(!exists(state.json))  # monitor stops server as leases -> 0
+            acquireSpawnLock()
+            spawnManaged(desiredConfig)
+      else if !alive(st.monitorPid) and alive(st.serverPid):
+        spawnMonitorInAdoptMode()
+      else:
+        remove(state.json)
+        spawnManaged(desiredConfig)
+    else:
+      if portOccupied(bind, port):
+        context = "manual"   # no leases for manual
+      else:
+        spawnManaged(desiredConfig)
+
+    if context != "manual":
+      createLease(mode, policy, ownerPid = thisPid)
+  finally:
+    releaseSpawnLock()
+
+  runWorkAgainstReplica()
+
+  if context != "manual":
+    removeLease(ownLeaseId)
+
+Monitor (spawn or adopt):
+
+monitorMain(mode):
+  if mode == "spawn":
+    serverPid = launchPocketIc(args)
+    writeStateJson(monitorPid, serverPid, args, config, ...)
+  else if mode == "adopt":
+    assert alive(serverPid from state.json)
+    rewriteStateJsonWithNewMonitorPid()
+
+  loop:
+    if !alive(serverPid):
+      remove(state.json)
+      exit(1)
+
+    reapStaleLeases()
+    if countActiveLeases() == 0:
+      stopServerGracefully(serverPid)
+      remove(state.json)
+      exit(0)
+
+    sleepShort()
 
 ⸻
 
-Notes that address your questions directly
-	•	Single state file: yes—state.json covers both managed and manual. No separate adoption.json.
-	•	Heartbeats and background: harmless—heartbeats are per-task; background servers persist even when leases drop to zero.
-	•	Only two mismatch options: reuse or restart (no “fail”, no “new port”, no interactive UI in this spec).
-	•	New files live under .ice/pocketic-server/ only (locks, leases, state, pids); no broader restructure now.
-	•	Foreground vs background: FG cleans up the server when its own task finishes and leases are zero; BG never auto-stops.
-
-This is the whole contract the Cursor agent can implement against, and it aligns with your test matrix knobs.
-
-Column descriptions (For the test csv, process_monitor_table.csv, only where clarification helps)
-	•	mode_run — Which mode the current task is requesting: foreground or background.
-	•	existing_server — What already exists on the target port before the task starts:
-	•	none: nothing bound to the port.
-	•	managed: a server previously launched by our monitor (has state/lease tracking).
-	•	manual: a server not launched by us (no state/lease tracking yet).
-	•	existing_mode — The mode of the existing managed server (foreground or background). Use — when there’s no existing or it’s manual.
-	•	active_leases_before — Number of active leases already held by other tasks when the current task begins (e.g., 0, 1, >0).
-	•	args_mismatch — Whether the existing server’s recorded args/config differ from the task’s requested args/config.
-	•	args_mismatch_selection — Policy to apply when args_mismatch=yes:
-	•	reuse: use the existing server unchanged.
-	•	restart: gracefully replace the existing managed server with a new one using the requested args. (Not allowed if existing_server=manual or if leases>0.)
-	•	concurrency — Whether this scenario models a single task or a parallel pair: single or parallel.
-	•	parallel_role — For parallel scenarios: is this the first task (the one that starts earlier) or the second task (arrives while the first is still running)?
-	•	expected_action — What the orchestrator should do:
-	•	spawn: start a new managed server.
-	•	reuse: attach to an existing server and add a lease.
-	•	restart: stop existing managed server (when safe) and start a new one with new args, transferring/maintaining appropriate lease.
-	•	reject-in-use: refuse restart because another lease holds the server.
-	•	adopt-manual: accept a manual server without managing its lifecycle.
-	•	reject-cannot-restart-manual: refuse restart because the server is manual.
-	•	expected_mode_after — Mode the server should be running in during the scenario after the action: foreground, background, or —/n/a when not applicable (e.g., purely manual adoption note).
-	•	expected_pid_change — Whether the underlying process should be the same or different after the action (n/a when no server is present/managed semantics don’t apply).
-	•	expected_leases_after — Expected lease count after the action (e.g., 1, 2, >0).
+This spec keeps the system small and predictable:
+	•	One monitor per managed instance.
+	•	One state file (owned by the monitor).
+	•	One concept (leases) to gate lifetime—for both FG and BG.
+	•	Clear boundaries for manual vs managed scenarios.
+	•	Deterministic behavior under concurrency, with fail-fast restarts to protect in-use servers.
