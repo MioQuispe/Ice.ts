@@ -154,11 +154,13 @@ export const GlobalArgs = type({
 	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
 		(str) => str === "1" || str === "true" || str === "" || str === true,
 	),
+    policy: "'reuse' | 'restart'",
 }) satisfies StandardSchemaV1<Record<string, unknown>>
 export type GlobalArgs = {
 	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
+	policy: "reuse" | "restart"
 }
 
 export const logLevelMap = {
@@ -168,7 +170,7 @@ export const logLevelMap = {
 }
 
 type MakeCliRuntimeArgs = {
-	globalArgs: { network: string; logLevel: string; background: boolean }
+	globalArgs: { network: string; logLevel: string; background: boolean; policy: string }
 	// fix type
 	telemetryExporter?: SpanExporter
 }
@@ -189,21 +191,11 @@ export const makeCliRuntime = ({
 		Layer.provide(configLayer),
 	)
 
-	//     // }, {
-	// 	// 	background: globalArgs.background,
-	// 	// 	ip: "0.0.0.0",
-	// 	// 	port: 8081,
-	// 	// 	ttlSeconds: 9_999_999_999,
-	// 	// }),
-	// ).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
-
-	// const DefaultsLayer = Layer
-	// 	.mergeAll
-	// 	()
 	const ICEConfigLayer = ICEConfigService.Live({
 		network: globalArgs.network,
 		logLevel: globalArgs.logLevel,
 		background: globalArgs.background,
+		policy: globalArgs.policy,
 	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const telemetryExporter = new OTLPTraceExporter()
@@ -224,7 +216,6 @@ export const makeCliRuntime = ({
 	const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
 		Layer.provide(NodeContext.layer),
 	)
-	// const TaskRuntimeLayer = TaskRuntimeLive()
 
 	const TaskRegistryLayer = TaskRegistry.Live.pipe(
 		Layer.provide(KVStorageLayer),
@@ -232,15 +223,7 @@ export const makeCliRuntime = ({
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
 	const DeploymentsLayer = DeploymentsService.Live.pipe(
-		// Layer.provide(NodeContext.layer),
 		Layer.provide(KVStorageLayer),
-		// Layer.provide(
-		// 	// TODO: creates the directory if it doesn't exist
-		// 	// do we need iceDir at all?
-		// 	layerFileSystem(".ice/deployments").pipe(
-		// 		Layer.provide(NodeContext.layer),
-		// 	),
-		// ),
 	)
 
 	const CanisterIdsLayer = CanisterIdsService.Live.pipe(
@@ -248,31 +231,17 @@ export const makeCliRuntime = ({
 		Layer.provide(IceDirLayer),
 	)
 	const cliLayer = Layer.mergeAll(
-		// DefaultConfigLayer,
 		TaskRegistry.Live.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
 		PromptsService.Live,
-		// TaskRuntimeLayer.pipe(
-		// 	Layer.provide(NodeContext.layer),
-		// 	Layer.provide(IceDirLayer),
-		// 	Layer.provide(CanisterIdsLayer),
-		// 	Layer.provide(ICEConfigLayer),
-		// 	Layer.provide(telemetryConfigLayer),
-		// 	Layer.provide(KVStorageLayer),
-		// 	Layer.provide(InFlightLayer),
-		// 	Layer.provide(DeploymentsLayer),
-		// 	Layer.provide(TaskRegistryLayer),
-		// ),
 		TaskRegistryLayer,
 		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
-		// DefaultReplicaService,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		ClackLoggingLive,
-		// clackLogger,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		CanisterIdsLayer,
 		configLayer,
@@ -286,37 +255,6 @@ export const makeCliRuntime = ({
 		// ),
 	)
 	return ManagedRuntime.make(cliLayer)
-
-	// return ManagedRuntime.make(
-	// 	Layer.provideMerge(
-	// 		Layer.mergeAll(
-	// 			TaskRuntimeLayer,
-	// 			TaskRegistry.Live,
-	// 			DefaultReplicaService,
-	// 			DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
-	// 			Moc.Live,
-	// 			Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
-	// 			IceDirLayer,
-	// 		),
-	// 		Layer.mergeAll(
-	// 			Layer.provideMerge(
-	// 				Layer.mergeAll(
-	// 					CanisterIdsService.Live.pipe(
-	// 						Layer.provide(configLayer),
-	// 						Layer.provide(NodeContext.layer),
-	// 					),
-	// 					KVStorageLayer,
-	// 					NodeContext.layer,
-	// 					ICEConfigLayer,
-	// 					telemetryConfigLayer,
-	// 					telemetryLayer,
-	// 					// ParentTaskCtxLayer
-	// 				),
-	// 				Layer.mergeAll(IceDirLayer, InFlightLayer, configLayer),
-	// 			),
-	// 		),
-	// 	),
-	// )
 }
 
 function moduleHashToHexString(moduleHash: [] | [number[]]): string {
@@ -336,7 +274,7 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 		firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
 	const parsed = mri(globalSlice, {
 		boolean: ["background"],
-		string: ["logLevel", "network"],
+		string: ["logLevel", "network", "policy"],
 		default: { background: false },
 	}) as Record<string, unknown>
 	const rawLogLevel = String(parsed["logLevel"] ?? "info").toLowerCase()
@@ -346,7 +284,9 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 	const network = String(parsed["network"] ?? "local")
 	const background =
 		Boolean(parsed["background"]) || parsed["background"] === ""
-	return { network, logLevel, background }
+	const rawPolicy = String(parsed["policy"]).toLowerCase()
+	const policy = ["reuse", "restart"].includes(rawPolicy) ? rawPolicy as "reuse" | "restart" : "reuse"
+	return { network, logLevel, background, policy }
 }
 
 const globalArgs = {
@@ -487,11 +427,13 @@ const deployRun = async ({
 	network,
 	logLevel,
 	background,
+	policy,
 	cliTaskArgs,
 }: {
 	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
+    policy: "reuse" | "restart"
 	cliTaskArgs: {
 		positionalArgs: string[]
 		namedArgs: Record<string, string>
@@ -503,6 +445,7 @@ const deployRun = async ({
 		network,
 		logLevel,
 		background,
+		policy,
 	}
 	const telemetryExporter = new InMemorySpanExporter()
 	// TODO: convert to task
@@ -695,7 +638,7 @@ const canistersCreateCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("create")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -732,6 +675,7 @@ const canistersCreateCommand = defineCommand({
 				network,
 				logLevel,
 				background,
+				policy,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -767,7 +711,7 @@ const canistersBuildCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("build")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -803,6 +747,7 @@ const canistersBuildCommand = defineCommand({
 				network,
 				logLevel,
 				background,
+				policy,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -838,7 +783,7 @@ const canistersBindingsCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("bindings")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -877,6 +822,7 @@ const canistersBindingsCommand = defineCommand({
 				network,
 				logLevel,
 				background,
+				policy,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -912,7 +858,7 @@ const canistersInstallCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("install")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -947,6 +893,7 @@ const canistersInstallCommand = defineCommand({
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
+                policy,
 				network,
 				logLevel,
 				background,
@@ -985,7 +932,7 @@ const canistersStopCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("stop")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1050,6 +997,7 @@ const canistersStopCommand = defineCommand({
 				network,
 				logLevel,
 				background,
+				policy,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -1092,7 +1040,7 @@ const canistersStatusCommand = defineCommand({
 		// TODO: support canister name or ID
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("status")
-			const { network, logLevel, background } = globalArgs
+			const { network, logLevel, background, policy } = globalArgs
 
 			const program = Effect.gen(function* () {
 				const canisterIdsService = yield* CanisterIdsService
@@ -1178,6 +1126,7 @@ ${color.underline(right.canisterName)}
 
 			await makeCliRuntime({
 				globalArgs: {
+					policy,
 					network,
 					logLevel,
 					background,
@@ -1220,9 +1169,10 @@ const canistersRemoveCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("remove")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
+                policy,
 				network,
 				logLevel,
 				background,
@@ -1288,7 +1238,7 @@ const canistersDeployCommand = defineCommand({
 	},
 	run: async ({ args, rawArgs }) => {
 		const globalArgs = getGlobalArgs("deploy")
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1304,6 +1254,7 @@ const canistersDeployCommand = defineCommand({
 			network,
 			logLevel,
 			background,
+			policy,
 			cliTaskArgs,
 		})
 	},
@@ -1321,7 +1272,7 @@ const canisterCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("canister")
-			const { network, logLevel, background } = globalArgs
+			const { network, logLevel, background, policy } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1402,6 +1353,7 @@ const canisterCommand = defineCommand({
 
 			await makeCliRuntime({
 				globalArgs: {
+                    policy,
 					network,
 					logLevel,
 					background,
@@ -1456,7 +1408,7 @@ const taskCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("task")
-			const { network, logLevel, background } = globalArgs
+			const { network, logLevel, background, policy } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1509,6 +1461,7 @@ const taskCommand = defineCommand({
 
 			await makeCliRuntime({
 				globalArgs: {
+					policy,
 					network,
 					logLevel,
 					background,
@@ -1577,14 +1530,14 @@ const main = defineCommand({
 		)
 		const positionalArgs = parsedArgs._
 		const mode = namedArgs["mode"] as string | undefined
-		const { network, logLevel, background } = globalArgs
+		const { network, logLevel, background, policy } = globalArgs
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
 		}
 
 		if (args._.length === 0) {
-			await deployRun({ network, logLevel, background, cliTaskArgs })
+			await deployRun({ network, logLevel, background, policy, cliTaskArgs })
 			// await deployRun(globalArgs)
 		}
 	},

@@ -3,7 +3,7 @@ import path from "node:path"
 import { describe, it, expect, afterAll } from "vitest"
 import { Effect, Layer, LogLevel, ManagedRuntime } from "effect"
 // Reuse same env helper as other integration tests
-import { makeTestEnv, makeTestEnvEffect } from "./setup.js"
+import { makeTestEnvEffect } from "./setup.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
 import { Option } from "effect"
 import {
@@ -17,7 +17,6 @@ import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { layerMemory } from "@effect/platform/KeyValueStore"
 import { makeTaskLayer } from "../../src/services/taskRuntime.js"
 import { TaskRuntime } from "../../src/services/taskRuntime.js"
-import { TaskRunnerShape } from "./setup.js"
 import { TaskParamsToArgs, TaskRuntimeError } from "../../src/tasks/lib.js"
 import { runTask } from "../../src/tasks/run.js"
 import { runTasks } from "../../src/tasks/run.js"
@@ -136,6 +135,7 @@ const globalArgs = {
 	network: "local",
 	logLevel: "debug",
 	background: false,
+	policy: "restart",
 } as const
 
 // const scenarios = [parseCsv(csv)[24]!]

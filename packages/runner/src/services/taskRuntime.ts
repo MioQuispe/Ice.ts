@@ -55,7 +55,6 @@ import { configLayer } from "./config.js"
 import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
 import { PICReplica } from "./pic/pic.js"
-import { effectifyReplica } from "./replica.js"
 import { GlobalArgs } from "../cli/index.js"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
@@ -126,79 +125,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 		>
 	}
 >() {}
-
-// const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
-
-// const DefaultsLayer = Layer
-// 	.mergeAll
-// 	()
-const ICEConfigLayer = ICEConfigService.Live({
-	network: "local",
-	logLevel: "debug",
-	background: false,
-}).pipe(Layer.provide(NodeContext.layer))
-
-const telemetryConfig = {
-	resource: { serviceName: "ice" },
-	spanProcessor: new BatchSpanProcessor(new OTLPTraceExporter()),
-	shutdownTimeout: undefined,
-	metricReader: undefined,
-	logRecordProcessor: undefined,
-}
-const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
-const telemetryLayer = makeTelemetryLayer(telemetryConfig)
-
-// TODO: create the directory if it doesn't exist
-// do we need iceDir at all? maybe yes, because we want a finalizer?
-const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
-	Layer.provide(NodeContext.layer),
-)
-
-const TaskRegistryLayer = TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer))
-
-const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
-	Layer.provide(NodeContext.layer),
-	Layer.provide(configLayer),
-)
-
-const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
-const DeploymentsLayer = DeploymentsService.Live.pipe(
-	// Layer.provide(NodeContext.layer),
-	Layer.provide(KVStorageLayer),
-	// Layer.provide(
-	// 	// TODO: creates the directory if it doesn't exist
-	// 	// do we need iceDir at all?
-	// 	layerFileSystem(".ice/deployments").pipe(
-	// 		Layer.provide(NodeContext.layer),
-	// 	),
-	// ),
-)
-
-const CanisterIdsLayer = CanisterIdsService.Live.pipe(
-	Layer.provide(NodeContext.layer),
-	Layer.provide(IceDirLayer),
-)
-// export const taskLayer = Layer.mergeAll(
-// 	telemetryLayer,
-// 	NodeContext.layer,
-// 	TaskRegistryLayer,
-// 	DefaultReplicaService,
-// 	DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
-// 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-// 	CanisterIdsLayer,
-// 	// DevTools.layerWebSocket().pipe(
-// 	// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
-// 	// ),
-// 	ICEConfigLayer,
-// 	telemetryConfigLayer,
-// 	InFlightLayer,
-// 	IceDirLayer,
-// 	KVStorageLayer,
-// 	configLayer,
-// 	NodeContext.layer,
-// 	DeploymentsLayer,
-// 	Logger.minimumLogLevel(logLevelMap.debug),
-// )
 
 // TODO: Layer memoize instead?
 export const makeTaskLayer = (globalArgs: GlobalArgs) =>
@@ -271,11 +197,12 @@ export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 
 		const DefaultReplicaService = Option.isNone(existingDefaultReplica)
 			? layerFromAsyncReplica(
-					new PICReplica(ctx, {
+					new PICReplica({
 						host: "0.0.0.0",
 						port: 8081,
 						ttlSeconds: 9_999_999_999,
 					}),
+					ctx,
 				)
 			: Layer.succeed(DefaultReplica, existingDefaultReplica.value)
 

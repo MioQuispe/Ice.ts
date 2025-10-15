@@ -10,7 +10,6 @@ import type {
 	CanisterInstallError,
 	CanisterStatusError,
 	CanisterStopError,
-	ReplicaService,
 	ReplicaServiceClass,
 } from "../services/replica.js"
 import {
@@ -63,46 +62,12 @@ export type ICEConfig = {
 	}
 	networks: {
 		[key: string]: {
-			replica: ReplicaService
-		}
-	}
-}
-
-export type ICEConfigPromise = {
-	users: {
-		[key: string]: ICEUser
-	}
-	roles: {
-		[key: string]: string
-	}
-	networks: {
-		[key: string]: {
 			replica: ReplicaServiceClass
 		}
 	}
 }
 
 export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
-
-export type InitializedICEConfig = {
-	users: {
-		[key: string]: ICEUser
-	}
-	roles: {
-		deployer: ICEUser
-		minter: ICEUser
-		controller: ICEUser
-		treasury: ICEUser
-		[key: string]: ICEUser
-	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaService
-			host: string
-			port: number
-		}
-	}
-}
 
 export interface TaskParam<T = unknown> {
 	type: StandardSchemaV1<T> // TODO: ship built in types like "string" | "number" etc.
@@ -229,13 +194,14 @@ export type ICEConfigContext = {
 	network: string
 	iceDirPath: string
 	background: boolean
+	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 }
 // TODO: fix
 export type ICEConfigFile = {
 	default:
-		| Partial<ICEConfigPromise>
-		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfigPromise>> | Partial<ICEConfigPromise>)
+		| Partial<ICEConfig>
+		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
 } & {
 	[key: string]: TaskTreeNode
 }

@@ -9,8 +9,11 @@ import {
 	topologicalSortTasks,
 } from "../../src/tasks/lib.js"
 import { CachedTask, ICEConfig, Task, TaskTree } from "../../src/types/types.js"
-import { makeCachedTask, makeTaskRunner, makeTestEnv } from "./setup.js"
+import { makeCachedTask, makeTestEnvEffect } from "./setup.js"
 import { runTask, runTasks } from "../../src/tasks/run.js"
+import { makeTaskLayer, TaskRuntime } from "../../src/services/taskRuntime.js"
+import { KeyValueStore } from "@effect/platform"
+import { DeploymentsService } from "../../src/services/deployments.js"
 
 describe("executeTasks", () => {
 	// const testLayer = (() => {
@@ -35,27 +38,57 @@ describe("executeTasks", () => {
 		const a = task().make()
 		const b = task().make()
 		const c = task().deps({ one: a, two: b }).make()
-		const tasks = [a, b, c]
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-1")
+		const tasks = [a, b, c] satisfies Task[]
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-1",
+		)
 		const taskTree = {
 			a,
 			b,
 			c,
-		}
+		} satisfies TaskTree
 		let progress: Array<string> = []
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask, runTasks } = yield* makeTaskRunner(taskTree)
-
-				yield* runTasks(
-					tasks.map((t) => ({ ...t, args: {} })),
-					(update) => {
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				for (const task of tasks) {
+					yield* runTask(task, {}, (update) => {
 						if (update.status === "completed") {
 							progress.push(update.taskPath)
 						}
-					},
-				)
-			}),
+					}).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.provide(taskLayer),
+					)
+				}
+			}).pipe(Effect.scoped),
 		)
 		// C must be last, order of A / B does not matter
 		console.log(progress)
@@ -72,27 +105,60 @@ describe("executeTasks", () => {
 				"first",
 			),
 		}
-		Effect.gen(function* () {
-			// 1st run ⇒ miss + store
-			const cached = taskTree["cached"] as CachedTask
-			const first = yield* runTask(taskTree["cached"], {})
-			// const taskEffects = yield* makeTaskEffects(tasks)
-			// const first = yield* Effect.all(taskEffects, {
-			// 	concurrency: "unbounded",
-			// })
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-cache",
+		)
+		await runtime.runPromise(
+			Effect.gen(function* () {
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const cached = taskTree["cached"] as CachedTask
+				const first = yield* runTask(taskTree["cached"], {}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 
-			expect(first).toBe("first")
+				expect(first).toBe("first")
 
-			// change the effect to prove it is *not* evaluated the 2nd time
-			// cached.effect = Effect.dieMessage("should not evaluate")
-			cached.effect = async () => {
-				throw new Error("should not evaluate")
-			}
+				// change the effect to prove it is *not* evaluated the 2nd time
+				cached.effect = async () => {
+					throw new Error("should not evaluate")
+				}
 
-			// 2nd run ⇒ hit, same value
-			const second = yield* runTask(taskTree["cached"], {})
-			expect(second).toBe("first")
-		})
+				// 2nd run ⇒ hit, same value
+				const second = yield* runTask(taskTree["cached"], {}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
+				expect(second).toBe("first")
+			}).pipe(Effect.scoped),
+		)
 	})
 
 	it("obeys the global concurrency limit", async () => {
@@ -111,7 +177,6 @@ describe("executeTasks", () => {
 				}).pipe(Effect.runPromise),
 		})
 		const tasks = ["t1", "t2", "t3", "t4", "t5"].map(slow)
-		// // (no replica needed)
 		const taskTree = {
 			t1: tasks[0]!,
 			t2: tasks[1]!,
@@ -119,26 +184,53 @@ describe("executeTasks", () => {
 			t4: tasks[3]!,
 			t5: tasks[4]!,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-2")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-2",
+		)
 		const max = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask, runTasks } = yield* makeTaskRunner(taskTree)
-				yield* runTasks(tasks.map((t) => ({ ...t, args: {} })), undefined, 2)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				yield* runTasks(tasks.map((t) => ({ ...t, args: {} }))).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+					Effect.withConcurrency(2),
+				)
 				const max = yield* Ref.get(maxSeen)
 				return max
-			}),
+			}).pipe(Effect.scoped),
 		)
 		expect(max).toBeLessThanOrEqual(2) // never more than 2 running
 	})
 
 	it("handles deep dependency chains correctly", async () => {
 		const executionOrder: Array<string> = []
-
-		// Create a chain: root -> level1 -> level2 -> level3
-		// const level3 = makeTask("level3", "L3")
-		// const level2 = makeTask("level2", "L2")
-		// const level1 = makeTask("level1", "L1")
-		// const root = makeTask("root", "ROOT")
 
 		const level3 = task("level3")
 			.run(async () => "L3")
@@ -155,11 +247,6 @@ describe("executeTasks", () => {
 			.deps({ prev: level1 })
 			.run(async () => "ROOT")
 			.make()
-
-		// // TODO: use builder instead
-		// level2.dependencies = { prev: level3 }
-		// level1.dependencies = { prev: level2 }
-		// root.dependencies = { prev: level1 }
 
 		// Track execution order
 		const trackingTasks = [level3, level2, level1, root].map<Task>(
@@ -180,15 +267,47 @@ describe("executeTasks", () => {
 			root: trackingTasks[3]!,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-3")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-3",
+		)
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					trackingTasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Should execute in order: level3, level2, level1, root
@@ -232,16 +351,48 @@ describe("executeTasks", () => {
 			bottom: trackingTasks[3]!,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-4")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-4",
+		)
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					trackingTasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Top should be first, bottom should be last
@@ -272,21 +423,50 @@ describe("executeTasks", () => {
 		}
 		const tasks = [failingTask, dependentTask]
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-5")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-5",
+		)
 
 		// The execution should fail when the dependency fails
 		await expect(
 			runtime.runPromise(
 				Effect.gen(function* () {
-					const { runTasks } = yield* makeTaskRunner(taskTree)
+					const globalArgs = {
+						network: "local",
+						logLevel: "debug",
+						background: false,
+					} as const
+					const config = {} satisfies Partial<ICEConfig>
+					const ICEConfigLayer = ICEConfigService.Test(
+						globalArgs,
+						taskTree,
+						config,
+					)
+					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+					const KVStorageLayer = Layer.succeed(
+						KeyValueStore.KeyValueStore,
+						KVStorageImpl,
+					)
+					const DeploymentsLayer = DeploymentsService.Live.pipe(
+						Layer.provide(KVStorageLayer),
+					)
+					const { taskLayer, runtime: taskRuntime } =
+						yield* makeTaskLayer(globalArgs).pipe(
+							Effect.provide(ICEConfigLayer),
+							Effect.provide(DeploymentsLayer),
+						)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime: taskRuntime,
+						taskLayer,
+					})
 					const results = yield* runTasks(
-						tasks.map((t) => ({
-							...t,
-							args: {},
-						})),
+						tasks.map((t) => ({ ...t, args: {} })),
+					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.provide(taskLayer),
 					)
 					return results
-				}),
+				}).pipe(Effect.scoped),
 			),
 		).rejects.toThrow()
 	})
@@ -313,10 +493,6 @@ describe("executeTasks", () => {
 			"CACHED_LEAF",
 		)
 
-		// // Set up dependencies
-		// nonCachedMiddle.dependencies = { root: cachedRoot }
-		// cachedLeaf.dependencies = { middle: nonCachedMiddle }
-
 		// Track execution order for the non-cached task
 		const trackingNonCached: Task = {
 			...nonCachedMiddle,
@@ -338,17 +514,49 @@ describe("executeTasks", () => {
 
 		const tasks = [cachedRoot, trackingNonCached, cachedLeaf]
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-6")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-6",
+		)
 
 		// First run - all should execute
 		const firstResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(executionOrder).toEqual(["NON_CACHED_MIDDLE"])
@@ -360,12 +568,42 @@ describe("executeTasks", () => {
 		// Second run - cached tasks should use cache, non-cached should run again
 		const secondResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(executionOrder).toEqual(["NON_CACHED_MIDDLE"]) // Only non-cached ran
@@ -385,7 +623,7 @@ describe("executeTasks", () => {
 				return `result-${cacheKeyCounter}`
 			},
 			computeCacheKey: () => `dynamic-key-${cacheKeyCounter}`,
-			input: () => Effect.succeed(undefined).pipe(Effect.runPromise),
+			input: () => Effect.succeed({} as Record<string, unknown>).pipe(Effect.runPromise),
 			encode: (taskCtx, v) => Effect.succeed(v).pipe(Effect.runPromise),
 			decode: (taskCtx, v) =>
 				Effect.succeed(v as string).pipe(Effect.runPromise),
@@ -397,17 +635,49 @@ describe("executeTasks", () => {
 		}
 		const tasks = [dynamicCachedTask]
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-7")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-7",
+		)
 
 		// First run with cacheKeyCounter = 0
 		const firstResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(firstResults[0]).toBe("result-0")
@@ -418,12 +688,42 @@ describe("executeTasks", () => {
 		// Second run with different cache key should re-execute
 		const secondResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(secondResults[0]).toBe("result-1")
@@ -469,16 +769,49 @@ describe("executeTasks", () => {
 		}
 		const tasks = [root, branch1, branch2, leaf]
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-8")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-8",
+		)
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
-				).pipe(Effect.withConcurrency(2))
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+					Effect.withConcurrency(2),
+				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		const maxReached = runtime.runSync(Ref.get(maxConcurrent))
@@ -515,16 +848,49 @@ describe("executeTasks", () => {
 			tasks.map((task) => [task.description, task]),
 		)
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-9")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-9",
+		)
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
-				).pipe(Effect.withConcurrency(3))
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+					Effect.withConcurrency(3),
+				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(executionTimes.length).toBe(6)
@@ -588,16 +954,48 @@ describe("executeTasks", () => {
 			trackingTasks.map((task) => [task.description, task]),
 		)
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-10")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-10",
+		)
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					trackingTasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// TODO: this might be wrong because we changed the order of the tasks
@@ -646,16 +1044,48 @@ describe("executeTasks", () => {
 			dependent_task: dependentTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-11")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-11",
+		)
 
 		const results = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(executionResults.length).toBe(2)
@@ -706,16 +1136,48 @@ describe("executeTasks", () => {
 			dynamic_caller: dynamicTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-12")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-12",
+		)
 
 		const results = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(executionOrder).toEqual([
@@ -736,7 +1198,7 @@ describe("executeTasks", () => {
 				Effect.gen(function* () {
 					return "string_result"
 				}).pipe(Effect.runPromise),
-			input: () => Effect.succeed(undefined).pipe(Effect.runPromise),
+			input: () => Effect.succeed({} as Record<string, unknown>).pipe(Effect.runPromise),
 			encode: (taskCtx, v) =>
 				Effect.succeed(v as string).pipe(Effect.runPromise),
 			decode: (taskCtx, v) =>
@@ -750,7 +1212,7 @@ describe("executeTasks", () => {
 				.make(),
 			effect: async (taskCtx) => new Uint8Array([1, 2, 3, 4]),
 			computeCacheKey: () => "binary_task_key",
-			input: () => Effect.succeed(undefined).pipe(Effect.runPromise),
+			input: () => Effect.succeed({} as Record<string, unknown>).pipe(Effect.runPromise),
 			encode: (taskCtx, v) => Effect.succeed(v).pipe(Effect.runPromise),
 			decode: (taskCtx, v) =>
 				Effect.succeed(v as Uint8Array).pipe(Effect.runPromise),
@@ -762,18 +1224,50 @@ describe("executeTasks", () => {
 			binary_cached: binaryCachedTask,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-13")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-13",
+		)
 		const tasks = [stringCachedTask, binaryCachedTask]
 
 		// First run - should cache both
 		const firstResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(firstResults[0]).toBe("string_result")
@@ -792,12 +1286,42 @@ describe("executeTasks", () => {
 		// Second run - should use cache
 		const secondResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(secondResults[0]).toBe("string_result") // From cache
@@ -849,17 +1373,49 @@ describe("executeTasks", () => {
 			level6,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-14")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-14",
+		)
 
 		await expect(
 			runtime.runPromise(
 				Effect.gen(function* () {
-					const { runTasks } = yield* makeTaskRunner(taskTree)
+					const globalArgs = {
+						network: "local",
+						logLevel: "debug",
+						background: false,
+					} as const
+					const config = {} satisfies Partial<ICEConfig>
+					const ICEConfigLayer = ICEConfigService.Test(
+						globalArgs,
+						taskTree,
+						config,
+					)
+					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+					const KVStorageLayer = Layer.succeed(
+						KeyValueStore.KeyValueStore,
+						KVStorageImpl,
+					)
+					const DeploymentsLayer = DeploymentsService.Live.pipe(
+						Layer.provide(KVStorageLayer),
+					)
+					const { taskLayer, runtime: taskRuntime } =
+						yield* makeTaskLayer(globalArgs).pipe(
+							Effect.provide(ICEConfigLayer),
+							Effect.provide(DeploymentsLayer),
+						)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime: taskRuntime,
+						taskLayer,
+					})
 					const results = yield* runTasks(
 						tasks.map((t) => ({ ...t, args: {} })),
+					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.provide(taskLayer),
 					)
 					return results
-				}),
+				}).pipe(Effect.scoped),
 			),
 		).rejects.toThrow()
 	})
@@ -904,12 +1460,6 @@ describe("executeTasks", () => {
 			"C2_LEAF",
 		)
 
-		// // Set up dependencies within each chain
-		// chain1Middle.dependencies = { root: chain1Root }
-		// chain1Leaf.dependencies = { middle: chain1Middle }
-		// chain2Middle.dependencies = { root: chain2Root }
-		// chain2Leaf.dependencies = { middle: chain2Middle }
-
 		const tasks = [
 			chain1Root,
 			chain1Middle,
@@ -928,17 +1478,49 @@ describe("executeTasks", () => {
 			chain2Leaf,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-15")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-15",
+		)
 
 		// First run - all should execute
 		const firstResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(firstResults.length).toBe(6)
@@ -953,12 +1535,42 @@ describe("executeTasks", () => {
 		// Second run - should use cache for all
 		const secondResults = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(secondResults.length).toBe(6)
@@ -1062,16 +1674,48 @@ describe("executeTasks", () => {
 			convergence,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/execute-tasks-16")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(
+			".ice_test/execute-tasks-16",
+		)
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({ ...t, args: {} })),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Root should be first, convergence should be last

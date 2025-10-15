@@ -1,799 +1,681 @@
+// packages/runner/tests/integration/process_monitor.scenarios.test.ts
+//
+// Process Orchestration Scenarios — Spec-Driven E2E
+//
+// What you must wire up after pasting this file:
+//  1) Replace the `replica` placeholder with a real ReplicaService instance (or proxy)
+//     so that `replica.start(ctx)` / `replica.stop()` call your PUBLIC APIs.
+//  2) Ensure your runner creates FG leases while a task runs (our FG task is a normal
+//     public `task()` that blocks until a "release" file appears — we stop it via
+//     another public task that writes that file).
+//  3) If your `replica.start()` emits structured errors, make them expose `.code` as
+//     "in-use" | "manual_present" | "protected". The test maps those to CSV `error`.
+//
+// This file intentionally avoids any “monitor logic”. It just:
+//   - Prepares preconditions using public APIs,
+//   - Executes one public action per row,
+//   - Snapshots state (via public artifacts) before/after,
+//   - Asserts the CSV columns verbatim.
+//
+
 import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
-import net from "node:net"
-import { spawn, type ChildProcess } from "node:child_process"
-import { describe, it, expect } from "vitest"
-
-import { makeMonitor, type Monitor } from "../../src/services/pic/pic-process.js"
-import type { ICEConfigContext } from "../../src/types/types.js"
+import { describe, it, beforeAll, afterAll, expect } from "vitest"
+import { setTimeout as sleep } from "node:timers/promises"
+import { tmpdir } from "node:os"
+import { spawn } from "node:child_process"
+import { Cause, Data, Effect, Exit, Fiber, Layer } from "effect"
+import { FileSystem, Path as EffectPath } from "@effect/platform"
+import { KeyValueStore } from "@effect/platform"
+import { makeTaskLayer } from "../../src/services/taskRuntime.js"
+import { TaskRuntime } from "../../src/services/taskRuntime.js"
+import { ICEConfigService } from "../../src/services/iceConfig.js"
+import { task, Ice, Replica } from "../../src/index.js"
+import { runTask } from "../../src/tasks/run.js"
 import { pocketIcPath } from "@ice.ts/pocket-ic"
+import { IcpConfigFlag } from "@dfinity/pic"
+import { DefaultReplica } from "../../src/services/replica.js"
+import { TaskTree } from "../../src/types/types.js"
+import { NodeContext } from "@effect/platform-node"
+import { makeTestEnvEffect } from "./setup.js"
+import { DeploymentsService } from "../../src/services/deployments.js"
+import { ReplicaStartError } from "../../src/services/replica.js"
+import { TaskSuccess } from "../../src/tasks/lib.js"
 
-type ModeRun = "foreground" | "background"
-type ExistingServer = "none" | "managed" | "manual"
-type ExistingMode = "foreground" | "background" | "—"
-type Concurrency = "single" | "parallel"
-type ParallelRole = "first" | "second" | "—"
+// ----------------------------- CSV / Types ----------------------------------------
+
+type RunMode = "fg" | "bg"
+type ExistingServer = "none" | "managed_fg" | "managed_bg" | "manual"
+type ArgsMismatch = "yes" | "no"
+type ArgsMismatchSelection = "reuse" | "restart" | "-"
+
 type ExpectedAction =
-	| "spawn"
+	| "spawn_new"
 	| "reuse"
 	| "restart"
-	| "reject-in-use"
-	| "adopt-manual"
-	| "reject-cannot-restart-manual"
-type ExpectedModeAfter = "foreground" | "background" | "—" | "n/a"
-type ExpectedPidChange = "same" | "different" | "n/a"
+	| "reject_in_use"
+	| "attach_manual"
+	| "reject_manual"
 
-type Scenario = {
-	modeRun: ModeRun
-	existingServer: ExistingServer
-	existingMode: ExistingMode
-	activeLeasesBefore: "0" | "1" | ">0"
-	argsMismatch: boolean
-	argsMismatchSelection: "reuse" | "restart"
-	concurrency: Concurrency
-	parallelRole: ParallelRole
-	expectedAction: ExpectedAction
-	expectedManagedAfter: boolean | undefined
-	expectedModeAfter: ExpectedModeAfter
-	expectedPidChange: ExpectedPidChange
-	expectedLeasesAfter: "1" | "2" | ">0" | "n/a"
-	expectServerRunningDuring: boolean
-	expectStateJsonPresentDuring: boolean
-	expectServerRunningAfterExit: boolean
-	expectStateJsonPresentAfterExit: boolean
-	expectedError: "in-use" | "cannot-restart-manual" | "—"
-	notes?: string
-	lineNumber: number
+type PidChange = "new" | "same"
+type ServerAfter = "managed_fg" | "managed_bg" | "manual" | "none"
+type EphemeralLeasesAfter = "0" | "1" | "1+" | "2+"
+// type ErrorCode = "-" | "in-use" | "manual_present" | "protected"
+type ErrorCode =
+	| "-"
+	| "PortInUseError"
+	| "ManualPocketICPresentError"
+	| "ProtectedServerError"
+
+interface ScenarioRow {
+	scenario: string
+	run_mode: RunMode
+	existing_server: ExistingServer
+	args_mismatch: ArgsMismatch
+	args_mismatch_selection: ArgsMismatchSelection
+	ephemeral_leases_before: "0" | "1+"
+	expected_action: ExpectedAction
+	pid_change: PidChange
+	server_after: ServerAfter
+	ephemeral_leases_after: EphemeralLeasesAfter
+	error: ErrorCode
+	notes: string
 }
 
-type LeaseFile = {
-	pid: number
-	createdAt: number
-	heartbeatAt: number
-	ttlMs: number
-}
+// ----------------------------- Config ---------------------------------------------
 
-type PocketIcStateFile = {
-	pid: number | null
-	startedAt?: number
-	binPath?: string | null
-	args?: ReadonlyArray<string>
-	version?: string | null
-	managed?: boolean | null
-	mode?: "foreground" | "background" | null
-	port?: number | null
-	bind?: string | null
-	monitorPid?: number | null
-	configHash?: string | null
-}
+const TEST_TMP_ROOT = path.join(tmpdir(), "pic-orch-scenarios-" + Date.now())
+const FIXTURES_DIR = path.join(
+	path.dirname(new URL(import.meta.url).pathname),
+	"../fixtures",
+)
+const SCENARIOS_CSV_PATH = path.join(
+	FIXTURES_DIR,
+	"process_monitor_scenarios.csv",
+)
 
-const CSV_PATH = path.resolve(__dirname, "../fixtures/process_monitor_table.csv")
+const DEFAULT_BIND = "0.0.0.0"
+const BASE_PORT = 18081 // per-scenario port = BASE_PORT + idx
+const STABILIZE_MS = 200
 
-const toBool = (v: string): boolean => String(v).trim().toUpperCase() === "TRUE"
-const toMaybe = (v: string): string | undefined => (v && v !== "—" ? v : undefined)
+// ----------------------------- Tiny CSV parser (semicolon) ------------------------
 
-function readCsv(filePath: string): ReadonlyArray<Scenario> {
-	const txt = fs.readFileSync(filePath, "utf8")
-	const lines = txt.split(/\r?\n/).filter((l) => l.trim().length > 0)
-	if (lines.length <= 1) return []
-	const header = lines[0]!
-	const cols = header.split(",").map((s) => s.trim())
-	const colIndex: Record<string, number> = {}
-	cols.forEach((c, i) => (colIndex[c] = i))
-
-	const parseLine = (line: string): string[] => {
-		const out: string[] = []
-		let cur = ""
-		let inQuotes = false
-		for (let i = 0; i < line.length; i++) {
-			const ch = line[i]!
-			if (ch === '"') {
-				inQuotes = !inQuotes
+function splitSemicolonPreservingQuotes(line: string): string[] {
+	const result: string[] = []
+	let cur = ""
+	let inQuote = false
+	let quoteChar: '"' | "“" | "”" | "'" | null = null
+	for (let i = 0; i < line.length; i++) {
+		const c = line[i]!
+		if (!inQuote && c === ";") {
+			result.push(cur)
+			cur = ""
+			continue
+		}
+		if (c === '"' || c === "'" || c === "“" || c === "”") {
+			if (!inQuote) {
+				inQuote = true
+				quoteChar = c as any
 				continue
 			}
-			if (ch === "," && !inQuotes) {
-				out.push(cur)
-				cur = ""
-			} else {
-				cur += ch
+			if (c === quoteChar) {
+				inQuote = false
+				quoteChar = null
+				continue
 			}
 		}
-		out.push(cur)
-		return out.map((s) => s.trim())
+		cur += c
 	}
+	result.push(cur)
+	return result.map((s) => s.trim().replace(/^["“']|["”']$/g, ""))
+}
 
-	const get = (raw: string[], key: string): string => {
-		const idx = colIndex[key]
-		return idx === undefined ? "" : (raw[idx] ?? "")
-	}
-
-	const scenarios: Scenario[] = []
+function loadScenarios(): ScenarioRow[] {
+	const text = fs.readFileSync(SCENARIOS_CSV_PATH, "utf8")
+	const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0)
+	const header = splitSemicolonPreservingQuotes(lines[0]!)
+	const out: ScenarioRow[] = []
 	for (let i = 1; i < lines.length; i++) {
-		const raw = parseLine(lines[i]!)
-		if (raw.every((c) => c === "")) continue
-    const base: Omit<Scenario, "notes"> = {
-			modeRun: get(raw, "mode_run").toLowerCase() as ModeRun,
-			existingServer: get(raw, "existing_server").toLowerCase() as ExistingServer,
-			existingMode: (get(raw, "existing_mode") || "—") as ExistingMode,
-			activeLeasesBefore: (get(raw, "active_leases_before") || "0") as "0" | "1" | ">0",
-			argsMismatch: (get(raw, "args_mismatch") || "no").toLowerCase() === "yes",
-			argsMismatchSelection: (get(raw, "args_mismatch_selection") || "reuse") as "reuse" | "restart",
-			concurrency: (get(raw, "concurrency") || "single") as Concurrency,
-			parallelRole: (get(raw, "parallel_role") || "—") as ParallelRole,
-			expectedAction: get(raw, "expected_action") as ExpectedAction,
-			expectedManagedAfter: ((): boolean | undefined => {
-				const v = toMaybe(get(raw, "expected_managed_after"))
-				return v === undefined ? undefined : toBool(v)
-			})(),
-			expectedModeAfter: (get(raw, "expected_mode_after") || "—") as ExpectedModeAfter,
-			expectedPidChange: (get(raw, "expected_pid_change") || "n/a") as ExpectedPidChange,
-			expectedLeasesAfter: (get(raw, "expected_leases_after") || "n/a") as "1" | "2" | ">0" | "n/a",
-			expectServerRunningDuring: toBool(get(raw, "expect_server_running_during") || "TRUE"),
-			expectStateJsonPresentDuring: toBool(get(raw, "expect_statejson_present_during") || "TRUE"),
-			expectServerRunningAfterExit: toBool(get(raw, "expect_server_running_after_exit") || "TRUE"),
-			expectStateJsonPresentAfterExit: toBool(get(raw, "expect_statejson_present_after_exit") || "TRUE"),
-			expectedError: ((get(raw, "expected_error") || "—") as "in-use" | "cannot-restart-manual" | "—"),
-			lineNumber: i + 1,
-        }
-        const maybeNotes = toMaybe(get(raw, "notes"))
-        const scenario: Scenario = (maybeNotes
-            ? { ...base, notes: maybeNotes }
-            : { ...base }) as Scenario
-        scenarios.push(scenario)
+		const cols = splitSemicolonPreservingQuotes(lines[i]!)
+		if (cols.length !== header.length) continue
+		const row: any = {}
+		header.forEach((h, idx) => (row[h] = cols[idx]))
+		out.push(row as ScenarioRow)
 	}
-	return scenarios
+	return out
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+// ----------------------------- Public test tasks ----------------------------------
+//
+// We use ONLY public task API to create/hold/release FG leases.
+// hold_task blocks until `releasePath` exists; release_task creates it.
+//
 
-async function waitTcpReady(host: string, port: number, timeoutMs: number): Promise<void> {
-	const started = Date.now()
-	let lastErr: unknown
-	while (Date.now() - started < timeoutMs) {
-		try {
-			await new Promise<void>((resolve, reject) => {
-				const socket = net.connect({ host, port })
-				const to = setTimeout(() => socket.destroy(new Error("timeout")), 600)
-				const cleanup = () => {
-					clearTimeout(to)
-					socket.removeAllListeners()
-					socket.end()
-					socket.destroy()
-				}
-				socket.once("connect", () => {
-					cleanup()
-					resolve()
-				})
-				socket.once("error", (err) => {
-					cleanup()
-					reject(err)
-				})
-			})
-			return
-		} catch (e) {
-			lastErr = e
-			await sleep(100)
-		}
-	}
-	throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
-}
-
-async function getFreePort(host: string = "0.0.0.0"): Promise<number> {
-    return await new Promise<number>((resolve, reject) => {
-        const s = net.createServer()
-        s.once("error", (e) => reject(e))
-        s.listen({ host, port: 0 }, () => {
-            const address = s.address()
-            if (typeof address === "object" && address && typeof address.port === "number") {
-                const p = address.port
-                s.close(() => resolve(p))
-            } else {
-                s.close(() => reject(new Error("failed to allocate port")))
-            }
-        })
-    })
-}
-
-function isPidAlive(pid: number | null | undefined): boolean {
-	if (!pid) return false
-	try {
-		process.kill(pid, 0)
-		return true
-	} catch {
-		return false
-	}
-}
-
-function leaseDir(iceDirName: string): string {
-	return path.resolve(process.cwd(), iceDirName, "pocketic-server", "leases")
-}
-
-function stateFilePath(iceDirName: string): string {
-	return path.resolve(process.cwd(), iceDirName, "pocketic-server", "state.json")
-}
-
-async function ensureDir(p: string): Promise<void> {
-	await fsp.mkdir(p, { recursive: true }).catch(() => {})
-}
-
-async function readState(iceDirName: string): Promise<PocketIcStateFile | undefined> {
-	const p = stateFilePath(iceDirName)
-	try {
-		const txt = await fsp.readFile(p, "utf8")
-		return JSON.parse(txt) as PocketIcStateFile
-	} catch {
-		return undefined
-	}
-}
-
-async function writeLease(iceDirName: string, leaseId: string, ttlMs = 5000): Promise<{
-	readonly heartbeat: () => Promise<void>
-	readonly remove: () => Promise<void>
-	readonly path: string
-}> {
-	const dir = leaseDir(iceDirName)
-	await ensureDir(dir)
-	const leasePath = path.join(dir, `${leaseId}.json`)
-	const now = Date.now()
-	const payload: LeaseFile = {
-		pid: process.pid,
-		createdAt: now,
-		heartbeatAt: now,
-		ttlMs,
-	}
-	await fsp.writeFile(leasePath, JSON.stringify(payload, null, 2), "utf8")
-	return {
-		heartbeat: async () => {
-			const next: LeaseFile = { ...payload, heartbeatAt: Date.now() }
-			await fsp.writeFile(leasePath, JSON.stringify(next, null, 2), "utf8")
-		},
-		remove: async () => {
-			await fsp.unlink(leasePath).catch(() => {})
-		},
-		path: leasePath,
-	}
-}
-
-async function countActiveLeases(iceDirName: string): Promise<number> {
-	const dir = leaseDir(iceDirName)
-	try {
-		const files = await fsp.readdir(dir)
-		let active = 0
-		for (const f of files) {
-			if (!f.endsWith(".json")) continue
-			try {
-				const txt = await fsp.readFile(path.join(dir, f), "utf8")
-				const j = JSON.parse(txt) as LeaseFile
-				const alive = isPidAlive(j.pid)
-				const fresh = Date.now() - j.heartbeatAt <= j.ttlMs
-				if (alive && fresh) active++
-			} catch {}
-		}
-		return active
-	} catch {
-		return 0
-	}
-}
-
-async function spawnManualPocketIc(host: string, port: number, ttlSeconds: number): Promise<ChildProcess> {
-	const child = spawn(pocketIcPath, ["-i", host, "-p", String(port), "--ttl", String(ttlSeconds)], {
-		detached: true,
-		stdio: "ignore",
-	})
-	try {
-		child.unref()
-	} catch {}
-	await waitTcpReady(host, port, 20_000)
-	return child
-}
-
-async function killTree(proc: ChildProcess | undefined): Promise<void> {
-	if (!proc?.pid) return
-	try {
-		process.kill(proc.pid, "SIGINT")
-		await sleep(100)
-		process.kill(proc.pid, 0)
-		process.kill(proc.pid, "SIGKILL")
-	} catch {}
-}
-
-function makeCtx(iceDirName: string, background: boolean): ICEConfigContext {
-	return {
-		iceDirPath: iceDirName,
-		network: "local",
-		logLevel: "debug",
-		background,
-	}
-}
-
-function cmpCountToExpectation(actual: number, expectation: "1" | "2" | ">0" | "n/a"): boolean {
-	if (expectation === "n/a") return true
-	if (expectation === ">0") return actual > 0
-	return actual === Number(expectation)
-}
-
-function boolOrUndefinedToMode(v: boolean | undefined): string | undefined {
-	if (v === undefined) return undefined
-	return v ? "TRUE" : "FALSE"
-}
-
-describe.sequential("Pocket-IC process monitor — decision table", () => {
-	const scenarios = readCsv(CSV_PATH)
-	const scenarioPorts = new Map<number, number>()
-	const handledParallel = new Set<number>()
-
-	it.each(
-		scenarios.map((s, idx) => [idx + 1, s, s.lineNumber]) as Array<[
-			number,
-			Scenario,
-			number,
-		]>,
-	)("scenario #%s (csv line %s): %o", async (idx, s, line) => {
-		// Helper to run a task with a live lease heartbeat until stopped
-		const startLeasedTask = async (params: {
-			iceDirName: string
-			host: string
-			port: number
-			ttlSeconds: number
-			background: boolean
-			forceArgsMismatch: boolean
-			argsMismatchSelection: "reuse" | "restart"
-			leaseId: string
-		}) => {
-			const {
-				iceDirName,
-				host,
-				port,
-				ttlSeconds,
-				background,
-				forceArgsMismatch,
-				argsMismatchSelection,
-				leaseId,
-			} = params
-			const ctx = makeCtx(iceDirName, background)
-			const lease = await writeLease(iceDirName, leaseId, 15000)
-			let timer: NodeJS.Timeout | undefined
-			// keep the lease alive during the task lifetime
-			timer = setInterval(() => {
-				lease.heartbeat().catch(() => {})
-			}, 1000)
-			timer.unref?.()
-			let monitor: Monitor | undefined
-			const run = async () => {
-				monitor = await makeMonitor(ctx, {
-					host,
-					port,
-					ttlSeconds,
-					forceArgsMismatch,
-					argsMismatchSelection,
-				})
-				await waitTcpReady(host, port, 20_000)
-				return monitor
-			}
-			const stop = async () => {
-				if (timer) clearInterval(timer)
-				await lease.remove()
-			}
-			return { run, stop, leasePath: lease.path }
-		}
-
-		// Real concurrent execution for parallel pairs
-		if (s.concurrency === "parallel" && s.parallelRole === "first") {
-			const baseIdx = idx
-			const iceDirName = `.ice_test/monitor_${baseIdx}`
-			const host = "0.0.0.0"
-			let port = scenarioPorts.get(baseIdx)
-			if (!port) {
-				port = await getFreePort(host)
-				scenarioPorts.set(baseIdx, port)
-			}
-			const ttlSeconds = 9_999_999_999
-
-			// clean slate
-			try {
-				fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
-			} catch {}
-
-			// locate the paired second scenario
-			const second = scenarios[idx]!
-			if (!second || second.concurrency !== "parallel" || second.parallelRole !== "second") {
-				throw new Error(`Expected a paired 'second' scenario after line ${line}`)
-			}
-
-			// Arrange any existing server state for the first scenario
-			let existingManual: ChildProcess | undefined
-			if (s.existingServer === "manual") {
-				existingManual = await spawnManualPocketIc(host, port, ttlSeconds)
-			} else if (s.existingServer === "managed") {
-				const ctxExisting = makeCtx(iceDirName, s.existingMode === "background")
-				await makeMonitor(ctxExisting, { host, port, ttlSeconds })
-				await waitTcpReady(host, port, 20_000)
-			}
-
-			// Seed active leases before pair starts
-			if (s.activeLeasesBefore === "1") {
-				await writeLease(iceDirName, `seed_${idx}_1`)
-			} else if (s.activeLeasesBefore === ">0") {
-				await writeLease(iceDirName, `seed_${idx}_1`)
-				await writeLease(iceDirName, `seed_${idx}_2`)
-			}
-
-			const beforeStateFirst = await readState(iceDirName)
-			const beforePidFirst = beforeStateFirst?.pid ?? null
-
-			// Start first task with live lease
-			const firstTask = await startLeasedTask({
-				iceDirName,
-				host,
-				port,
-				ttlSeconds,
-				background: s.modeRun === "background",
-				forceArgsMismatch: s.argsMismatch,
-				argsMismatchSelection: s.argsMismatchSelection,
-				leaseId: `task_${idx}_first`,
-			})
-			await firstTask.run()
-
-			// DURING asserts for first (before second starts)
-			const duringStateFirst = await readState(iceDirName)
-			const duringPidFirst = duringStateFirst?.pid ?? null
-			if (s.expectServerRunningDuring) {
-				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-			} else {
-				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-			}
-			const stateDuringExistsFirst = fs.existsSync(stateFilePath(iceDirName))
-			expect(stateDuringExistsFirst).toBe(s.expectStateJsonPresentDuring)
-			if (s.expectedPidChange !== "n/a") {
-				if (s.expectedPidChange === "same") {
-					expect(duringPidFirst).toBe(beforePidFirst)
-				} else {
-					expect(duringPidFirst && beforePidFirst ? duringPidFirst !== beforePidFirst : true).toBe(true)
-				}
-			}
-			if (s.expectedManagedAfter !== undefined) {
-				expect(Boolean(duringStateFirst?.managed)).toBe(s.expectedManagedAfter)
-			}
-			if (s.expectedModeAfter !== "n/a" && s.expectedModeAfter !== "—") {
-				expect(duringStateFirst?.mode ?? null).toBe(s.expectedModeAfter)
-			}
-			const activeDuringFirst = await countActiveLeases(iceDirName)
-			expect(cmpCountToExpectation(activeDuringFirst, s.expectedLeasesAfter)).toBe(true)
-
-			// Capture second's before after first is up
-			const beforeStateSecond = await readState(iceDirName)
-			const beforePidSecond = beforeStateSecond?.pid ?? null
-
-			// Start second task concurrently
-			const secondTask = await startLeasedTask({
-				iceDirName,
-				host,
-				port,
-				ttlSeconds,
-				background: second.modeRun === "background",
-				forceArgsMismatch: second.argsMismatch,
-				argsMismatchSelection: second.argsMismatchSelection,
-				leaseId: `task_${idx}_second`,
-			})
-			await secondTask.run()
-
-			// DURING asserts for second
-			const duringStateSecond = await readState(iceDirName)
-			const duringPidSecond = duringStateSecond?.pid ?? null
-			if (second.expectServerRunningDuring) {
-				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-			} else {
-				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-			}
-			const stateDuringExistsSecond = fs.existsSync(stateFilePath(iceDirName))
-			expect(stateDuringExistsSecond).toBe(second.expectStateJsonPresentDuring)
-			if (second.expectedPidChange !== "n/a") {
-				if (second.expectedPidChange === "same") {
-					expect(duringPidSecond).toBe(beforePidSecond)
-				} else {
-					expect(duringPidSecond && beforePidSecond ? duringPidSecond !== beforePidSecond : true).toBe(true)
-				}
-			}
-			if (second.expectedManagedAfter !== undefined) {
-				expect(Boolean(duringStateSecond?.managed)).toBe(second.expectedManagedAfter)
-			}
-			if (second.expectedModeAfter !== "n/a" && second.expectedModeAfter !== "—") {
-				expect(duringStateSecond?.mode ?? null).toBe(second.expectedModeAfter)
-			}
-			const activeDuringSecond = await countActiveLeases(iceDirName)
-			expect(cmpCountToExpectation(activeDuringSecond, second.expectedLeasesAfter)).toBe(true)
-
-			// Exit: end both, then assert each row's after-exit expectations
-			await firstTask.stop()
-			await secondTask.stop()
-			await sleep(250)
-			const afterExists = fs.existsSync(stateFilePath(iceDirName))
-			// After both tasks exit, server presence should match both rows' expectations
-			if (s.expectStateJsonPresentAfterExit) {
-				expect(afterExists).toBe(true)
-			} else {
-				expect(afterExists).toBe(false)
-			}
-			if (second.expectStateJsonPresentAfterExit) {
-				expect(afterExists).toBe(true)
-			} else {
-				expect(afterExists).toBe(false)
-			}
-			if (s.expectServerRunningAfterExit) {
-				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-			} else {
-				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-			}
-			if (second.expectServerRunningAfterExit) {
-				await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-			} else {
-				await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-			}
-
-			await killTree(existingManual)
-			handledParallel.add(baseIdx)
-			return
-		}
-
-		// For parallel-second-only rows, skip if already covered with first
-		if (s.concurrency === "parallel" && s.parallelRole === "second") {
-			const baseIdx = idx - 1
-			if (handledParallel.has(baseIdx)) return
-			const iceDirName = `.ice_test/monitor_${baseIdx}`
-			const host = "0.0.0.0"
-			let port = scenarioPorts.get(baseIdx)
-			if (!port) {
-				port = await getFreePort(host)
-				scenarioPorts.set(baseIdx, port)
-			}
-			const ttlSeconds = 9_999_999_999
-
-			// clean slate only if not already created by paired first
-			if (!fs.existsSync(path.resolve(process.cwd(), iceDirName))) {
+const makeTasks = (releasePath: string) => {
+	const hold_task = task("hold_lease")
+		.run(async () => {
+			// Block until released by `release_lease` task
+			while (true) {
 				try {
-					fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
-				} catch {}
+					await fsp.access(releasePath, fs.constants.F_OK)
+					break
+				} catch {
+					// not released yet
+				}
+				await sleep(50)
 			}
+		})
+		.make()
 
-			// Holder to create/manage the existing server per CSV
-			let existingManual: ChildProcess | undefined
-			if (s.existingServer === "manual") {
-				existingManual = await spawnManualPocketIc(host, port, ttlSeconds)
-				await waitTcpReady(host, port, 20_000)
-			} else if (s.existingServer === "managed") {
-				const holderTask = await startLeasedTask({
-					iceDirName,
-					host,
+	const release_task = task("release_lease")
+		.run(async () => {
+			await fsp.mkdir(path.dirname(releasePath), { recursive: true })
+			await fsp.writeFile(releasePath, "release", "utf8")
+		})
+		.make()
+
+	const noop_task = task("noop")
+		.run(async () => {})
+		.make()
+
+	return { hold_task, release_task, noop_task }
+}
+
+// ----------------------------- Public artifacts snapshot --------------------------
+
+const statePath = (workDir: string) =>
+	Effect.gen(function* () {
+		const pathService = yield* EffectPath.Path
+		return pathService.join(
+			workDir,
+			".ice",
+			"pocketic-server",
+			"state.json",
+		)
+	})
+
+const leasesDir = (workDir: string) =>
+	Effect.gen(function* () {
+		const pathService = yield* EffectPath.Path
+		return pathService.join(workDir, ".ice", "pocketic-server", "leases")
+	})
+
+const pidAlive = (pid?: number) =>
+	Effect.sync(() => {
+		if (!pid) return false
+		try {
+			process.kill(pid, 0)
+			return true
+		} catch {
+			return false
+		}
+	})
+
+const readJSON = <T>(
+	p: string,
+): Effect.Effect<T | undefined, never, FileSystem.FileSystem> =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const raw = yield* fs
+			.readFileString(p)
+			.pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+		if (!raw) return undefined
+		return yield* Effect.try({
+			try: () => JSON.parse(raw) as T,
+			catch: () => undefined,
+		}).pipe(Effect.catchAll(() => Effect.succeed(undefined)))
+	})
+
+const countFgLeases = (workDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const pathService = yield* EffectPath.Path
+		const leasesDirPath = yield* leasesDir(workDir)
+		const entries = yield* fs
+			.readDirectory(leasesDirPath)
+			.pipe(
+				Effect.catchAll(() =>
+					Effect.succeed([] as ReadonlyArray<string>),
+				),
+			)
+		const files = entries.filter((n) => n.endsWith(".json"))
+		let fg = 0
+		for (const n of files) {
+			const filePath = pathService.join(leasesDirPath, n)
+			const j = yield* readJSON<{ mode?: "foreground" | "background" }>(
+				filePath,
+			)
+			if (j?.mode === "foreground") fg++
+		}
+		return fg
+	})
+
+const snapshot = (workDir: string, bind: string, port: number) =>
+	Effect.gen(function* () {
+		const stateFilePath = yield* statePath(workDir)
+		const st = yield* readJSON<{ monitorPid?: number; serverPid?: number }>(
+			stateFilePath,
+		)
+		if (st?.serverPid && st?.monitorPid) {
+			const serverAlive = yield* pidAlive(st.serverPid)
+			const monitorAlive = yield* pidAlive(st.monitorPid)
+			if (serverAlive && monitorAlive) {
+				const fg = yield* countFgLeases(workDir)
+				const hasBg = yield* hasBgLease(workDir)
+				return {
+					kind: "managed" as const,
+					serverPid: st.serverPid,
+					monitorPid: st.monitorPid,
+					ephemeralLeases: fg,
+					hasBgLease: hasBg,
+				}
+			}
+		}
+		// Manual (we only spawn from test; no state.json, port-bound server)
+		const occupied = yield* portOccupied(bind, port)
+		if (occupied) {
+			// not reliable cross-scenarios; we stick to managed/no/manual via state file presence.
+		}
+		return { kind: "none" as const, ephemeralLeases: 0, hasBgLease: false }
+	})
+
+const hasBgLease = (workDir: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		const pathService = yield* EffectPath.Path
+		const leasesDirPath = yield* leasesDir(workDir)
+		const entries = yield* fs
+			.readDirectory(leasesDirPath)
+			.pipe(
+				Effect.catchAll(() =>
+					Effect.succeed([] as ReadonlyArray<string>),
+				),
+			)
+		const files = entries.filter((n) => n.endsWith(".json"))
+		for (const n of files) {
+			const filePath = pathService.join(leasesDirPath, n)
+			const j = yield* readJSON<{ mode?: "foreground" | "background" }>(
+				filePath,
+			)
+			if (j?.mode === "background") return true
+		}
+		return false
+	})
+
+// ----------------------------- Utilities ------------------------------------------
+
+const sanitize = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80)
+
+const exists = (p: string) =>
+	Effect.gen(function* () {
+		const fs = yield* FileSystem.FileSystem
+		return yield* fs.exists(p)
+	})
+
+type SnapshotResult = Effect.Effect.Success<ReturnType<typeof snapshot>>
+
+const classify = (after: SnapshotResult): Effect.Effect<ServerAfter> =>
+	Effect.sync(() => {
+		if (after.kind === "none") return "none"
+		return after.hasBgLease ? "managed_bg" : "managed_fg"
+	})
+
+const toPidChange = (
+	before: SnapshotResult,
+	after: SnapshotResult,
+): Effect.Effect<PidChange> =>
+	Effect.sync(() => {
+		const b = (before as any).serverPid as number | undefined
+		const a = (after as any).serverPid as number | undefined
+		if (!b && a) return "new"
+		if (b && a && b !== a) return "new"
+		return "same"
+	})
+
+const matchesEphemeral = (
+	actual: number,
+	expected: EphemeralLeasesAfter,
+): Effect.Effect<boolean> =>
+	Effect.sync(() => {
+		switch (expected) {
+			case "0":
+				return actual === 0
+			case "1":
+				return actual === 1
+			case "1+":
+				return actual >= 1
+			case "2+":
+				return actual >= 2
+			default:
+				return false
+		}
+	})
+
+const portOccupied = (_bind: string, _port: number): Effect.Effect<boolean> =>
+	// Not needed for assertions; manual detection is by scenario setup.
+	Effect.succeed(false)
+
+const launchManualPocketIc = (opts: {
+	bind: string
+	port: number
+	cwd: string
+}): Effect.Effect<number> =>
+	Effect.sync(() => {
+		const args = ["-i", opts.bind, "-p", String(opts.port)]
+		const proc = spawn(pocketIcPath, args, {
+			cwd: opts.cwd,
+			detached: true,
+			stdio: "ignore",
+		})
+		try {
+			proc.unref()
+		} catch {}
+		return proc.pid!
+	})
+
+const killManualPocketIc = (pid: number) =>
+	Effect.sync(() => {
+		process.kill(pid, "SIGKILL")
+	})
+
+const makeGlobalArgs = (row: ScenarioRow, workDir: string) => {
+	let policy: "reuse" | "restart" = "restart" as const
+	if (row.existing_server === "managed_bg") {
+		policy = "reuse" as const
+	} else if (row.existing_server === "managed_fg") {
+		policy = "reuse" as const
+	}
+	let background = false
+	if (row.existing_server === "managed_bg") {
+		background = true
+	} else if (row.existing_server === "managed_fg") {
+		background = false
+	}
+	const globalArgs = {
+		network: "local" as const,
+		iceDirPath: workDir,
+		background: row.run_mode === ("bg" as const),
+		logLevel: "debug" as const,
+		policy,
+	}
+
+	const prepareGlobalArgs = {
+		network: "local" as const,
+		iceDirPath: workDir,
+		background: row.existing_server === "managed_bg",
+		logLevel: "error" as const,
+		policy: "restart" as const,
+	}
+
+	return {
+		prepareGlobalArgs,
+		globalArgs,
+	}
+}
+
+// ----------------------------- Test ------------------------------------------------
+
+describe("process orchestration — scenarios (public APIs only)", () => {
+	const scenarios = loadScenarios()
+
+	beforeAll(async () => {
+		await fsp.mkdir(TEST_TMP_ROOT, { recursive: true })
+	})
+
+	afterAll(async () => {
+		try {
+			await fsp.rm(TEST_TMP_ROOT, { recursive: true, force: true })
+		} catch {}
+	})
+
+	it.concurrent.each(scenarios)("scenario: %s", async (row) => {
+		const idx = scenarios.indexOf(row)
+		const port = BASE_PORT + idx
+		const workDir = path.join(
+			TEST_TMP_ROOT,
+			sanitize(`${idx + 1}-${row.scenario}`),
+		)
+		const { globalArgs, prepareGlobalArgs } = makeGlobalArgs(row, workDir)
+		const releasePath = path.join(workDir, ".release", "lease.txt")
+		// ------------------ Action (PUBLIC APIs only) ------------------
+		const policy: "reuse" | "restart" =
+			row.args_mismatch_selection === "restart" ? "restart" : "reuse"
+		const useMismatch = row.args_mismatch === "yes"
+
+		await fsp.mkdir(workDir, { recursive: true })
+
+		const picReplica = new Replica.PocketIC({
+			host: DEFAULT_BIND,
+			port: port,
+			picConfig: {
+				icpConfig: {
+					// mismatch -> different config
+					betaFeatures: IcpConfigFlag.Enabled,
+				},
+			},
+		})
+		const mismatchReplica = new Replica.PocketIC({
+			host: DEFAULT_BIND,
+			port: port,
+			picConfig: {
+				icpConfig: { betaFeatures: IcpConfigFlag.Disabled },
+			},
+		})
+
+		// TODO: separate prepare and main configs
+		const prepareIceConfig = {
+			networks: {
+				local: {
+					replica: picReplica,
+				},
+			},
+		}
+		const tasks = makeTasks(path.join(workDir, ".release", "lease.txt"))
+
+		const taskTree = {
+			hold: tasks.hold_task,
+			release: tasks.release_task,
+			noop: tasks.noop_task,
+		} satisfies TaskTree
+
+		const PrepareICEConfigLayer = ICEConfigService.Test(
+			prepareGlobalArgs,
+			taskTree,
+			prepareIceConfig,
+		)
+		const { runtime: prepareRuntime } = makeTestEnvEffect(
+			workDir,
+			prepareGlobalArgs,
+		)
+
+		const runPrepare = Effect.gen(function* () {
+			// Prepare the world per existing_server
+			let manualPid: number | undefined
+			if (row.existing_server === "manual") {
+				manualPid = yield* launchManualPocketIc({
+					bind: DEFAULT_BIND,
 					port,
-					ttlSeconds,
-					background: s.existingMode === "background",
-					forceArgsMismatch: false,
-					argsMismatchSelection: "reuse",
-					leaseId: `holder_${idx}`,
+					cwd: workDir,
 				})
-				await holderTask.run()
-				// Seed extra leases if requested
-				if (s.activeLeasesBefore === ">0") {
-					await writeLease(iceDirName, `seed_${idx}_extra1`)
-				}
-				// Run the actual second task now
-				const currentTask = await startLeasedTask({
-					iceDirName,
-					host,
-					port,
-					ttlSeconds,
-					background: s.modeRun === "background",
-					forceArgsMismatch: s.argsMismatch,
-					argsMismatchSelection: s.argsMismatchSelection,
-					leaseId: `task_${idx}`,
+			}
+			// TODO: turn into service with default value? optional service?
+			const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+			const KVStorageLayer = Layer.succeed(
+				KeyValueStore.KeyValueStore,
+				KVStorageImpl,
+			)
+			const DeploymentsLayer = DeploymentsService.Live.pipe(
+				Layer.provide(KVStorageLayer),
+			)
+			const { taskLayer, runtime: taskRuntime } = yield* makeTaskLayer(
+				prepareGlobalArgs,
+			).pipe(
+				Effect.provide(PrepareICEConfigLayer),
+				Effect.provide(DeploymentsLayer),
+			)
+
+			const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+				runtime: taskRuntime,
+				taskLayer,
+			})
+			const iceDirPath = path.join(workDir, ".ice")
+
+			const replica = yield* DefaultReplica
+
+			if (row.existing_server !== "manual") {
+				const P = Effect.tryPromise({
+					try: () => replica.start(prepareGlobalArgs),
+					catch: (e) => {
+						console.error(e)
+						if (e instanceof ReplicaStartError) {
+							return new ReplicaStartError({
+								reason: e.reason,
+								message: e.message,
+							})
+						}
+						return e as Error
+					},
 				})
-				if (s.expectedError !== "—") {
-					await expect(currentTask.run()).rejects.toThrow()
-					await currentTask.stop()
-					await holderTask.stop()
-					await killTree(existingManual)
-					return
-				}
-				await currentTask.run()
-				// DURING
-				if (s.expectServerRunningDuring) {
-					await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-				} else {
-					await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-				}
-				const duringState = await readState(iceDirName)
-				if (s.expectedManagedAfter !== undefined) {
-					expect(Boolean(duringState?.managed)).toBe(s.expectedManagedAfter)
-				}
-				if (s.expectedModeAfter !== "n/a" && s.expectedModeAfter !== "—") {
-					expect(duringState?.mode ?? null).toBe(s.expectedModeAfter)
-				}
-				// Exit only the current task; holder keeps server alive
-				await currentTask.stop()
-				await sleep(200)
-				const afterExists = fs.existsSync(stateFilePath(iceDirName))
-				if (s.expectStateJsonPresentAfterExit) {
-					expect(afterExists).toBe(true)
-				} else {
-					expect(afterExists).toBe(false)
-				}
-				if (s.expectServerRunningAfterExit) {
-					await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-				} else {
-					await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-				}
-				await holderTask.stop()
-				await killTree(existingManual)
-				return
+				// TODO: remove??
+				yield* Effect.sleep(STABILIZE_MS)
 			}
+
+			// If precondition asks for 1+ ephemeral leases, start one task (public)
+			const holdFiber =
+				row.ephemeral_leases_before === "1+"
+                && row.run_mode === "fg"
+					? yield* runTask(tasks.hold_task).pipe(
+							Effect.provide(taskLayer),
+							Effect.provide(ChildTaskRuntimeLayer),
+							Effect.forkDaemon,
+						)
+					: undefined
+			// TODO:... fix. no hardcoded shit.
+			yield* Effect.sleep(STABILIZE_MS)
+			return { manualPid, holdFiber }
+		})
+		const { manualPid, holdFiber } =
+			await prepareRuntime.runPromise(runPrepare)
+
+		const before = await Effect.runPromise(
+			snapshot(workDir, DEFAULT_BIND, port).pipe(
+				Effect.provide(NodeContext.layer),
+			),
+		)
+
+		const { runtime: mainRuntime } = makeTestEnvEffect(workDir, globalArgs)
+
+		const mainIceConfig = {
+			networks: {
+				local: {
+					replica: useMismatch ? mismatchReplica : picReplica,
+				},
+			},
 		}
-    const baseIdx =
-     s.concurrency === "parallel" && s.parallelRole === "second"
-      ? idx - 1
-      : idx
-    const iceDirName = `.ice_test/monitor_${baseIdx}`
-    const host = "0.0.0.0"
-    let port = scenarioPorts.get(baseIdx)
-    if (!port) {
-     port = await getFreePort(host)
-     scenarioPorts.set(baseIdx, port)
-    }
- 		const ttlSeconds = 9_999_999_999
+		const MainICEConfigLayer = ICEConfigService.Test(
+			globalArgs,
+			taskTree,
+			mainIceConfig,
+		)
 
-		// clean slate (skip for parallel second to preserve shared state)
-		if (!(s.concurrency === "parallel" && s.parallelRole === "second")) {
-			try {
-				fs.rmSync(path.resolve(process.cwd(), iceDirName), { recursive: true, force: true })
-			} catch {}
-		}
+		const runMain = () =>
+			Effect.gen(function* () {
+				// TODO: turn into service with default value? optional service?
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(MainICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
 
-		let existingManual: ChildProcess | undefined
-		let currentMonitor: Monitor | undefined
-		let beforeState: PocketIcStateFile | undefined
-		let afterState: PocketIcStateFile | undefined
-		const taskLeaseId = `task_${idx}`
-		let taskLease: { heartbeat: () => Promise<void>; remove: () => Promise<void>; path: string } | undefined
-		let bootstrapLease: { heartbeat: () => Promise<void>; remove: () => Promise<void>; path: string } | undefined
-		let keepAlivePath: string | undefined
-		let keepAliveCreated = false
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const iceDirPath = path.join(workDir, ".ice")
 
-		// Arrange: existing server state
-		if (s.existingServer === "manual") {
-			existingManual = await spawnManualPocketIc(host, port, ttlSeconds)
-			// adoption of manual happens when monitor starts
-		} else if (s.existingServer === "managed") {
-			const ctxExisting = makeCtx(iceDirName, s.existingMode === "background")
-			await makeMonitor(ctxExisting, {
-				host,
-				port,
-				ttlSeconds,
+				const replica = yield* DefaultReplica
+
+				yield* Effect.tryPromise({
+					try: () => replica.start(globalArgs),
+					catch: (e) => {
+						console.error(e)
+						if (e instanceof ReplicaStartError) {
+							return new ReplicaStartError({
+								reason: e.reason,
+								message: e.message,
+							})
+						}
+						return e as Error
+					},
+				})
+
+				const holdFiber =
+					row.expected_action !== "attach_manual" &&
+					row.expected_action !== "reject_manual"
+						? yield* runTask(tasks.hold_task).pipe(
+								Effect.provide(taskLayer),
+								Effect.provide(ChildTaskRuntimeLayer),
+                                Effect.forkDaemon,
+							)
+						: undefined
+
+                return { holdFiber }
 			})
-			// keep managed server alive
-			// ensure state file exists for background; foreground may not have state file yet
-			await waitTcpReady(host, port, 20_000)
-			if (s.existingMode === "foreground") {
-				keepAlivePath = path.join(path.dirname(stateFilePath(iceDirName)), ".keepalive")
-				await fsp.writeFile(keepAlivePath, JSON.stringify({ keepAlive: true }), "utf8")
-				keepAliveCreated = true
-			}
-		} else if (s.concurrency === "parallel" && s.parallelRole === "second") {
-			bootstrapLease = await writeLease(iceDirName, `${taskLeaseId}_bootstrap`)
-			await bootstrapLease.heartbeat()
-			const ctxBootstrap = makeCtx(iceDirName, s.modeRun === "background")
-			await makeMonitor(ctxBootstrap, {
-				host,
-				port,
-				ttlSeconds,
-				forceArgsMismatch: false,
-				argsMismatchSelection: "reuse",
-			})
-			await waitTcpReady(host, port, 20_000)
+
+		const mainResult = await mainRuntime.runPromiseExit(runMain())
+		const after = await Effect.runPromise(
+			snapshot(workDir, DEFAULT_BIND, port).pipe(
+				Effect.provide(NodeContext.layer),
+			),
+		)
+		const errCode = Exit.match(mainResult, {
+			onSuccess: () => "-" as const,
+			onFailure: (cause) => {
+				if (cause._tag === "Fail") {
+					if (cause.error instanceof ReplicaStartError) {
+						// TODO: ???
+						return cause.error.reason
+					}
+				}
+				console.error(cause)
+			},
+		})
+        const mainHoldFiber = Exit.match(mainResult, {
+            onSuccess: (value) => value.holdFiber,
+            onFailure: (cause) => undefined,
+        })
+
+		expect(errCode).toBe(row.error)
+
+		// 2) pid_change
+		expect(toPidChange(before, after)).toBe(row.pid_change)
+
+		// 3) server_after
+		expect(classify(after)).toBe(row.server_after)
+
+		// 4) ephemeral_leases_after
+		expect(
+			matchesEphemeral(after.ephemeralLeases, row.ephemeral_leases_after),
+		).toBe(true)
+
+		if (holdFiber) {
+			await Effect.runPromise(Fiber.interrupt(holdFiber))
+		}
+		if (mainHoldFiber) {
+			await Effect.runPromise(Fiber.interrupt(mainHoldFiber))
 		}
 
-		// Seed active leases before
-		if (s.activeLeasesBefore === "1") {
-			await writeLease(iceDirName, `seed_${idx}_1`)
-		} else if (s.activeLeasesBefore === ">0") {
-			await writeLease(iceDirName, `seed_${idx}_1`)
-			await writeLease(iceDirName, `seed_${idx}_2`)
+		if (row.existing_server === "manual" && manualPid) {
+			killManualPocketIc(manualPid)
 		}
-
-		beforeState = await readState(iceDirName)
-		const beforePid = beforeState?.pid ?? null
-
-		// Act: run the current task
-		const ctxCurrent = makeCtx(iceDirName, s.modeRun === "background")
-		const run = async () => {
-			// acquire a lease for the current task
-			taskLease = await writeLease(iceDirName, taskLeaseId)
-			// minimal heartbeat once
-			await taskLease.heartbeat()
-			// start/coordinate via monitor
-			currentMonitor = await makeMonitor(ctxCurrent, {
-				host,
-				port,
-				ttlSeconds,
-				forceArgsMismatch: s.argsMismatch,
-				argsMismatchSelection: s.argsMismatchSelection,
-			})
-			await waitTcpReady(host, port, 20_000)
-		}
-
-		if (s.expectedError !== "—") {
-			await expect(run()).rejects.toThrow()
-			// No further asserts when expecting error
-			// Cleanup
-			await taskLease?.remove()
-			if (bootstrapLease) {
-				await bootstrapLease.remove()
-			}
-			if (keepAliveCreated && keepAlivePath) {
-				await fsp.unlink(keepAlivePath).catch(() => {})
-			}
-			await killTree(existingManual)
-			return
-		}
-
-		await run()
-
-		// Assert DURING
-		const duringState = await readState(iceDirName)
-		const duringPid = duringState?.pid ?? null
-		if (s.expectServerRunningDuring) {
-			await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-		} else {
-			await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-		}
-		const stateDuringExists = fs.existsSync(stateFilePath(iceDirName))
-		expect(stateDuringExists).toBe(s.expectStateJsonPresentDuring)
-
-		// Expected action heuristic: compare pid before/after
-		if (s.expectedPidChange !== "n/a") {
-			if (s.expectedPidChange === "same") {
-				expect(duringPid).toBe(beforePid)
-			} else {
-				expect(duringPid && beforePid ? duringPid !== beforePid : true).toBe(true)
-			}
-		}
-
-		if (s.expectedManagedAfter !== undefined) {
-			expect(Boolean(duringState?.managed)).toBe(s.expectedManagedAfter)
-		}
-		if (s.expectedModeAfter !== "n/a" && s.expectedModeAfter !== "—") {
-			expect(duringState?.mode ?? null).toBe(s.expectedModeAfter)
-		}
-
-		const activeDuring = await countActiveLeases(iceDirName)
-		expect(cmpCountToExpectation(activeDuring, s.expectedLeasesAfter)).toBe(true)
-
-		// Exit: release this task's lease; foreground semantics may stop the server when leases reach 0 per spec
-		await taskLease?.remove()
-		await sleep(200)
-		if (bootstrapLease) {
-			await bootstrapLease.remove()
-			await sleep(200)
-		}
-		if (keepAliveCreated && keepAlivePath && !s.expectServerRunningAfterExit) {
-			await fsp.unlink(keepAlivePath).catch(() => {})
-			await sleep(200)
-		}
-
-		afterState = await readState(iceDirName)
-		const afterStateExists = fs.existsSync(stateFilePath(iceDirName))
-		if (s.expectStateJsonPresentAfterExit) {
-			expect(afterStateExists).toBe(true)
-		} else {
-			expect(afterStateExists).toBe(false)
-		}
-
-		if (s.expectServerRunningAfterExit) {
-			await expect(waitTcpReady(host, port, 3_000)).resolves.toBeUndefined()
-		} else {
-			await expect(waitTcpReady(host, port, 1_000)).rejects.toBeTruthy()
-		}
-
-		// Cleanup manual server if any
-		await killTree(existingManual)
 	})
 })

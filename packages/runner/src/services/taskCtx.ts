@@ -9,7 +9,7 @@ import {
 	ManagedRuntime,
 	Option,
 } from "effect"
-import { ReplicaServiceClass, type ReplicaService } from "../services/replica.js"
+import { ReplicaServiceClass } from "../services/replica.js"
 import {
 	CanisterIds,
 	ProgressUpdate,

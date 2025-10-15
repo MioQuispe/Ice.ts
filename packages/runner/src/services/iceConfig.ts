@@ -2,13 +2,12 @@ import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
 	ICEConfig,
 	ICEConfigFile,
-	ICEConfigPromise,
 	TaskTree,
 	TaskTreeNode,
 } from "../types/types.js"
 import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
-import { InstallModes } from "./replica.js"
+import { InstallModes, ReplicaStartError } from "./replica.js"
 import { LogLevel } from "effect/LogLevel"
 import { IceDir } from "./iceDir.js"
 
@@ -57,6 +56,7 @@ export class ICEConfigError extends Data.TaggedError("ICEConfigError")<{
 
 const createService = (globalArgs: {
 	network: string
+	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 }) =>
@@ -93,7 +93,7 @@ const createService = (globalArgs: {
 		) as TaskTree
 		const transformedTaskTree = yield* applyPlugins(taskTree)
 		const iceCtx = { iceDirPath, ...globalArgs }
-		let config: Partial<ICEConfigPromise>
+		let config: Partial<ICEConfig>
 		const d = mod.default
 		if (typeof d === "function") {
 			// TODO: both sync and async in type signature
@@ -119,12 +119,19 @@ const createService = (globalArgs: {
 		yield* Effect.tryPromise({
 			try: () => {
 				return (
-					config.networks?.[currentNetwork]?.replica.start() ??
+					config.networks?.[currentNetwork]?.replica.start({
+						iceDirPath,
+						policy: globalArgs.policy,
+						network: currentNetwork,
+						logLevel: globalArgs.logLevel,
+						background: globalArgs.background,
+					}) ??
 					Promise.resolve()
 				)
 			},
 			catch: (error) => {
-				return new ICEConfigError({
+				return new ReplicaStartError({
+					reason: (error as ReplicaStartError).reason,
 					message: `Failed to start replicas in config ${error}`,
 				})
 			},
@@ -162,12 +169,13 @@ export class ICEConfigInject extends Context.Tag("ICEConfigInject")<
 export class ICEConfigService extends Context.Tag("ICEConfigService")<
 	ICEConfigService,
 	{
-		readonly config: Partial<ICEConfigPromise>
+		readonly config: Partial<ICEConfig>
 		readonly taskTree: TaskTree
 		readonly globalArgs: {
 			network: string
 			logLevel: "debug" | "info" | "error"
 			background: boolean
+			policy: "reuse" | "restart"
 		}
 	}
 >() {
@@ -175,6 +183,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 		network: string
 		logLevel: "debug" | "info" | "error"
 		background: boolean
+		policy: "reuse" | "restart"
 	}) => Layer.effect(ICEConfigService, createService(globalArgs))
 
 	static readonly Test = (
@@ -182,9 +191,10 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			network: string
 			logLevel: "debug" | "info" | "error"
 			background: boolean
+			policy: "reuse" | "restart"
 		},
 		taskTree: TaskTree,
-		config: Partial<ICEConfigPromise>,
+		config: Partial<ICEConfig>,
 	) =>
 		Layer.effect(
 			ICEConfigService,

@@ -84,20 +84,18 @@ export class PICReplica implements ReplicaServiceClass {
 	public readonly host: string // "0.0.0.0" (ip)
 	public readonly port: number
 	public readonly ttlSeconds: number
-	private readonly ctx: ICEConfigContext
 	private readonly picConfig: CreateInstanceOptions
 
 	private monitor: Monitor | undefined
 	private client?: InstanceType<typeof CustomPocketIcClient>
 	private pic?: PocketIc
-	private started = false
+	private ctx: ICEConfigContext | undefined
 	private sessionLeasePath: string | undefined
 	private sessionLeaseTimer: NodeJS.Timeout | undefined
 	private readonly sessionLeaseId: string
 	private startLeaseAcquired = false
 
 	constructor(
-		ctx: ICEConfigContext,
 		opts: {
 			host?: string
 			port?: number
@@ -105,7 +103,6 @@ export class PICReplica implements ReplicaServiceClass {
 			picConfig?: CreateInstanceOptions
 		} = {},
 	) {
-		this.ctx = ctx
 		this.host = opts.host ?? "0.0.0.0"
 		this.port = opts.port ?? 8081
 		this.ttlSeconds = opts.ttlSeconds ?? 9_999_999_999
@@ -113,8 +110,10 @@ export class PICReplica implements ReplicaServiceClass {
 		this.sessionLeaseId = `session_${process.pid}_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`
 	}
 
-	async start(): Promise<void> {
-		if (this.started) return
+	async start(ctx: ICEConfigContext): Promise<void> {
+        // TODO: throw ReplicaStartError where appropriate
+		if (this.ctx) return
+		this.ctx = ctx
 		try {
 			await this.acquireSessionLease()
 			// Start/adopt/reuse monitor
@@ -184,8 +183,6 @@ export class PICReplica implements ReplicaServiceClass {
 			// 	// best-effort: ignore
 			// }
 
-			this.started = true
-
 			return
 		} catch (error) {
 			await this.releaseSessionLease()
@@ -199,13 +196,14 @@ export class PICReplica implements ReplicaServiceClass {
 			// Release our lease. The monitor process manages lifecycle based on leases.
 			await this.releaseSessionLease()
 		} finally {
-			this.started = false
+			this.ctx = undefined
 			this.monitor = undefined
 			this.startLeaseAcquired = false
 		}
 	}
 
 	private async acquireSessionLease(): Promise<void> {
+		if (!this.ctx) throw new Error("PICReplica not started")
 		if (this.sessionLeasePath) return
 		try {
 			this.sessionLeasePath = await createLeaseFile({
@@ -232,6 +230,7 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	private async releaseSessionLease(): Promise<void> {
+		if (!this.ctx) throw new Error("PICReplica not started")
 		if (this.sessionLeaseTimer) {
 			clearInterval(this.sessionLeaseTimer)
 			this.sessionLeaseTimer = undefined
@@ -240,7 +239,9 @@ export class PICReplica implements ReplicaServiceClass {
 			const leases = await readLeases(
 				path.join(this.ctx.iceDirPath, "pocketic-server", "leases"),
 			)
-			const activeLeaseCount = leases.filter((lease) => lease.active).length
+			const activeLeaseCount = leases.filter(
+				(lease) => lease.active,
+			).length
 			if (this.startLeaseAcquired || activeLeaseCount === 1) {
 				await removeLeaseFile(this.sessionLeasePath).catch(() => {})
 			}

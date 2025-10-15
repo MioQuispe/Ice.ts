@@ -1,3 +1,4 @@
+import { KeyValueStore } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
 import { layerMemory } from "@effect/platform/KeyValueStore"
 import fs from "node:fs"
@@ -21,9 +22,10 @@ import { CanisterIdsService } from "../../src/services/canisterIds.js"
 import { DefaultConfig } from "../../src/services/defaultConfig.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { Moc } from "../../src/services/moc.js"
-import { picReplicaImpl } from "../../src/services/pic/pic.js"
 import { DefaultReplica, Replica } from "../../src/services/replica.js"
 import { TaskRegistry } from "../../src/services/taskRegistry.js"
+import { DeploymentsService } from "../../src/services/deployments.js"
+import { makeTaskLayer, TaskRuntime } from "../../src/services/taskRuntime.js"
 import {
 	makeTaskEffects,
 	TaskParamsToArgs,
@@ -31,7 +33,7 @@ import {
 } from "../../src/tasks/lib.js"
 import { runTask, runTasks } from "../../src/tasks/run.js"
 import { ICEConfig, Task, TaskTree } from "../../src/types/types.js"
-import { makeTaskRunner, makeTestEnv } from "./setup.js"
+import { makeTestEnvEffect } from "./setup.js"
 
 // Not needed for now
 
@@ -101,14 +103,43 @@ describe("custom builder", () => {
 		const taskTree = {
 			test_canister,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-1")
-		// const result = await runtime.runPromise()
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-1")
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 		expect(result).toMatchObject({
 			canisterId: expect.any(String),
@@ -127,13 +158,43 @@ describe("custom builder", () => {
 			test_canister22: test_canister22,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv(".ice_test/custom-builder-2")
+		const { runtime, telemetryExporter } = makeTestEnvEffect(".ice_test/custom-builder-2")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				yield* runTask(test_canister22.children.deploy)
-			}),
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				yield* runTask(test_canister22.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
+			}).pipe(Effect.scoped),
 		)
 		const executionOrder = telemetryExporter
 			.getFinishedSpans()
@@ -192,16 +253,49 @@ describe("custom builder", () => {
 			canister2,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-3")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-3")
 
 		// Deploy both canisters
 		const results = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result1 = yield* runTask(canister1.children.deploy)
-				const result2 = yield* runTask(canister2.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result1 = yield* runTask(canister1.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
+				const result2 = yield* runTask(canister2.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return [result1, result2]
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(results).toHaveLength(2)
@@ -250,16 +344,46 @@ describe("custom builder", () => {
 			main_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-4")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-4")
 
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				// const result1 = yield* runTask(dependency_canister.children.deploy)
 				// TODO: deps dont work?
-				const result = yield* runTask(main_canister.children.deploy)
+				const result = yield* runTask(main_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(result).toMatchObject({
@@ -277,17 +401,47 @@ describe("custom builder", () => {
 			failing_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-5")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-5")
 
 		await expect(
 			runtime.runPromise(
 				Effect.gen(function* () {
-					const { runTask } = yield* makeTaskRunner(taskTree)
+					const globalArgs = {
+						network: "local",
+						logLevel: "debug",
+						background: false,
+					} as const
+					const config = {} satisfies Partial<ICEConfig>
+					const ICEConfigLayer = ICEConfigService.Test(
+						globalArgs,
+						taskTree,
+						config,
+					)
+					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+					const KVStorageLayer = Layer.succeed(
+						KeyValueStore.KeyValueStore,
+						KVStorageImpl,
+					)
+					const DeploymentsLayer = DeploymentsService.Live.pipe(
+						Layer.provide(KVStorageLayer),
+					)
+					const { taskLayer, runtime: taskRuntime } =
+						yield* makeTaskLayer(globalArgs).pipe(
+							Effect.provide(ICEConfigLayer),
+							Effect.provide(DeploymentsLayer),
+						)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime: taskRuntime,
+						taskLayer,
+					})
 					const result = yield* runTask(
 						failing_canister.children.deploy,
+					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.provide(taskLayer),
 					)
 					return result
-				}),
+				}).pipe(Effect.scoped),
 			),
 		).rejects.toThrow()
 	})
@@ -338,14 +492,44 @@ describe("custom builder", () => {
 			canister3,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-6")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-6")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(canister3.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(canister3.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Should execute in dependency order
@@ -403,20 +587,50 @@ describe("custom builder", () => {
 			canister3.children.deploy,
 		]
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-7")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-7")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTasks } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const results = yield* runTasks(
 					tasks.map((t) => ({
 						...t,
 						// TODO?
 						args: { mode: "auto" as const },
 					})),
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return results
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		const maxReached = runtime.runSync(Ref.get(maxConcurrent))
@@ -426,12 +640,9 @@ describe("custom builder", () => {
 	it("should handle cache invalidation with different configurations", async () => {
 		let configVersion = 1
 
-		const canisterId = makeCanisterId(subnetRanges.NNS)
 		const dynamic_canister = customCanister(({ ctx }) => ({
 			wasm: path.resolve(__dirname, "../fixtures/canister/example.wasm"),
 			candid: path.resolve(__dirname, "../fixtures/canister/example.did"),
-			// Change configuration to invalidate cache
-			canisterId,
 		}))
 			.installArgs(async ({ ctx }) => {
 				return []
@@ -442,15 +653,45 @@ describe("custom builder", () => {
 			dynamic_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-8")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-8")
 
 		// First run with configVersion = 1
 		const firstResult = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(dynamic_canister.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(dynamic_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(firstResult).toMatchObject({
@@ -464,10 +705,40 @@ describe("custom builder", () => {
 		// Second run should re-execute due to configuration change
 		const secondResult = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(dynamic_canister.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(dynamic_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(secondResult).toMatchObject({
@@ -487,16 +758,46 @@ describe("custom builder", () => {
 		}
 
 		// Test with install mode
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-9")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-9")
 
 		const result = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const result = yield* runTask(
 					test_canister_install_mode.children.deploy,
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(result).toMatchObject({
@@ -516,33 +817,123 @@ describe("custom builder", () => {
 			test_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-10")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-10")
 
 		// First deploy the canister
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Then stop it
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.stop)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.stop).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Then remove it
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.remove)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.remove).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Should complete without errors
@@ -559,24 +950,84 @@ describe("custom builder", () => {
 			test_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-11")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-11")
 
 		// Deploy the canister first
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.deploy)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.deploy).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// Check status
 		const statusResult = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
-				const result = yield* runTask(test_canister.children.status)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
+				const result = yield* runTask(test_canister.children.status).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		expect(statusResult).toMatchObject({
@@ -602,16 +1053,46 @@ describe("custom builder", () => {
 		const taskTree = {
 			test_canister,
 		}
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-12")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-12")
 
 		const res = await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const { canisterId } = yield* runTask(
 					test_canister.children.deploy,
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return canisterId
-			}),
+			}).pipe(Effect.scoped),
 		)
 		const canisterId = res
 
@@ -623,13 +1104,43 @@ describe("custom builder", () => {
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const result = yield* runTask(test_canister.children.deploy, {
 					mode: "reinstall",
 					...canisterConfig,
-				})
+				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// expect(executionOrder).toContain("install_args_executed")
@@ -641,13 +1152,43 @@ describe("custom builder", () => {
 		await runtime.runPromise(
 			Effect.gen(function* () {
 				// TODO: it runs upgrade even though we set "reinstall"
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const result = yield* runTask(test_canister.children.deploy, {
 					mode: "reinstall",
 					...canisterConfig,
-				})
+				}).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
+				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		// install should be cached (not executed again)
@@ -684,17 +1225,47 @@ describe("custom builder", () => {
 			dependent_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-13")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-13")
 
 		await expect(
 			runtime.runPromise(
 				Effect.gen(function* () {
-					const { runTask } = yield* makeTaskRunner(taskTree)
+					const globalArgs = {
+						network: "local",
+						logLevel: "debug",
+						background: false,
+					} as const
+					const config = {} satisfies Partial<ICEConfig>
+					const ICEConfigLayer = ICEConfigService.Test(
+						globalArgs,
+						taskTree,
+						config,
+					)
+					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+					const KVStorageLayer = Layer.succeed(
+						KeyValueStore.KeyValueStore,
+						KVStorageImpl,
+					)
+					const DeploymentsLayer = DeploymentsService.Live.pipe(
+						Layer.provide(KVStorageLayer),
+					)
+					const { taskLayer, runtime: taskRuntime } =
+						yield* makeTaskLayer(globalArgs).pipe(
+							Effect.provide(ICEConfigLayer),
+							Effect.provide(DeploymentsLayer),
+						)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime: taskRuntime,
+						taskLayer,
+					})
 					const result = yield* runTask(
 						dependent_canister.children.deploy,
+					).pipe(
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.provide(taskLayer),
 					)
 					return result
-				}),
+				}).pipe(Effect.scoped),
 			),
 		).rejects.toThrow()
 	})
@@ -759,16 +1330,46 @@ describe("custom builder", () => {
 			branching_convergence_canister,
 		}
 
-		const { runtime, telemetryExporter } = makeTestEnv("ice_test/custom-builder-14")
+		const { runtime, telemetryExporter } = makeTestEnvEffect("ice_test/custom-builder-14")
 
 		await runtime.runPromise(
 			Effect.gen(function* () {
-				const { runTask } = yield* makeTaskRunner(taskTree)
+				const globalArgs = {
+					network: "local",
+					logLevel: "debug",
+					background: false,
+				} as const
+				const config = {} satisfies Partial<ICEConfig>
+				const ICEConfigLayer = ICEConfigService.Test(
+					globalArgs,
+					taskTree,
+					config,
+				)
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
+				const { taskLayer, runtime: taskRuntime } =
+					yield* makeTaskLayer(globalArgs).pipe(
+						Effect.provide(ICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+					)
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+				})
 				const result = yield* runTask(
 					branching_convergence_canister.children.deploy,
+				).pipe(
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.provide(taskLayer),
 				)
 				return result
-			}),
+			}).pipe(Effect.scoped),
 		)
 
 		console.log(executionOrder)

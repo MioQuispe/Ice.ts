@@ -21,7 +21,6 @@ import {
 	InitializedDefaultConfig,
 } from "../services/defaultConfig.js"
 import { ICEConfigService } from "../services/iceConfig.js"
-import { type ReplicaService } from "../services/replica.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type {
 	CachedTask,

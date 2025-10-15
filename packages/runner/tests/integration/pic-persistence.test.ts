@@ -4,7 +4,7 @@ import { Effect, Layer } from "effect"
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import { Principal } from "@icp-sdk/core/principal"
 
-import { makeTestEnvEffect, makeTaskRunner } from "./setup.js"
+import { makeTestEnvEffect } from "./setup.js"
 import fs from "node:fs"
 import { customCanister } from "../../src/builders/index.js"
 import { DefaultReplica } from "../../src/services/replica.js"
