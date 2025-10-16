@@ -44,9 +44,8 @@ import {
 	makeMonitor,
 	type Monitor,
 	createLeaseFile,
-	heartbeatLeaseFile,
-	removeLeaseFile,
-	readLeases,
+	removeLeaseFileByPath,
+	readState,
 } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
 import { Record as EffectRecord, Array as EffectArray } from "effect"
@@ -75,177 +74,170 @@ const defaultPicConfig: CreateInstanceOptions = {
 	application: [{ state: { type: SubnetStateType.New } }],
 }
 
-const SESSION_LEASE_TTL_MS = 30_000
 const SESSION_LEASE_HEARTBEAT_MS = 5_000
 
 // ---------------- class ----------------
 
 export class PICReplica implements ReplicaServiceClass {
-	public readonly host: string // "0.0.0.0" (ip)
+	public readonly host: string
 	public readonly port: number
 	public readonly ttlSeconds: number
 	private readonly picConfig: CreateInstanceOptions
 
-	private monitor: Monitor | undefined
+	private monitor: { host: string; port: number; reused: boolean } | undefined
 	private client?: InstanceType<typeof CustomPocketIcClient>
 	private pic?: PocketIc
 	private ctx: ICEConfigContext | undefined
-	private sessionLeasePath: string | undefined
-	private sessionLeaseTimer: NodeJS.Timeout | undefined
-	private readonly sessionLeaseId: string
-	private startLeaseAcquired = false
 
-	constructor(
-		opts: {
-			host?: string
-			port?: number
-			ttlSeconds?: number
-			picConfig?: CreateInstanceOptions
-		} = {},
-	) {
+	private sessionLeasePath: string | undefined
+
+	constructor(opts: {
+		host?: string
+		port: number
+		ttlSeconds?: number
+		picConfig?: CreateInstanceOptions
+	}) {
 		this.host = opts.host ?? "0.0.0.0"
-		this.port = opts.port ?? 8081
+		this.port = opts.port
 		this.ttlSeconds = opts.ttlSeconds ?? 9_999_999_999
 		this.picConfig = opts.picConfig ?? defaultPicConfig
-		this.sessionLeaseId = `session_${process.pid}_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`
 	}
 
 	async start(ctx: ICEConfigContext): Promise<void> {
-        // TODO: throw ReplicaStartError where appropriate
+		// pic.ts
+
+		// import * as path from "node:path"
+		// ... existing imports
+
+		// // inside PICReplica.start(...)
+		// async start(ctx: ICEConfigContext): Promise<void> {
+		//   if (this.ctx) return
+		//   this.ctx = ctx
+
+		//   try {
+		//     // Ensure/adopt/reuse managed instance (or attach to manual)
+		//     this.monitor = monitor
+
+		// ... rest unchanged
+
 		if (this.ctx) return
 		this.ctx = ctx
+
 		try {
-			await this.acquireSessionLease()
-			// Start/adopt/reuse monitor
-			const monitor = await makeMonitor(this.ctx, {
-				host: this.host,
-				port: this.port,
-				ttlSeconds: this.ttlSeconds,
-			})
+			// Ensure/adopt/reuse managed instance (or attach to manual)
+			// 			const monitor = await makeMonitor(this.ctx, {
+			// 				host: this.host,
+			// 				port: this.port,
+			// 			})
+			// -   const monitor = await makeMonitor(this.ctx, {
+			// -     host: this.host,
+			// -     port: this.port,
+			// -   })
+			let monitor: Monitor
+			try {
+				monitor = await makeMonitor(this.ctx, {
+					host: this.host,
+					port: this.port,
+				})
+			} catch (e: any) {
+				// If a manual server is present and we are NOT explicitly restarting, just attach.
+				if (
+					e?.reason === "ManualPocketICPresentError" &&
+					this.ctx?.policy !== "restart"
+				) {
+					monitor = {
+						host: this.host,
+						port: this.port,
+						reused: true,
+						shutdown: () => {},
+						waitForExit: async () => {},
+					}
+				} else {
+					throw e
+				}
+			}
 			this.monitor = monitor
-			const baseUrl = `${monitor.host}:${monitor.port}` // monitor.host already includes http://
+
+			// If managed (state.json present), create a lease bound to state.startedAt
+			// const state = await readState(this.ctx.iceDirPath)
+			const statePath = path.join(
+				this.ctx.iceDirPath,
+				"pocketic-server",
+				"state.json",
+			)
+			const state = await readState(statePath)
+			if (state?.managed && typeof state.startedAt === "number") {
+				// BG lease keeps server alive; FG lease is owned by this process.
+				this.sessionLeasePath = await createLeaseFile({
+					iceDirPath: this.ctx.iceDirPath,
+					mode: this.ctx.background ? "background" : "foreground",
+					serverStartedAt: state.startedAt,
+				})
+			}
+
+			// Build PocketIC client on top of the running base URL
+			const baseUrl = `http://${monitor.host}:${monitor.port}`
+
 			const stateRoot = path.resolve(
 				path.join(this.ctx.iceDirPath, "replica-state"),
 			)
-
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
-			// TODO: clean up this mess
+
+			// Strip topology pieces if state already exists (same heuristic you had)
 			const fixedPicConfig = Object.fromEntries(
 				Object.entries(this.picConfig).filter(
-					([K, V]) =>
-						K !== "icpFeatures" &&
-						K !== "icpConfig" &&
-						(!incomplete
-							? K !== "nns" &&
-								K !== "application" &&
-								K !== "sns" &&
-								K !== "ii" &&
-								K !== "fiduciary" &&
-								K !== "bitcoin"
-							: true),
+					([k]) =>
+						!["icpFeatures", "icpConfig"].includes(k) &&
+						(incomplete
+							? true
+							: ![
+									"nns",
+									"application",
+									"sns",
+									"ii",
+									"fiduciary",
+									"bitcoin",
+								].includes(k)),
 				),
 			)
 
 			const baseRequest: CreateInstanceRequest = {
 				stateDir: effectiveStateDir,
-				initialTime: {
-					AutoProgress: { artificialDelayMs: 0 },
-				},
+				initialTime: { AutoProgress: { artificialDelayMs: 0 } },
 				...(incomplete ? { incompleteState: true } : {}),
 			}
+
 			const createRequest: CreateInstanceRequest = incomplete
 				? { ...fixedPicConfig, ...baseRequest }
 				: { ...baseRequest }
 
-			const createClient = CustomPocketIcClient.create(
+			this.client = await CustomPocketIcClient.create(
 				baseUrl,
 				createRequest,
 			)
-
-			this.client = (
-				monitor.fatalStderr
-					? await Promise.race([
-							monitor.fatalStderr, // rejects on fatal
-							createClient,
-						])
-					: await createClient
-			) as InstanceType<typeof CustomPocketIcClient>
-
-			// Construct PocketIc on top of the custom client
-			// @ts-ignore constructor is private in types but needed here
+			// @ts-ignore (constructor visibility)
 			this.pic = new PocketIc(this.client)
-
-			// // Not necessary because its specified in createInstanceRequest?
-			// try {
-			// 	await this.client.makeLive({ artificialDelayMs: 0 })
-			// } catch {
-			// 	// best-effort: ignore
-			// }
-
 			return
-		} catch (error) {
-			await this.releaseSessionLease()
+		} catch (err) {
+			// Best effort: drop our lease if we created one
+			if (this.sessionLeasePath) {
+				await removeLeaseFileByPath(this.sessionLeasePath).catch(
+					() => {},
+				)
+				this.sessionLeasePath = undefined
+			}
+			this.ctx = undefined
+			this.monitor = undefined
+			throw err
 		}
-
-		throw new Error("Failed to initialize PocketIC client")
 	}
 
 	async stop(): Promise<void> {
-		try {
-			// Release our lease. The monitor process manages lifecycle based on leases.
-			await this.releaseSessionLease()
-		} finally {
-			this.ctx = undefined
-			this.monitor = undefined
-			this.startLeaseAcquired = false
-		}
-	}
-
-	private async acquireSessionLease(): Promise<void> {
-		if (!this.ctx) throw new Error("PICReplica not started")
-		if (this.sessionLeasePath) return
-		try {
-			this.sessionLeasePath = await createLeaseFile({
-				iceDirPath: this.ctx.iceDirPath,
-				leaseId: this.sessionLeaseId,
-				ttlMs: SESSION_LEASE_TTL_MS,
-			})
-			this.sessionLeaseTimer = setInterval(() => {
-				heartbeatLeaseFile(
-					this.sessionLeasePath!,
-					SESSION_LEASE_TTL_MS,
-				).catch(() => {})
-			}, SESSION_LEASE_HEARTBEAT_MS)
-			// Avoid keeping the process alive solely for the heartbeat
-			this.sessionLeaseTimer.unref?.()
-			this.startLeaseAcquired = true
-		} catch {
-			this.sessionLeasePath = undefined
-			if (this.sessionLeaseTimer) {
-				clearInterval(this.sessionLeaseTimer)
-				this.sessionLeaseTimer = undefined
-			}
-		}
-	}
-
-	private async releaseSessionLease(): Promise<void> {
-		if (!this.ctx) throw new Error("PICReplica not started")
-		if (this.sessionLeaseTimer) {
-			clearInterval(this.sessionLeaseTimer)
-			this.sessionLeaseTimer = undefined
-		}
+		// If we created a lease, remove it. Monitor will shut the server down
+		// when fgCount==0 and !hasBg.
 		if (this.sessionLeasePath) {
-			const leases = await readLeases(
-				path.join(this.ctx.iceDirPath, "pocketic-server", "leases"),
-			)
-			const activeLeaseCount = leases.filter(
-				(lease) => lease.active,
-			).length
-			if (this.startLeaseAcquired || activeLeaseCount === 1) {
-				await removeLeaseFile(this.sessionLeasePath).catch(() => {})
-			}
-			this.startLeaseAcquired = false
+			await removeLeaseFileByPath(this.sessionLeasePath).catch(() => {})
 			this.sessionLeasePath = undefined
 		}
 	}

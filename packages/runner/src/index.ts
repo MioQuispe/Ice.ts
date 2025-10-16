@@ -9,9 +9,10 @@ export * from "./ids.js"
 export type { InstallModes } from "./services/replica.js"
 import { PICReplica } from "./services/pic/pic.js"
 
-export const Replica = {
-	PocketIC: PICReplica,
-}
+export const PocketICReplica = PICReplica
+// export const Replica = {
+// 	PocketIC: PICReplica,
+// }
 
 export const Ice = (
 	configOrFn:

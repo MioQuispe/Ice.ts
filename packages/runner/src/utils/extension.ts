@@ -37,7 +37,7 @@ export const formatResult = (arg: unknown): string => {
           typeof value === "bigint" ? value.toString() : value,
         )
   } catch (err) {
-    return String(arg)
+    return String(err)
   }
 }
 

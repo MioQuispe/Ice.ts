@@ -1,19 +1,18 @@
+// src/services/pic/pic-process.ts
 import { spawn, type ChildProcess } from "node:child_process"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import * as url from "node:url"
 import net from "node:net"
-import find from "find-process"
-import { sha256 } from "js-sha256"
+import { randomUUID } from "node:crypto"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 
-import { ReplicaError } from "../replica.js"
+import { ReplicaStartError } from "../replica.js"
 import type { ICEConfigContext } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
-const LEASE_TTL_MS = 5_000
-const LOCK_STALE_MS = 30_000
+/* ----------------------------- Types ---------------------------------------- */
 
 const createDefaultTopology = () =>
 	({
@@ -25,14 +24,7 @@ const createDefaultTopology = () =>
 		application: [{ state: { type: "New" as const } }],
 	}) as const
 
-type LeaseFile = {
-	pid: number
-	createdAt: number
-	heartbeatAt: number
-	ttlMs: number
-}
-
-type NormalizedConfig = {
+export type NormalizedConfig = {
 	pocketIcCli: {
 		bind: string
 		port: number
@@ -41,63 +33,53 @@ type NormalizedConfig = {
 	instance: {
 		stateDir: string
 		initialTime: {
-			AutoProgress: {
-				artificialDelayMs: number
-			}
+			AutoProgress: { artificialDelayMs: number }
 		}
 		topology: ReturnType<typeof createDefaultTopology>
 		incompleteState: boolean
 		nonmainnet: boolean
 		verifiedApplication: number
 	}
-	signatureVariant: "baseline" | "variant-b"
 }
 
 export type PocketIcState = {
 	schemaVersion?: number
 	managed: boolean
-	mode?: "foreground" | "background" | null
-	binPath?: string | null
-	version?: string | null
-	pid: number | null
-	monitorPid?: number | null
-	port?: number | null
-	bind?: string | null
-	startedAt?: number | null
-	args?: ReadonlyArray<string> | null
-	config?: NormalizedConfig | null
-	configHash?: string | null
+	mode: "foreground" | "background" | null
+	monitorPid: number | null
+	binPath: string | null
+	version: string | null
+	args: ReadonlyArray<string> | null
+	bind: string | null
+	port: number | null
+	startedAt: number | null
 	instanceRoot?: string
+	config?: NormalizedConfig | null
+}
+
+export type LeaseFile = {
+	mode: "foreground" | "background"
+	pid: number
+	startedAt: number // == state.startedAt at the moment this lease was created
 }
 
 type Paths = {
 	root: string
 	stateFile: string
-	stateTmp: string
-	locksDir: string
-	adminLock: string
 	leasesDir: string
-	monitorPidFile: string
-	serverPidFile: string
+	spawnLock: string
 	instanceRoot: string
-	keepAliveFile: string
-}
-
-type LeaseRecord = {
-	path: string
-	entry: LeaseFile
-	active: boolean
 }
 
 export type Monitor = {
-	pid: number
 	host: string
 	port: number
 	reused: boolean
 	shutdown: () => void
 	waitForExit: () => Promise<void>
-	fatalStderr?: Promise<never>
 }
+
+/* ----------------------------- Utils ---------------------------------------- */
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -116,42 +98,14 @@ const resolvePaths = (iceDirPath: string): Paths => {
 	return {
 		root,
 		stateFile: path.join(root, "state.json"),
-		stateTmp: path.join(root, "state.json.tmp"),
-		locksDir: path.join(root, "locks"),
-		adminLock: path.join(root, "locks", "admin.lock"),
 		leasesDir: path.join(root, "leases"),
-	monitorPidFile: path.join(root, ".pid"),
-	serverPidFile: path.join(root, ".server.pid"),
-	instanceRoot: root,
-	keepAliveFile: path.join(root, ".keepalive"),
+		spawnLock: path.join(root, "spawn.lock"),
+		instanceRoot: root,
 	}
 }
 
 const ensureDir = async (p: string) => {
 	await fs.mkdir(p, { recursive: true }).catch(() => {})
-}
-
-const writeFileAtomic = async (target: string, contents: string) => {
-	const tmp = `${target}.tmp`
-	await ensureDir(path.dirname(target))
-	const handle = await fs.open(tmp, "w")
-	try {
-		await handle.writeFile(contents, "utf8")
-		await handle.sync()
-	} finally {
-		await handle.close()
-	}
-	await fs.rename(tmp, target)
-	try {
-		const dirHandle = await fs.open(path.dirname(target), "r")
-		try {
-			await dirHandle.sync()
-		} finally {
-			await dirHandle.close()
-		}
-	} catch {
-		// best effort; some FS do not allow syncing dirs
-	}
 }
 
 const readJsonFile = async <T>(p: string): Promise<T | undefined> => {
@@ -163,327 +117,222 @@ const readJsonFile = async <T>(p: string): Promise<T | undefined> => {
 	}
 }
 
-const writeStateFile = async (paths: Paths, state: PocketIcState) => {
-	const payload = {
-		schemaVersion: 1,
-		...state,
-		instanceRoot: paths.instanceRoot,
+const writeFileAtomic = async (target: string, contents: string) => {
+	const tmp = `${target}.tmp`
+	await ensureDir(path.dirname(target))
+	const fh = await fs.open(tmp, "w")
+	try {
+		await fh.writeFile(contents, "utf8")
+		await fh.sync()
+	} finally {
+		await fh.close()
 	}
-	await writeFileAtomic(paths.stateFile, JSON.stringify(payload, null, 2))
+	await fs.rename(tmp, target)
+	try {
+		const d = await fs.open(path.dirname(target), "r")
+		try {
+			await d.sync()
+		} finally {
+			await d.close()
+		}
+	} catch {}
 }
 
-const removeFile = async (p: string) => {
-	await fs.unlink(p).catch(() => {})
-}
+const portListening = (
+	host: string,
+	port: number,
+	timeoutMs = 400,
+): Promise<boolean> =>
+	new Promise((resolve) => {
+		const socket = net.connect({ host, port })
+		let done = false
+		const finish = (v: boolean) => {
+			if (done) return
+			done = true
+			try {
+				socket.destroy()
+			} catch {}
+			resolve(v)
+		}
+		const to = setTimeout(() => finish(false), timeoutMs)
+		socket.once("connect", () => {
+			clearTimeout(to)
+			finish(true)
+		})
+		socket.once("error", () => {
+			clearTimeout(to)
+			finish(false)
+		})
+	})
 
-const cleanupStateArtifacts = async (paths: Paths) => {
-	await removeFile(paths.stateFile)
-	await removeFile(paths.stateTmp)
-	await removeFile(paths.monitorPidFile)
-	await removeFile(paths.serverPidFile)
-	await removeFile(paths.keepAliveFile)
-}
-
-const setKeepAlive = async (paths: Paths, enable: boolean) => {
-	if (enable) {
-		await writeFileAtomic(paths.keepAliveFile, JSON.stringify({ keepAlive: true }))
-	} else {
-		await removeFile(paths.keepAliveFile)
+const waitUntil = async (
+	fn: () => Promise<boolean>,
+	attempts: number,
+	delayMs: number,
+) => {
+	for (let i = 0; i < attempts; i++) {
+		if (await fn()) return
+		await sleep(delayMs)
 	}
+	throw new Error("timeout")
 }
 
-const acquireAdminLock = async (
+const stableSort = (v: unknown): unknown => {
+	if (Array.isArray(v)) return v.map(stableSort)
+	if (v && typeof v === "object") {
+		const entries = Object.entries(v as Record<string, unknown>).sort(
+			([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+		)
+		const out: Record<string, unknown> = {}
+		for (const [k, val] of entries) out[k] = stableSort(val)
+		return out
+	}
+	return v
+}
+
+const deepEqual = (a: unknown, b: unknown): boolean =>
+	JSON.stringify(stableSort(a)) === JSON.stringify(stableSort(b))
+
+/* -------------------------- Spawn lock (spawn.lock) -------------------------- */
+
+const acquireSpawnLock = async (
 	lockPath: string,
-	staleMs: number,
 ): Promise<() => Promise<void>> => {
 	await ensureDir(path.dirname(lockPath))
 	while (true) {
 		try {
-			const handle = await fs.open(lockPath, "wx")
+			const fh = await fs.open(lockPath, "wx")
 			try {
-				await handle.writeFile(
+				await fh.writeFile(
 					JSON.stringify(
-						{ pid: process.pid, acquiredAt: Date.now() },
+						{ pid: process.pid, createdAt: Date.now() },
 						null,
 						2,
 					),
 					"utf8",
 				)
-				await handle.sync()
+				await fh.sync()
 			} finally {
-				await handle.close()
+				await fh.close()
 			}
 			return async () => {
-				await removeFile(lockPath)
+				await fs.unlink(lockPath).catch(() => {})
 			}
-		} catch (error: unknown) {
-			const err = error as NodeJS.ErrnoException
-			if (err.code !== "EEXIST") throw error
-
-			let stale = false
+		} catch (e: any) {
+			if (e?.code !== "EEXIST") throw e
+			let dead = false
 			try {
-				const stat = await fs.stat(lockPath)
-				const age = Date.now() - stat.mtimeMs
-				const payload = await readJsonFile<{ pid?: number }>(lockPath)
-				const holderAlive =
-					payload?.pid && typeof payload.pid === "number"
-						? isPidAlive(payload.pid)
-						: false
-				if (!holderAlive && age > staleMs) {
-					stale = true
-				}
+				const raw = await readJsonFile<{ pid?: number }>(lockPath)
+				dead = raw?.pid ? !isPidAlive(raw.pid) : true
 			} catch {
-				stale = true
+				dead = true
 			}
-			if (stale) {
-				await removeFile(lockPath)
+			if (dead) {
+				await fs.unlink(lockPath).catch(() => {})
 				continue
 			}
-			await sleep(125)
+			await sleep(100)
 		}
 	}
 }
 
-export const readLeases = async (dir: string): Promise<LeaseRecord[]> => {
+/* ----------------------------- Leases ---------------------------------------- */
+
+const listFgAliveLeases = async (
+	dir: string,
+	serverStartedAt: number,
+): Promise<number> => {
 	await ensureDir(dir)
 	const files = await fs.readdir(dir).catch(() => [])
-	const now = Date.now()
-	const out: LeaseRecord[] = []
-	for (const file of files) {
-		if (!file.endsWith(".json")) continue
-		const absolute = path.join(dir, file)
-		try {
-			const parsed = await readJsonFile<LeaseFile>(absolute)
-			if (!parsed) continue
-			const ttl = parsed.ttlMs ?? LEASE_TTL_MS
-			const alive = isPidAlive(parsed.pid)
-			const fresh = now - parsed.heartbeatAt <= ttl
-			const active = alive && fresh
-			out.push({ path: absolute, entry: parsed, active })
-			if (!active) {
-				await removeFile(absolute)
-			}
-		} catch {
-			await removeFile(absolute)
-		}
+	let fg = 0
+	for (const f of files) {
+		if (!f.endsWith(".json")) continue
+		const p = path.join(dir, f)
+		const lease = await readJsonFile<LeaseFile>(p)
+		if (!lease) continue
+		if (lease.mode !== "foreground") continue
+		if (lease.startedAt !== serverStartedAt) continue
+		if (isPidAlive(lease.pid)) fg++
+		else await fs.unlink(p).catch(() => {})
 	}
-	return out.filter((r) => r.active)
+	return fg
 }
 
-export async function createLeaseFile(opts: {
-	iceDirPath: string
-	leaseId: string
-	ttlMs: number
-}): Promise<string> {
-	const { iceDirPath, leaseId, ttlMs } = opts
-	const dir = path.join(iceDirPath, "pocketic-server", "leases")
+const removeBgLeasesFor = async (dir: string, serverStartedAt: number) => {
 	await ensureDir(dir)
-	const leasePath = path.join(dir, `${leaseId}.json`)
-	const now = Date.now()
-	const payload: LeaseFile = {
-		pid: process.pid,
-		createdAt: now,
-		heartbeatAt: now,
-		ttlMs,
-	}
-	await writeFileAtomic(leasePath, JSON.stringify(payload, null, 2))
-	return leasePath
-}
-
-export async function heartbeatLeaseFile(
-	leasePath: string,
-	ttlMs?: number,
-): Promise<void> {
-	try {
-		const txt = await fs.readFile(leasePath, "utf8")
-		const payload = JSON.parse(txt) as LeaseFile
-		payload.heartbeatAt = Date.now()
-		if (typeof ttlMs === "number") {
-			payload.ttlMs = ttlMs
-		}
-		await writeFileAtomic(leasePath, JSON.stringify(payload, null, 2))
-	} catch {
-		// best-effort: if the lease disappeared, nothing to do
-	}
-}
-
-export const removeLeaseFile = async (leasePath: string) => {
-	await removeFile(leasePath)
-}
-
-const stableSortKeys = (value: unknown): unknown => {
-	if (Array.isArray(value)) return value.map((v) => stableSortKeys(v))
-	if (value && typeof value === "object") {
-		const entries = Object.entries(value as Record<string, unknown>).sort(
-			([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
-		)
-		const acc: Record<string, unknown> = {}
-		for (const [k, v] of entries) {
-			acc[k] = stableSortKeys(v)
-		}
-		return acc
-	}
-	return value
-}
-
-const detectIncompleteState = async (stateDir: string): Promise<boolean> => {
-	try {
-		const entries = await fs.readdir(stateDir, { withFileTypes: true })
-		return !entries.some((entry) => entry.isDirectory())
-	} catch {
-		// If the directory is missing, treat as incomplete so we stay conservative.
-		return true
-	}
-}
-
-const computeNormalizedConfig = async (
-	ctx: ICEConfigContext,
-	opts: { host: string; port: number; ttlSeconds?: number },
-	variant: "baseline" | "variant-b",
-): Promise<NormalizedConfig> => {
-	const stateDir = path.resolve(ctx.iceDirPath, "replica-state")
-	const incompleteState = await detectIncompleteState(stateDir)
-	return {
-		pocketIcCli: {
-			bind: opts.host,
-			port: opts.port,
-			ttl: opts.ttlSeconds ?? 9_999_999_999,
-		},
-		instance: {
-			stateDir,
-			initialTime: {
-				AutoProgress: {
-					artificialDelayMs: 0,
-				},
-			},
-			topology: createDefaultTopology(),
-			incompleteState,
-			nonmainnet: ctx.network !== "ic",
-			verifiedApplication: 0,
-		},
-		signatureVariant: variant,
-	}
-}
-
-const computeConfigHash = (config: NormalizedConfig): string => {
-	const stable = stableSortKeys(config)
-	return sha256(JSON.stringify(stable))
-}
-
-const pidByPortIfPocketIc = async (
-	port: number,
-): Promise<number | undefined> => {
-	try {
-		const list = await find("port", port)
-		const match = list.find((p) => {
-			const cmd = (p as any).cmd as string | undefined
-			return !!cmd && cmd.includes(pocketIcPath)
-		})
-		return match ? ((match as any).pid as number) : undefined
-	} catch {
-		return undefined
-	}
-}
-
-const waitTcpReady = (
-	host: string,
-	port: number,
-	perTryMs = 800,
-): Promise<void> => {
-	return new Promise<void>((resolve, reject) => {
-		const socket = net.connect({ host, port })
-		const to = setTimeout(() => socket.destroy(new Error("timeout")), perTryMs)
-
-		const cleanup = () => {
-			clearTimeout(to)
-			socket.removeAllListeners()
-			socket.end()
-			socket.destroy()
-		}
-		socket.once("connect", () => {
-			cleanup()
-			resolve()
-		})
-		socket.once("error", (err) => {
-			cleanup()
-			reject(err)
-		})
-	})
-}
-
-const gracefulStopPid = async (pid: number, timeoutMs: number) => {
-	const start = Date.now()
-	for (const signal of ["SIGINT", "SIGTERM", "SIGKILL"] as const) {
-		try {
-			process.kill(pid, signal)
-		} catch {
-			return
-		}
-		while (Date.now() - start < timeoutMs) {
-			if (!isPidAlive(pid)) return
-			await sleep(100)
+	const files = await fs.readdir(dir).catch(() => [])
+	for (const f of files) {
+		if (!f.endsWith(".json")) continue
+		const p = path.join(dir, f)
+		const lease = await readJsonFile<LeaseFile>(p)
+		if (!lease) continue
+		if (
+			lease.mode === "background" &&
+			lease.startedAt === serverStartedAt
+		) {
+			await fs.unlink(p).catch(() => {})
 		}
 	}
 }
 
-const stopManagedServer = async (state: PocketIcState, paths: Paths) => {
-	const monitorPid = state.monitorPid ?? null
-	const serverPid = state.pid ?? null
-	await setKeepAlive(paths, false)
-
-	if (monitorPid && isPidAlive(monitorPid)) {
-		try {
-			process.kill(monitorPid, "SIGTERM")
-		} catch {}
-		const started = Date.now()
-		while (Date.now() - started < 10_000) {
-			if (!isPidAlive(monitorPid)) break
-			await sleep(100)
-		}
-	}
-	if (serverPid && isPidAlive(serverPid)) {
-		await gracefulStopPid(serverPid, 10_000)
-	}
-	await cleanupStateArtifacts(paths)
+const createLease = async (dir: string, data: LeaseFile): Promise<string> => {
+	await ensureDir(dir)
+	const p = path.join(dir, `${randomUUID()}.json`)
+	await writeFileAtomic(p, JSON.stringify(data, null, 2))
+	return p
 }
+
+/* ----------------------------- State helpers --------------------------------- */
+
+export const readState = (p: string) => readJsonFile<PocketIcState>(p)
+
+const patchState = async (p: string, patch: Partial<PocketIcState>) => {
+	const cur =
+		(await readState(p)) ??
+		({
+			managed: true,
+			mode: null,
+			monitorPid: null,
+			binPath: pocketIcPath,
+			version: pocketIcVersion,
+			args: null,
+			bind: null,
+			port: null,
+			startedAt: null,
+		} as PocketIcState)
+	const merged = { schemaVersion: 1, ...cur, ...patch }
+	await writeFileAtomic(p, JSON.stringify(merged, null, 2))
+}
+
+/* ----------------------------- Monitor spawn --------------------------------- */
 
 const buildMonitorArgs = (opts: {
 	background: boolean
-	parentPid: number
 	stateFile: string
 	leasesDir: string
-	leaseTtlMs: number
 	logFile?: string
-	ip: string
+	host: string
 	port: number
-	ttl: string
 }) => {
-	const args: string[] = [
-		path.resolve(__dirname, "../../../bin/monitor.js"),
-	]
+	const args: string[] = [path.resolve(__dirname, "../../../bin/monitor.js")]
 	if (opts.background) args.push("--background")
-	args.push("--parent", String(opts.parentPid))
 	args.push("--state-file", opts.stateFile)
 	args.push("--leases-dir", opts.leasesDir)
-	args.push("--lease-ttl", String(opts.leaseTtlMs))
 	args.push("--bin", pocketIcPath)
-	if (opts.logFile) {
-		args.push("--log-file", path.resolve(opts.logFile))
-	}
-	args.push("--", "-i", opts.ip, "-p", String(opts.port), "--ttl", opts.ttl)
+	if (opts.logFile) args.push("--log-file", path.resolve(opts.logFile))
+	args.push("--", "-i", opts.host, "-p", String(opts.port))
 	return args
 }
 
-const spawnMonitor = (args: string[], background: boolean): ChildProcess => {
-	return spawn(process.execPath, args, {
+// NOTE: foreground uses stderr=pipe so we can parse fatal lines.
+const spawnMonitor = (args: string[], background: boolean): ChildProcess =>
+	spawn(process.execPath, args, {
 		detached: true,
 		stdio: background ? "ignore" : ["ignore", "inherit", "pipe"],
-		env: {
-			...process.env,
-			RUST_BACKTRACE: "full",
-		},
+		env: { ...process.env, RUST_BACKTRACE: "full" },
 	})
-}
+
+/* ---- Fatal stderr watcher (PocketIC-specific parse of monitor stderr) ------- */
 
 const makeFatalStderrPromise = (
 	proc: ChildProcess,
@@ -493,501 +342,317 @@ const makeFatalStderrPromise = (
 	if (!proc.stderr) {
 		return new Promise<never>(() => {})
 	}
-    return new Promise<never>((_resolve, reject) => {
-        let sawFatalError = false
-        const onData = (chunk: Buffer | string) => {
-            const text =
-                typeof chunk === "string" ? chunk : chunk.toString("utf8")
-            for (const line of text.split("\n")) {
-                if (!line) continue
-                if (/Failed to bind PocketIC server to address/i.test(line)) {
-                    sawFatalError = true
-                    reject(
-                        new ReplicaError({
-                            message: `PocketIC failed to bind to ${ip}:${port}. Port likely in use.`,
-                        }),
-                    )
-                }
-                if (/thread 'main' panicked/i.test(line)) {
-                    sawFatalError = true
-                    reject(
-                        new ReplicaError({
-                            message: `PocketIC panicked during startup: ${line}`,
-                        }),
-                    )
-                }
-            }
-        }
-        proc.stderr?.on("data", onData)
-        proc.on("exit", () => {
-            if (!sawFatalError) return
-            reject(
-                new ReplicaError({
-                    message:
-                        "PocketIC monitor exited unexpectedly during startup",
-                }),
-            )
-        })
-    })
-}
-
-const updatePidFiles = async (paths: Paths, state: PocketIcState) => {
-	if (state.monitorPid) {
-		await writeFileAtomic(
-			paths.monitorPidFile,
-			String(state.monitorPid ?? ""),
-		)
-	} else {
-		await removeFile(paths.monitorPidFile)
-	}
-	if (state.pid) {
-		await writeFileAtomic(paths.serverPidFile, String(state.pid ?? ""))
-	} else {
-		await removeFile(paths.serverPidFile)
-	}
-}
-
-const loadExistingState = async (
-	paths: Paths,
-): Promise<PocketIcState | undefined> => {
-	const state = await readJsonFile<PocketIcState>(paths.stateFile)
-	return state ?? undefined
-}
-
-const normalizeManagedState = (
-	raw: PocketIcState | undefined,
-): PocketIcState | undefined => {
-	if (!raw) return undefined
-	const normalized: PocketIcState = {
-		schemaVersion: raw.schemaVersion ?? 1,
-		managed: raw.managed ?? true,
-		mode: raw.mode ?? null,
-		binPath: raw.binPath ?? pocketIcPath,
-		version: raw.version ?? pocketIcVersion,
-		pid: typeof raw.pid === "number" ? raw.pid : null,
-		monitorPid:
-			typeof raw.monitorPid === "number" ? raw.monitorPid : null,
-		port: raw.port ?? null,
-		bind: raw.bind ?? null,
-		startedAt: raw.startedAt ?? Date.now(),
-		args: raw.args ?? null,
-		config: raw.config ?? null,
-		configHash: raw.configHash ?? null,
-	}
-	if (raw.instanceRoot !== undefined) {
-		normalized.instanceRoot = raw.instanceRoot
-	}
-	return normalized
-}
-
-const adoptManual = async (
-	paths: Paths,
-	bind: string,
-	port: number,
-	pid: number,
-	config: NormalizedConfig,
-	configHash: string,
-) => {
-	const state: PocketIcState = {
-		managed: false,
-		mode: null,
-		binPath: null,
-		version: null,
-		pid,
-		monitorPid: null,
-		port,
-		bind,
-		startedAt: Date.now(),
-		args: ["-i", bind, "-p", String(port), "--ttl", String(config.pocketIcCli.ttl)],
-		config,
-		configHash,
-		instanceRoot: paths.instanceRoot,
-	}
-	await writeStateFile(paths, state)
-	await updatePidFiles(paths, state)
-}
-
-const readStateAndVerify = async (
-	paths: Paths,
-	bind: string,
-	port: number,
-	config: NormalizedConfig,
-	configHash: string,
-): Promise<PocketIcState | undefined> => {
-	const existing = normalizeManagedState(await loadExistingState(paths))
-	if (existing) {
-		if (existing.managed) {
-			if (existing.pid && isPidAlive(existing.pid)) {
-				return existing
+	return new Promise<never>((_resolve, reject) => {
+		let sawFatal = false
+		const onData = (chunk: Buffer | string) => {
+			const text =
+				typeof chunk === "string" ? chunk : chunk.toString("utf8")
+			for (const line of text.split("\n")) {
+				if (!line) continue
+				if (/Failed to bind PocketIC server to address/i.test(line)) {
+					sawFatal = true
+					reject(
+						new ReplicaStartError({
+							reason: "PortInUseError",
+							message: `PocketIC failed to bind to ${ip}:${port}. Port likely in use.`,
+						}),
+					)
+				}
+				if (/thread 'main' panicked/i.test(line)) {
+					sawFatal = true
+					reject(
+						new ReplicaStartError({
+							reason: "PortInUseError",
+							// No dedicated "Panic" code in scenarios; treat as start failure.
+							message: `PocketIC panicked during startup: ${line}`,
+						}),
+					)
+				}
 			}
-			await cleanupStateArtifacts(paths)
-			return undefined
 		}
+		proc.stderr?.on("data", onData)
+		proc.on("exit", () => {
+			if (!sawFatal) return
+			reject(
+				new ReplicaStartError({
+					reason: "PortInUseError",
+					message:
+						"PocketIC monitor exited unexpectedly during startup",
+				}),
+			)
+		})
+	})
+}
 
-		// Manual server recorded in state.json
-		if (existing.pid && isPidAlive(existing.pid)) {
-			const updated: PocketIcState = {
-				...existing,
-				config,
-				configHash,
-				args:
-					existing.args ??
-					["-i", bind, "-p", String(port), "--ttl", String(config.pocketIcCli.ttl)],
-			}
-			await writeStateFile(paths, updated)
-			await updatePidFiles(paths, updated)
-			return updated
-		}
-		await cleanupStateArtifacts(paths)
-		return undefined
+/* ------------------------------- Config -------------------------------------- */
+
+const detectIncompleteState = async (stateDir: string): Promise<boolean> => {
+	try {
+		const entries = await fs.readdir(stateDir, { withFileTypes: true })
+		return !entries.some((e) => e.isDirectory())
+	} catch {
+		return true
 	}
+}
 
-	// No state file: attempt manual adoption.
-	const manualPid = await pidByPortIfPocketIc(port)
-	if (manualPid && isPidAlive(manualPid)) {
-		await adoptManual(paths, bind, port, manualPid, config, configHash)
-		return normalizeManagedState(await loadExistingState(paths))
+const computeNormalizedConfig = async (
+	ctx: ICEConfigContext,
+	host: string,
+	port: number,
+): Promise<NormalizedConfig> => {
+	const stateDir = path.resolve(ctx.iceDirPath, "replica-state")
+	const incompleteState = await detectIncompleteState(stateDir)
+	return {
+		pocketIcCli: { bind: host, port, ttl: 9_999_999_999 },
+		instance: {
+			stateDir,
+			initialTime: { AutoProgress: { artificialDelayMs: 0 } },
+			topology: createDefaultTopology(),
+			incompleteState,
+			nonmainnet: ctx.network !== "ic",
+			verifiedApplication: 0,
+		},
 	}
-
-	return undefined
 }
 
-const subtractCurrentLease = (active: LeaseRecord[]): number => {
-	if (active.length === 0) return 0
-	return Math.max(0, active.length - 1)
-}
-
-const defaultMismatchStrategy = (): "restart" | "reuse" => {
-	const env = process.env["ICE_POCKETIC_ARGS_MISMATCH"]
-	if (env && env.toLowerCase() === "reuse") return "reuse"
-	if (env && env.toLowerCase() === "restart") return "restart"
-	return "reuse"
-}
+/* ------------------------------- Main API ------------------------------------ */
 
 export async function makeMonitor(
 	ctx: ICEConfigContext,
-	opts: {
-		host: string
-		port: number
-		ttlSeconds?: number
-		forceArgsMismatch?: boolean
-		argsMismatchSelection?: "restart" | "reuse"
-	},
+	opts: { host: string; port: number },
 ): Promise<Monitor> {
-	const mode = ctx.background ? "background" : "foreground"
-	const ip = opts.host
+	const mode: "foreground" | "background" = ctx.background
+		? "background"
+		: "foreground"
+	const host = opts.host
 	const port = opts.port
-	const ttl = String(opts.ttlSeconds ?? 9_999_999_999)
-	const logFilePath = path.join(ctx.iceDirPath, "pocket-ic.log")
+	const desiredArgs = ["-i", host, "-p", String(port)]
+	const desiredConfig = await computeNormalizedConfig(ctx, host, port)
 	const paths = resolvePaths(ctx.iceDirPath)
-	const signatureVariant = opts.forceArgsMismatch ? "variant-b" : "baseline"
-	const normalizedConfig = await computeNormalizedConfig(ctx, opts, signatureVariant)
-	const configHash = computeConfigHash(normalizedConfig)
-	const mismatchStrategy =
-		opts.argsMismatchSelection ?? defaultMismatchStrategy()
+	const logFile = path.join(ctx.iceDirPath, "pocket-ic.log")
 
 	await ensureDir(paths.root)
 	await ensureDir(paths.leasesDir)
-	await ensureDir(paths.locksDir)
 
-	const releaseLock = await acquireAdminLock(paths.adminLock, LOCK_STALE_MS)
-
-	let activeLeases: LeaseRecord[] = []
-	let state: PocketIcState | undefined
+	const releaseLock = await acquireSpawnLock(paths.spawnLock)
 	let reused = false
-	let monitorProc: ChildProcess | undefined
-	let fatalStderr: Promise<never> | undefined
-	let managedMismatchDetected = false
-	let restarted = false
-
 	try {
-		activeLeases = await readLeases(paths.leasesDir)
-		state = await readStateAndVerify(paths, ip, port, normalizedConfig, configHash)
+		let st = await readState(paths.stateFile)
 
-		if (state?.managed) {
-			const mismatch =
-				opts.forceArgsMismatch ||
-				(!!state.configHash && state.configHash !== configHash)
-			if (mismatch) {
-				managedMismatchDetected = true
-				const otherActive = subtractCurrentLease(activeLeases)
-				if (mismatchStrategy === "restart" && otherActive > 0) {
-					throw new ReplicaError({
+		if (st) {
+			const listening = await portListening(
+				st.bind ?? host,
+				st.port ?? port,
+			)
+			if (!listening) {
+				await fs.unlink(paths.stateFile).catch(() => {})
+				st = undefined
+			}
+		}
+
+		if (st) {
+			const mismatch = !deepEqual(st.config ?? null, desiredConfig)
+			if (ctx.policy === "restart" && mismatch) {
+				if (st.mode === "background" && mode === "foreground") {
+					throw new ReplicaStartError({
+						reason: "ProtectedServerError",
 						message:
-							"PocketIC restart rejected: server currently in use",
+							"FG restart is not allowed while BG-managed server is present.",
 					})
 				}
-				if (mismatchStrategy === "restart" && otherActive === 0) {
-					await stopManagedServer(state, paths)
-					state = undefined
-					restarted = true
-				} else {
-					reused = true
-				}
-			} else {
-				reused = true
-				// Ensure the reused managed server is actually reachable before proceeding
-				await retry(
-					async () => waitTcpReady(ip, port),
-					60,
-					100,
-					true,
+				const startedAt = st.startedAt ?? 0
+				const fgAlive = await listFgAliveLeases(
+					paths.leasesDir,
+					startedAt,
 				)
+				if (fgAlive > 0) {
+					throw new ReplicaStartError({
+						reason: "PortInUseError",
+						message:
+							"Restart denied: foreground leases are active.",
+					})
+				}
+				await removeBgLeasesFor(paths.leasesDir, startedAt)
+
+				// wait for monitor to shut down (leases==0 → state.json removed)
+				await releaseLock()
+				await waitUntil(
+					async () => !(await readState(paths.stateFile)),
+					200,
+					50,
+				)
+
+				// spawn fresh
+				const relock = await acquireSpawnLock(paths.spawnLock)
+				try {
+					const args = buildMonitorArgs({
+						background: mode === "background",
+						stateFile: paths.stateFile,
+						leasesDir: paths.leasesDir,
+						logFile,
+						host,
+						port,
+					})
+					const proc = spawnMonitor(args, mode === "background")
+					if (mode === "background") {
+						try {
+							proc.unref()
+						} catch {}
+						await waitUntil(
+							async () => !!(await readState(paths.stateFile)),
+							200,
+							50,
+						)
+						await waitUntil(
+							async () => portListening(host, port),
+							200,
+							50,
+						)
+					} else {
+						const fatal = makeFatalStderrPromise(proc, host, port)
+						await Promise.race([
+							fatal,
+							(async () => {
+								await waitUntil(
+									async () =>
+										!!(await readState(paths.stateFile)),
+									200,
+									50,
+								)
+								await waitUntil(
+									async () => portListening(host, port),
+									200,
+									50,
+								)
+								return true
+							})(),
+						])
+					}
+				} finally {
+					await relock()
+				}
+				reused = false
+			} else {
+				await waitUntil(async () => portListening(host, port), 200, 50)
+				reused = true
 			}
 		}
 
-		if (!state) {
-			const manualPid = await pidByPortIfPocketIc(port)
-			if (manualPid && isPidAlive(manualPid)) {
-				await adoptManual(paths, ip, port, manualPid, normalizedConfig, configHash)
-				state = await readStateAndVerify(paths, ip, port, normalizedConfig, configHash)
+		let finalState = await readState(paths.stateFile)
+		if (!finalState) {
+			const occupied = await portListening(host, port)
+			if (occupied) {
+				if (ctx.policy === "restart") {
+					await releaseLock()
+					throw new ReplicaStartError({
+						reason: "ManualPocketICPresentError",
+						message:
+							"Manual PocketIC present; cannot restart unmanaged server.",
+					})
+				}
+				return {
+					host,
+					port,
+					reused: true,
+					shutdown: () => {},
+					waitForExit: async () => {},
+				}
 			}
-		}
 
-		if (!state) {
 			const args = buildMonitorArgs({
 				background: mode === "background",
-				parentPid: process.pid,
 				stateFile: paths.stateFile,
 				leasesDir: paths.leasesDir,
-				leaseTtlMs: LEASE_TTL_MS,
-				logFile: logFilePath,
-				ip,
+				logFile,
+				host,
 				port,
-				ttl,
 			})
-			monitorProc = spawnMonitor(args, mode === "background")
+			const proc = spawnMonitor(args, mode === "background")
 			if (mode === "background") {
 				try {
-					monitorProc.unref()
+					proc.unref()
 				} catch {}
-			}
-
-			if (mode === "background") {
-				const backgroundState = await retry(
-					async () => {
-						const st = normalizeManagedState(
-							await loadExistingState(paths),
-						)
-						if (!st?.pid || !isPidAlive(st.pid)) {
-							throw new ReplicaError({
-								message:
-									"PocketIC background state not ready yet",
-							})
-						}
-						return st
-					},
+				await waitUntil(
+					async () => !!(await readState(paths.stateFile)),
+					200,
 					50,
-					80,
-					true,
 				)
-				await retry(
-					async () => {
-						const owner = await pidByPortIfPocketIc(port)
-						if (owner !== backgroundState.pid) {
-							throw new ReplicaError({
-								message: `PocketIC did not bind ${ip}:${port} yet`,
-							})
-						}
-					},
-					25,
-					120,
-				)
-				await retry(
-					async () => waitTcpReady(ip, port),
-					60,
-					100,
-					true,
-				)
-				const managedState: PocketIcState = {
-					...backgroundState,
-					managed: true,
-					mode,
-					binPath: pocketIcPath,
-					version: pocketIcVersion,
-					pid: backgroundState.pid ?? null,
-					monitorPid: null,
-					port,
-					bind: ip,
-					startedAt: backgroundState.startedAt ?? Date.now(),
-					args:
-						backgroundState.args ?? [
-							"-i",
-							ip,
-							"-p",
-							String(port),
-							"--ttl",
-							ttl,
-						],
-					config: normalizedConfig,
-					configHash,
-					instanceRoot: paths.instanceRoot,
-				}
-			await writeStateFile(paths, managedState)
-			await updatePidFiles(paths, managedState)
-			state = managedState
-			restarted = true
-		} else {
-				fatalStderr = makeFatalStderrPromise(monitorProc, ip, port)
+				await waitUntil(async () => portListening(host, port), 200, 50)
+			} else {
+				const fatal = makeFatalStderrPromise(proc, host, port)
 				await Promise.race([
-					fatalStderr,
-					retry(
-						async () => waitTcpReady(ip, port),
-						60,
-						120,
-						true,
-					),
-				])
-				const observed = await retry(
-					async () => {
-						const snapshot = normalizeManagedState(
-							await loadExistingState(paths),
+					fatal,
+					(async () => {
+						await waitUntil(
+							async () => !!(await readState(paths.stateFile)),
+							200,
+							50,
 						)
-						if (!snapshot?.pid || !isPidAlive(snapshot.pid)) {
-							throw new ReplicaError({
-								message:
-									"PocketIC foreground state not ready yet",
-							})
-						}
-						return snapshot
-					},
-					50,
-					80,
-					true,
-				)
-				const fgState: PocketIcState = {
-					...observed,
-					managed: true,
-					mode,
-					binPath: pocketIcPath,
-					version: pocketIcVersion,
-					pid: observed.pid,
-					monitorPid: monitorProc.pid ?? observed.monitorPid ?? null,
-					port,
-					bind: ip,
-					startedAt: observed.startedAt ?? Date.now(),
-					args:
-						observed.args ?? [
-							"-i",
-							ip,
-							"-p",
-							String(port),
-							"--ttl",
-							ttl,
-						],
-					config: normalizedConfig,
-					configHash,
-					instanceRoot: paths.instanceRoot,
-				}
-			await writeStateFile(paths, fgState)
-			await updatePidFiles(paths, fgState)
-			state = fgState
-			restarted = true
+						await waitUntil(
+							async () => portListening(host, port),
+							200,
+							50,
+						)
+						return true
+					})(),
+				])
+			}
+			reused = false
+			finalState = await readState(paths.stateFile)
 		}
-		reused = false
-		} else if (!state.managed) {
-		const manualMismatch =
-			opts.forceArgsMismatch ||
-			(state.configHash !== undefined &&
-				state.configHash !== null &&
-				state.configHash !== configHash)
-		if (manualMismatch && mismatchStrategy === "restart") {
-			throw new ReplicaError({
-				message:
-					"Cannot restart manually managed PocketIC server",
+
+		// patch state so future runs can detect mismatch by deep-equal on config
+		if (finalState) {
+			await patchState(paths.stateFile, {
+				binPath: pocketIcPath,
+				version: pocketIcVersion,
+				mode: finalState.mode ?? mode,
+				bind: host,
+				port,
+				args: ["-i", host, "-p", String(port)],
+				config: desiredConfig,
 			})
 		}
-			if (!manualMismatch || mismatchStrategy !== "reuse") {
-			const updatedManual: PocketIcState = {
-				...state,
-				config: normalizedConfig,
-				configHash,
-				args:
-					state.args ??
-					["-i", ip, "-p", String(port), "--ttl", ttl],
-			}
-			await writeStateFile(paths, updatedManual)
-			await updatePidFiles(paths, updatedManual)
-			state = updatedManual
-		}
-			reused = true
-			// For manual, verify reachability before returning
-			await retry(async () => waitTcpReady(ip, port), 60, 100, true)
-	} else {
-		if (!restarted && !managedMismatchDetected) {
-			const updated: PocketIcState = {
-				...state,
-				mode: state.mode ?? mode,
-				config: normalizedConfig,
-				configHash,
-			}
-			await writeStateFile(paths, updated)
-			await updatePidFiles(paths, updated)
-			state = updated
-		}
-	}
+
+		// create lease for managed only
+		// const stNow = (await readState(paths.stateFile))!
+		// if (stNow?.managed && stNow.startedAt) {
+		// 	const lease: LeaseFile = {
+		// 		mode,
+		// 		pid: mode === "foreground" ? process.pid : 0,
+		// 		startedAt: stNow.startedAt,
+		// 	}
+		// 	await createLease(paths.leasesDir, lease)
+		// }
 	} finally {
-		if (state?.managed) {
-			const needsKeepAlive =
-				(state.mode === "background") ||
-				(state.mode === "foreground" && mode === "background")
-			await setKeepAlive(paths, needsKeepAlive)
-		} else {
-			await setKeepAlive(paths, false)
-		}
 		await releaseLock()
 	}
 
-	const serverPid = state?.managed
-		? state.pid ?? monitorProc?.pid ?? -1
-		: state?.pid ?? -1
-
-	const shutdown =
-		mode === "background" || reused
-			? () => {}
-			: () => {
-					try {
-						if (monitorProc?.pid) {
-							process.kill(monitorProc.pid, "SIGTERM")
-						}
-					} catch {}
-				}
-
-	const waitForExit =
-		mode === "background" || reused
-			? async () => {}
-			: async () =>
-					await new Promise<void>((resolve) => {
-						monitorProc?.on("exit", () => resolve())
-					})
-
 	return {
-		pid: serverPid ?? -1,
-		host: `http://${ip}`,
+		host,
 		port,
 		reused,
-		shutdown,
-		waitForExit,
-		...(fatalStderr ? { fatalStderr } : {}),
+		shutdown: () => {},
+		waitForExit: async () => {},
 	}
 }
 
-async function retry<T>(
-	fn: () => Promise<T>,
-	attempts: number,
-	delayMs: number,
-	exponential = false,
-): Promise<T> {
-	let lastErr: unknown
-	for (let i = 0; i < attempts; i++) {
-		try {
-			return await fn()
-		} catch (error) {
-			lastErr = error
-			const waitFor =
-				exponential && i > 0 ? delayMs * 2 ** i : delayMs
-			await sleep(waitFor)
-		}
+/* ------------ Optional helpers used by other parts of the runner ------------- */
+
+export async function createLeaseFile(opts: {
+	iceDirPath: string
+	mode: "foreground" | "background"
+	serverStartedAt: number
+}): Promise<string> {
+	const dir = path.join(opts.iceDirPath, "pocketic-server", "leases")
+	const lease: LeaseFile = {
+		mode: opts.mode,
+		pid: opts.mode === "foreground" ? process.pid : 0,
+		startedAt: opts.serverStartedAt,
 	}
-	throw lastErr
+	return createLease(dir, lease)
+}
+
+export async function removeLeaseFileByPath(p: string) {
+	await fs.unlink(p).catch(() => {})
 }

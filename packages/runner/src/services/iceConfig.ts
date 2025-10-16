@@ -116,6 +116,7 @@ const createService = (globalArgs: {
 			config = d
 		}
 		const currentNetwork = globalArgs.network ?? "local"
+        // TODO: dont start here!!!
 		yield* Effect.tryPromise({
 			try: () => {
 				return (

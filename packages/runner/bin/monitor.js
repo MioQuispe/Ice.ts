@@ -6,6 +6,8 @@ import path from "node:path"
 import process from "node:process"
 
 const LEASE_CHECK_INTERVAL_MS = 100
+// Small grace so FG doesn't get torn down before the first lease appears.
+const INITIAL_LEASE_GRACE_MS = 3000
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -46,31 +48,32 @@ async function removeFile(filePath) {
 	await fsp.unlink(filePath).catch(() => {})
 }
 
-async function readLeases(dir, ttlMs) {
+async function readActiveLeaseCount(leasesDir) {
 	try {
-		await fsp.mkdir(dir, { recursive: true })
-		const entries = await fsp.readdir(dir)
+		await fsp.mkdir(leasesDir, { recursive: true })
+		const entries = await fsp.readdir(leasesDir)
 		if (!entries || entries.length === 0) return 0
-		const now = Date.now()
+
 		let active = 0
 		for (const entry of entries) {
 			if (!entry.endsWith(".json")) continue
-			const absolute = path.join(dir, entry)
+			const absolute = path.join(leasesDir, entry)
 			try {
 				const raw = await fsp.readFile(absolute, "utf8")
 				const data = JSON.parse(raw)
-				const leaseTtl = typeof data.ttlMs === "number" ? data.ttlMs : ttlMs
-				const alive = typeof data.pid === "number" ? isAlive(data.pid) : false
-				const fresh =
-					typeof data.heartbeatAt === "number"
-						? now - data.heartbeatAt <= leaseTtl
-						: false
-				if (alive && fresh) {
+				// Lease is considered active if:
+				//  - it has no pid field (we err on the side of keeping it), OR
+				//  - its pid is still alive.
+				const ownerPid =
+					typeof data.pid === "number" ? data.pid : undefined
+				if (ownerPid == null || isAlive(ownerPid)) {
 					active++
 				} else {
+					// owner is dead -> reap stale lease
 					await removeFile(absolute)
 				}
 			} catch {
+				// unreadable/corrupt -> reap
 				await removeFile(absolute)
 			}
 		}
@@ -111,30 +114,23 @@ const extractNet = (argv) => {
 
 const parse = (argv) => {
 	const result = {
-		parent: undefined,
 		bin: undefined,
 		args: [],
 		stateFile: undefined,
 		background: false,
 		logFile: undefined,
 		leasesDir: undefined,
-		leaseTtlMs: 5_000,
 	}
 	const sep = argv.indexOf("--")
 	const head = sep === -1 ? argv : argv.slice(0, sep)
 	const tail = sep === -1 ? [] : argv.slice(sep + 1)
 	for (let i = 0; i < head.length; i++) {
 		const token = head[i]
-		if (token === "--parent") result.parent = Number(head[++i])
-		else if (token === "--bin") result.bin = head[++i]
+		if (token === "--bin") result.bin = head[++i]
 		else if (token === "--state-file") result.stateFile = head[++i]
 		else if (token === "--background") result.background = true
 		else if (token === "--log-file") result.logFile = head[++i]
 		else if (token === "--leases-dir") result.leasesDir = head[++i]
-		else if (token === "--lease-ttl") {
-			const raw = Number(head[++i])
-			if (!Number.isNaN(raw) && raw > 0) result.leaseTtlMs = raw
-		}
 	}
 	result.args = tail
 	return result
@@ -155,21 +151,11 @@ async function cleanupState(stateFile) {
 }
 
 async function main() {
-	const {
-		parent,
-		bin,
-		args,
-		stateFile,
-		background,
-		logFile,
-		leasesDir,
-		leaseTtlMs,
-	} = parse(process.argv.slice(2))
-	const keepAliveFile = stateFile
-		? path.join(path.dirname(stateFile), ".keepalive")
-		: undefined
+	const { bin, args, stateFile, background, logFile, leasesDir } = parse(
+		process.argv.slice(2),
+	)
 
-	if (!parent || !bin) {
+	if (!bin) {
 		console.error("[pocketic-monitor] missing required arguments")
 		process.exit(2)
 	}
@@ -180,51 +166,52 @@ async function main() {
 		process.exit(2)
 	}
 
-	const spawnOpts = background
-		? { detached: true, stdio: "ignore" }
-		: { detached: true, stdio: ["ignore", "pipe", "pipe"] }
-
-	const child = spawn(bin, args, spawnOpts)
+	// Keep the monitor alive in both FG and BG
+	//   const spawnOpts = { detached: true, stdio: background ? "ignore" : ["ignore", "pipe", "pipe"] }
+	const child = spawn(bin, args, {
+		detached: true,
+		stdio: background ? "ignore" : ["ignore", "inherit", "pipe"],
+		env: {
+			...process.env,
+			RUST_BACKTRACE: "full",
+		},
+	})
+	//   const child = spawn(bin, args, spawnOpts)
+	try {
+		child.unref()
+	} catch {}
 
 	const { bind, port } = extractNet(args)
 
+	const startedAt = Date.now()
 	const statePayload = {
 		schemaVersion: 1,
 		managed: true,
 		mode: background ? "background" : "foreground",
 		binPath: bin,
 		version: null,
-		pid: child.pid ?? null,
-		monitorPid: process.pid,
+		pid: child.pid ?? null, // server pid
+		monitorPid: process.pid, // this process
 		port: typeof port === "number" ? port : null,
 		bind: bind ?? null,
-		startedAt: Date.now(),
+		startedAt,
 		args,
 		config: null,
 		configHash: null,
-		instanceRoot: stateFile
-			? path.dirname(stateFile)
-			: undefined,
+		instanceRoot: stateFile ? path.dirname(stateFile) : undefined,
 	}
 
 	await writeState(stateFile, statePayload)
 
-	if (logFile) {
+	if (logFile && child.stdout && child.stderr) {
 		try {
 			await fsp.mkdir(path.dirname(logFile), { recursive: true })
 			const ws = fs.createWriteStream(logFile, { flags: "a" })
-			child.stdout?.pipe(ws)
-			child.stderr?.pipe(ws)
+			child.stdout.pipe(ws)
+			child.stderr.pipe(ws)
 		} catch (error) {
 			console.error("[pocketic-monitor] failed to pipe logs:", error)
 		}
-	}
-
-	if (background) {
-		try {
-			child.unref()
-		} catch {}
-		process.exit(0)
 	}
 
 	const handleExitCleanup = async () => {
@@ -241,46 +228,25 @@ async function main() {
 
 	child.on("exit", async (code, signal) => {
 		await cleanupState(stateFile)
-		const exitCode = signal ? 1 : code ?? 0
+		const exitCode = signal ? 1 : (code ?? 0)
 		process.exit(exitCode)
 	})
 
+	// Lease watcher: no TTL. Reap only leases whose owner pid is dead.
 	const leaseWatcher = async () => {
 		if (!leasesDir) return
-		let isBackground = false
-		try {
-			if (stateFile) {
-				const raw = await fsp.readFile(stateFile, "utf8").catch(() => undefined)
-				if (raw) {
-					const j = JSON.parse(raw)
-					isBackground = j?.mode === "background"
-				}
-			}
-		} catch {}
+		const graceUntil = startedAt + INITIAL_LEASE_GRACE_MS
+		let sawAnyLease = false
+
 		while (true) {
 			await sleep(LEASE_CHECK_INTERVAL_MS)
 			if (!isAlive(child.pid)) break
-			const active = await readLeases(leasesDir, leaseTtlMs)
-			if (!isBackground) {
-				if (active === 0) {
-					if (keepAliveFile && fs.existsSync(keepAliveFile)) {
-						continue
-					}
-					await gracefulStop(child.pid)
-					await cleanupState(stateFile)
-					process.exit(0)
-				}
-			} else {
-				// background: do not auto-stop on leases==0
-				continue
-			}
-		}
-	}
 
-	const parentWatcher = async () => {
-		while (true) {
-			await sleep(500)
-			if (!isAlive(parent)) {
+			const active = await readActiveLeaseCount(leasesDir)
+			if (active > 0) sawAnyLease = true
+
+			// Stop strictly when there are 0 active leases, but don’t tear down during the initial grace window.
+			if (active === 0 && (sawAnyLease || Date.now() > graceUntil)) {
 				await gracefulStop(child.pid)
 				await cleanupState(stateFile)
 				process.exit(0)
@@ -290,9 +256,6 @@ async function main() {
 
 	leaseWatcher().catch((error) => {
 		console.error("[pocketic-monitor] lease watcher error:", error)
-	})
-	parentWatcher().catch((error) => {
-		console.error("[pocketic-monitor] parent watcher error:", error)
 	})
 }
 
