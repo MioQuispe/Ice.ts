@@ -1,13 +1,10 @@
-// pic.ts (async/await version, no effect-ts)
+// src/services/pic/pic.ts
 
 import * as url from "node:url"
 import * as path from "node:path"
 import * as fs from "node:fs/promises"
 import { Principal } from "@icp-sdk/core/principal"
-import {
-	//   ActorSubclass,
-	type SignIdentity,
-} from "@icp-sdk/core/agent"
+import { type SignIdentity } from "@icp-sdk/core/agent"
 import { CreateInstanceOptions, PocketIc, createActorClass } from "@dfinity/pic"
 import { PocketIcClient as CustomPocketIcClient } from "./pocket-ic-client.js"
 import {
@@ -21,13 +18,12 @@ import {
 	CanisterDeleteError,
 	CanisterInstallError,
 	CanisterStatusError,
-	CanisterStopError,
 	CanisterStatus,
 	CanisterInfo,
-	CanisterStatusResult,
 	CanisterCreateRangeError,
 	ReplicaError,
 	ReplicaServiceClass,
+	CanisterStopError,
 } from "../replica.js"
 import { idlFactory } from "../../canisters/management_latest/management.did.js"
 import { sha256 } from "js-sha256"
@@ -35,35 +31,23 @@ import { Opt } from "../../index.js"
 import {
 	CreateInstanceRequest,
 	EffectivePrincipal,
-	IcpFeatures,
-	isNotNil,
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
-import { ActorSubclass, Actor } from "../../types/actor.js"
-import {
-	makeMonitor,
-	type Monitor,
-	createLeaseFile,
-	removeLeaseFileByPath,
-	readState,
-} from "./pic-process.js"
+import { ActorSubclass } from "../../types/actor.js"
+import { Monitor } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
-import { Record as EffectRecord, Array as EffectArray } from "effect"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
 async function resolveEffectiveStateDir(
 	stateRoot: string,
 ): Promise<{ dir: string; incomplete: boolean }> {
-	// Minimal rule: always point at parent, and flip incomplete based on presence of any checkpoint subdir
 	const children = await fs
 		.readdir(stateRoot, { withFileTypes: true })
 		.catch(() => [])
 	const hasCheckpoint = children.some((e) => e.isDirectory())
 	return { dir: stateRoot, incomplete: !hasCheckpoint }
 }
-
-// ---------------- default PIC topology config ----------------
 
 const defaultPicConfig: CreateInstanceOptions = {
 	nns: { state: { type: SubnetStateType.New } },
@@ -74,22 +58,16 @@ const defaultPicConfig: CreateInstanceOptions = {
 	application: [{ state: { type: SubnetStateType.New } }],
 }
 
-const SESSION_LEASE_HEARTBEAT_MS = 5_000
-
-// ---------------- class ----------------
-
 export class PICReplica implements ReplicaServiceClass {
 	public readonly host: string
 	public readonly port: number
 	public readonly ttlSeconds: number
 	private readonly picConfig: CreateInstanceOptions
 
-	private monitor: { host: string; port: number; reused: boolean } | undefined
+	private monitor: Monitor | undefined
 	private client?: InstanceType<typeof CustomPocketIcClient>
 	private pic?: PocketIc
 	private ctx: ICEConfigContext | undefined
-
-	private sessionLeasePath: string | undefined
 
 	constructor(opts: {
 		host?: string
@@ -104,78 +82,20 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async start(ctx: ICEConfigContext): Promise<void> {
-		// pic.ts
-
-		// import * as path from "node:path"
-		// ... existing imports
-
-		// // inside PICReplica.start(...)
-		// async start(ctx: ICEConfigContext): Promise<void> {
-		//   if (this.ctx) return
-		//   this.ctx = ctx
-
-		//   try {
-		//     // Ensure/adopt/reuse managed instance (or attach to manual)
-		//     this.monitor = monitor
-
-		// ... rest unchanged
-
-		if (this.ctx) return
 		this.ctx = ctx
 
+		const monitor = new Monitor({
+			background: ctx.background,
+			policy: ctx.policy,
+			iceDirPath: ctx.iceDirPath,
+			host: this.host,
+			port: this.port,
+			isDev: ctx.network !== "ic",
+		})
 		try {
-			// Ensure/adopt/reuse managed instance (or attach to manual)
-			// 			const monitor = await makeMonitor(this.ctx, {
-			// 				host: this.host,
-			// 				port: this.port,
-			// 			})
-			// -   const monitor = await makeMonitor(this.ctx, {
-			// -     host: this.host,
-			// -     port: this.port,
-			// -   })
-			let monitor: Monitor
-			try {
-				monitor = await makeMonitor(this.ctx, {
-					host: this.host,
-					port: this.port,
-				})
-			} catch (e: any) {
-				// If a manual server is present and we are NOT explicitly restarting, just attach.
-				if (
-					e?.reason === "ManualPocketICPresentError" &&
-					this.ctx?.policy !== "restart"
-				) {
-					monitor = {
-						host: this.host,
-						port: this.port,
-						reused: true,
-						shutdown: () => {},
-						waitForExit: async () => {},
-					}
-				} else {
-					throw e
-				}
-			}
+			await monitor.start()
 			this.monitor = monitor
 
-			// If managed (state.json present), create a lease bound to state.startedAt
-			// const state = await readState(this.ctx.iceDirPath)
-			const statePath = path.join(
-				this.ctx.iceDirPath,
-				"pocketic-server",
-				"state.json",
-			)
-			const state = await readState(statePath)
-			if (state?.managed && typeof state.startedAt === "number") {
-				// BG lease keeps server alive; FG lease is owned by this process.
-				this.sessionLeasePath = await createLeaseFile({
-					iceDirPath: this.ctx.iceDirPath,
-					mode: this.ctx.background ? "background" : "foreground",
-					serverStartedAt: state.startedAt,
-				})
-			}
-
-			// Build PocketIC client on top of the running base URL
 			const baseUrl = `http://${monitor.host}:${monitor.port}`
 
 			const stateRoot = path.resolve(
@@ -184,7 +104,6 @@ export class PICReplica implements ReplicaServiceClass {
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
 
-			// Strip topology pieces if state already exists (same heuristic you had)
 			const fixedPicConfig = Object.fromEntries(
 				Object.entries(this.picConfig).filter(
 					([k]) =>
@@ -216,17 +135,10 @@ export class PICReplica implements ReplicaServiceClass {
 				baseUrl,
 				createRequest,
 			)
-			// @ts-ignore (constructor visibility)
+			// @ts-ignore
 			this.pic = new PocketIc(this.client)
 			return
 		} catch (err) {
-			// Best effort: drop our lease if we created one
-			if (this.sessionLeasePath) {
-				await removeLeaseFileByPath(this.sessionLeasePath).catch(
-					() => {},
-				)
-				this.sessionLeasePath = undefined
-			}
 			this.ctx = undefined
 			this.monitor = undefined
 			throw err
@@ -234,12 +146,13 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async stop(): Promise<void> {
-		// If we created a lease, remove it. Monitor will shut the server down
-		// when fgCount==0 and !hasBg.
-		if (this.sessionLeasePath) {
-			await removeLeaseFileByPath(this.sessionLeasePath).catch(() => {})
-			this.sessionLeasePath = undefined
-		}
+		// TODO: ? tell monitor to remove leases?
+		// await monitor.shutdown() //???
+		// const toRemove = [...this.sessionLeasePaths]
+		// this.sessionLeasePaths = []
+		// await Promise.all(
+		// 	toRemove.map((p) => removeLeaseFileByPath(p).catch(() => {})),
+		// )
 	}
 
 	// ---------------- operations ----------------
@@ -260,7 +173,7 @@ export class PICReplica implements ReplicaServiceClass {
 		const Mgmt = createActorClass<ManagementActor>(
 			idlFactory,
 			Principal.fromText("aaaaa-aa"),
-			// @ts-ignore: we need to inject the client here
+			// @ts-ignore injected client
 			this.client,
 		)
 		const mgmt = new Mgmt()
@@ -286,7 +199,7 @@ export class PICReplica implements ReplicaServiceClass {
 				if (key === CanisterStatus.STOPPED)
 					return CanisterStatus.STOPPED
 				return CanisterStatus.NOT_FOUND
-			} catch (e) {
+			} catch {
 				return CanisterStatus.NOT_FOUND
 			}
 		} catch (error) {
@@ -320,7 +233,6 @@ export class PICReplica implements ReplicaServiceClass {
 				} as CanisterInfo
 			return { status: CanisterStatus.NOT_FOUND } as const
 		} catch (error) {
-			// Not found cases we normalize to NOT_FOUND
 			if (
 				error instanceof Error &&
 				(error.message.includes("does not belong to any subnet") ||
@@ -343,12 +255,10 @@ export class PICReplica implements ReplicaServiceClass {
 		const controller = identity.getPrincipal()
 
 		if (canisterId) {
-			// If already exists (or is not NOT_FOUND), reuse
 			const st = await this.getCanisterStatus({ canisterId, identity })
 			if (st !== CanisterStatus.NOT_FOUND) return canisterId
 		}
 
-		// compute subnet ranges from topology
 		const topology = await this.getTopology()
 		const replicaRanges = topology
 			.map((subnet) =>
@@ -458,16 +368,10 @@ export class PICReplica implements ReplicaServiceClass {
 		const { canisterId, wasm, encodedArgs, identity, mode } = params
 		const mgmt = await this.getMgmt(identity)
 		const targetSubnetId = undefined as string | undefined
-		const modePayload: {
-			reinstall?: null
-			upgrade?: null
-			install?: null
-		} = { [mode]: null }
 
-		const MAX_SIZE = 3_670_016 // same as before
+		const MAX_SIZE = 3_670_016
 
 		if (wasm.length > MAX_SIZE) {
-			// chunked
 			const chunkSize = 1_048_576
 			const chunkHashes: ChunkHash[] = []
 			const uploads: Promise<any>[] = []
@@ -491,7 +395,7 @@ export class PICReplica implements ReplicaServiceClass {
 				canister_id: Principal.fromText(canisterId),
 				target_canister: Principal.fromText(canisterId),
 				sender_canister_version: Opt<bigint>(),
-				mode: modePayload,
+				mode: { [mode]: null } as any,
 				chunk_hashes_list: chunkHashes,
 				store_canister: Opt<Principal>(),
 				wasm_module_hash: wasmModuleHash,
@@ -520,7 +424,6 @@ export class PICReplica implements ReplicaServiceClass {
 			return
 		}
 
-		// non-chunked: call management canister with proper effective principal
 		try {
 			const payload = encodeInstallCodeRequest({
 				arg: encodedArgs,
@@ -566,8 +469,6 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 }
 
-// small utils
-
 type ManagementActor = {
 	canister_status: (p: { canister_id: Principal }) => Promise<any>
 	stop_canister: (p: { canister_id: Principal }) => Promise<void>
@@ -579,7 +480,6 @@ type ManagementActor = {
 }
 
 function isInRanges(idText: string, ranges: [string, string][]): boolean {
-	// lightweight check for text ranges: hex compare as strings (consistent with earlier approach)
 	const id = idText
 	return ranges.some(([start, end]) => start <= id && id <= end)
 }
@@ -587,5 +487,3 @@ function isInRanges(idText: string, ranges: [string, string][]): boolean {
 function assertStarted<T>(x: T | undefined, where: string): asserts x is T {
 	if (!x) throw new ReplicaError({ message: `${where}: replica not started` })
 }
-
-// export const

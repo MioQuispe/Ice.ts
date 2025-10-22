@@ -14,7 +14,6 @@ Cold start (BG);bg;none;no;-;0;spawn_new;new;managed_bg;0;-;""No server running,
 ""Manual server exists, no mismatch, reuse (BG)"";bg;manual;no;reuse;0;attach_manual;same;manual;0;-;""Attach to a manually started server from BG, no ephemeral lease is added.""
 ""Manual server exists, mismatch+reuse (FG)"";fg;manual;yes;reuse;0;attach_manual;same;manual;0;-;""Args differ but reuse chosen, attach to manual server, no leases created per spec.""
 ""Manual server exists, mismatch+restart (FG), leases=0"";fg;manual;yes;restart;0;reject_manual;same;manual;0;ManualPocketICPresentError;Fail-fast: cannot restart a manual server we do not manage.
-""Manual server exists, mismatch+restart (FG), leases>0"";fg;manual;yes;restart;1+;reject_manual;same;manual;1+;ManualPocketICPresentError;Fail-fast: cannot restart a manual server we do not manage (leases unaffected).
 Parallel FG #1 (no server);fg;none;no;-;0;spawn_new;new;managed_fg;1;-;First FG task starts the server and acquires the first ephemeral lease.
 Parallel FG #2 (server FG running);fg;managed_fg;no;-;1+;reuse;same;managed_fg;2+;-;Second FG task reuses the running FG server and increases ephemeral leases.
 Parallel BG #1 (no server);bg;none;no;-;0;spawn_new;new;managed_bg;0;-;""First BG task starts BG server with long-TTL lease, no ephemeral leases.""

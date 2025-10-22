@@ -6,7 +6,7 @@ Single managed instance per bind/port. Manual instances (no state) are never mod
 
 1) Components & Roles
 	•	Runner (task launcher): ensures a managed instance exists (adopt or spawn), creates/removes a lease around its work.
-	•	Monitor: owns state.json, watches leases, controls the server’s lifetime. Stops the server when the last lease disappears.
+	•	Monitor: owns monitor.json, watches leases, controls the server’s lifetime. Stops the server when the last lease disappears.
 	•	Pocket-IC server: third-party binary we launch.
 	•	Manual server: user-started, no state; we never modify/stop it.
 
@@ -16,7 +16,7 @@ Single managed instance per bind/port. Manual instances (no state) are never mod
 
 .ice/
   pocketic-server/
-    state.json          # monitor-owned (managed only)
+    monitor.json          # monitor-owned (managed only)
     leases/             # per-task lease files (runner-owned)
       <uuid>.json
     spawn.lock          # best-effort mutex for spawn/adopt
@@ -32,7 +32,7 @@ Single managed instance per bind/port. Manual instances (no state) are never mod
 
 3) File Formats
 
-3.1 state.json (authoritative, monitor-owned)
+3.1 monitor.json (authoritative, monitor-owned)
 
 Written on spawn/adopt; removed when the server is stopped after the last lease is gone.
 
@@ -75,9 +75,9 @@ Exclusive-create (wx) file with { "pid": <runnerPid>, "createdAt": <ms> }. If th
 4) Global Invariants
 	•	One monitor per managed server (per bind/port).
 	•	Server lifetime = (FG lease count > 0) OR (BG lease present).
-	•	Only the monitor writes/deletes state.json. Runners never touch it.
+	•	Only the monitor writes/deletes monitor.json. Runners never touch it.
 	•	Runners only add/remove their own leases.
-	•	If the port is occupied and no state.json exists → manual; never adopt/manage it.
+	•	If the port is occupied and no monitor.json exists → manual; never adopt/manage it.
 
 ⸻
 
@@ -98,7 +98,7 @@ Exclusive-create (wx) file with { "pid": <runnerPid>, "createdAt": <ms> }. If th
 Inputs: { binPath, args, bind, port }, policy ∈ {reuse|restart}, mode ∈ {foreground|background}.
 	1.	Acquire spawn.lock. Retry briefly; if owner PID is dead, remove and retry.
 	2.	Determine current state:
-	•	If state.json exists:
+	•	If monitor.json exists:
 	•	If monitorPid is alive and (bind,port) is listening → managed.
 	•	If policy=restart and desired.config !== state.config:
 	•	List active leases:
@@ -106,16 +106,16 @@ Inputs: { binPath, args, bind, port }, policy ∈ {reuse|restart}, mode ∈ {for
 	•	Else (no active leases, or only this runner’s BG lease):
 	•	Remove this runner’s BG lease if present.
 	•	Release spawn.lock.
-	•	Wait until state.json disappears (monitor stops when leases → 0).
+	•	Wait until monitor.json disappears (monitor stops when leases → 0).
 	•	Re-acquire spawn.lock, then spawn fresh (step 3).
 	•	Else (reuse or hashes equal) → step 4.
 	•	If monitorPid is dead:
 	•	If (bind,port) is listening → adopt: start a new monitor that rewrites monitorPid (preserving startedAt, mode, etc.), then step 4.
-	•	Else (not listening) → remove stale state.json, then step 3 (spawn).
-	•	If no state.json:
+	•	Else (not listening) → remove stale monitor.json, then step 3 (spawn).
+	•	If no monitor.json:
 	•	If (bind,port) is listening → manual; release spawn.lock; do not create leases; connect and run.
 	•	Else → step 3 (spawn).
-	3.	Spawn managed: start monitor in spawn mode; it launches Pocket-IC, writes state.json, and enters its loop.
+	3.	Spawn managed: start monitor in spawn mode; it launches Pocket-IC, writes monitor.json, and enters its loop.
 	4.	Create lease (managed only):
 	•	Read state.startedAt.
 	•	FG: write lease with pid=thisPid, mode:"foreground", startedAt=state.startedAt.
@@ -128,17 +128,17 @@ Inputs: { binPath, args, bind, port }, policy ∈ {reuse|restart}, mode ∈ {for
 
 Spawn mode
 	•	Launch Pocket-IC.
-	•	Write state.json with managed:true, chosen mode, monitorPid, startedAt, config metadata, etc.
+	•	Write monitor.json with managed:true, chosen mode, monitorPid, startedAt, config metadata, etc.
 	•	Keep an internal handle to the child process (implementation detail; not exposed).
 
 Adopt mode
 	•	Assume the server is the one listening on state.bind:state.port.
-	•	Rewrite state.json with the new monitorPid (preserving startedAt, mode, etc.).
+	•	Rewrite monitor.json with the new monitorPid (preserving startedAt, mode, etc.).
 	•	Enter loop.
 
 Loop (repeat):
 	1.	Server liveness: If (bind,port) is not listening (or repeated health checks fail):
-	•	Remove state.json.
+	•	Remove monitor.json.
 	•	Exit (non-zero is fine).
 	2.	Reap leases:
 	•	Delete any lease whose startedAt !== state.startedAt.
@@ -149,7 +149,7 @@ Loop (repeat):
 	•	hasBg = exists BG lease
 	•	If fgCount === 0 && !hasBg:
 	•	Stop the server gracefully (implementation-defined; use child handle when spawned).
-	•	Remove state.json.
+	•	Remove monitor.json.
 	•	Exit(0).
 	4.	Sleep briefly and repeat.
 
@@ -180,8 +180,8 @@ Manual server present:
 9) Edge Cases & Recovery
 	•	Runner crash → monitor reaps the FG lease (PID dead).
 	•	Monitor crash while server keeps running:
-	•	Next runner adopts (port listening & state.json exists with dead monitorPid).
-	•	Server crash with leases → monitor removes state.json and exits; next run spawns fresh.
+	•	Next runner adopts (port listening & monitor.json exists with dead monitorPid).
+	•	Server crash with leases → monitor removes monitor.json and exits; next run spawns fresh.
 	•	Stale spawn.lock → if lock owner PID dead, next runner removes it.
 
 ⸻
@@ -203,7 +203,7 @@ Manual server present:
 12) Why this works
 	•	Server lifetime is strictly tied to leases; no timers, no parent coupling.
 	•	Restart protection is deterministic and race-free.
-	•	Manual vs managed is unambiguous via state.json + port liveness.
+	•	Manual vs managed is unambiguous via monitor.json + port liveness.
 
 ⸻
 
@@ -214,28 +214,28 @@ Runner
 startRunner(mode, policy, desired):
   acquireSpawnLock()
   try:
-    if exists(state.json):
-      st = read(state.json)
+    if exists(monitor.json):
+      st = read(monitor.json)
       if alive(st.monitorPid) and portListening(st.bind, st.port):
         if policy == "restart" and desired.config != st.config:
           leases = activeLeasesFor(st.startedAt)
           if exists(lease not owned by me): error("in use")
           removeMyBgLeasesIfAny()
           releaseSpawnLock()
-          waitUntil(!exists(state.json))
+          waitUntil(!exists(monitor.json))
           acquireSpawnLock()
           spawnManaged(desired)
       else if !alive(st.monitorPid) and portListening(st.bind, st.port):
         adoptManaged()                # rewrites monitorPid; preserves startedAt
       else:
-        remove(state.json) if exists
+        remove(monitor.json) if exists
         spawnManaged(desired)
     else:
       if portListening(desired.bind, desired.port): context = "manual"
       else: spawnManaged(desired)
 
     if context != "manual":
-      st = read(state.json)           # get startedAt
+      st = read(monitor.json)           # get startedAt
       createLease({
         mode,
         pid: thisPid,
@@ -260,7 +260,7 @@ monitorMain(spawnOrAdopt):
 
   loop:
     if !portListening(state.bind, state.port):
-      remove(state.json); exit(1)
+      remove(monitor.json); exit(1)
 
     reap leases where lease.startedAt != state.startedAt
     reap FG leases where !alive(lease.pid)
@@ -270,7 +270,7 @@ monitorMain(spawnOrAdopt):
 
     if fgCount == 0 and !hasBg:
       stopServerGracefully()          # impl-defined; uses child handle if spawned
-      remove(state.json)
+      remove(monitor.json)
       exit(0)
 
     sleep(short)
@@ -281,12 +281,12 @@ monitorMain(spawnOrAdopt):
 
 What the test harness should derive from disk + liveness:
 	•	Kinds
-	•	none: port not occupied AND no state.json.
-	•	manual: port occupied AND no state.json.
-	•	managed: state.json present and port occupied (treat as ours).
+	•	none: port not occupied AND no monitor.json.
+	•	manual: port occupied AND no monitor.json.
+	•	managed: monitor.json present and port occupied (treat as ours).
 	•	Mode classification for managed
-	•	managed_fg if state.json.mode === "foreground".
-	•	managed_bg if state.json.mode === "background".
+	•	managed_fg if monitor.json.mode === "foreground".
+	•	managed_bg if monitor.json.mode === "background".
 	•	Ephemeral (FG) lease count
 	•	Number of lease files with:
 	•	lease.mode:"foreground",

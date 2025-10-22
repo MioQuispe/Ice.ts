@@ -129,41 +129,12 @@ function loadScenarios(): ScenarioRow[] {
 	return out
 }
 
-// ----------------------------- Public test tasks ----------------------------------
-
-const makeTasks = (releasePath: string) => {
-	const hold_task = task("hold_lease")
-		.run(async () => {
-			while (true) {
-				try {
-					await fsp.access(releasePath, fs.constants.F_OK)
-					break
-				} catch {}
-				await sleep(50)
-			}
-		})
-		.make()
-
-	const release_task = task("release_lease")
-		.run(async () => {
-			await fsp.mkdir(path.dirname(releasePath), { recursive: true })
-			await fsp.writeFile(releasePath, "release", "utf8")
-		})
-		.make()
-
-	const noop_task = task("noop")
-		.run(async () => {})
-		.make()
-
-	return { hold_task, release_task, noop_task }
-}
-
 // ----------------------------- Public artifacts snapshot --------------------------
 
 const statePath = (iceDir: string) =>
 	Effect.gen(function* () {
 		const path = yield* Path.Path
-		return path.join(iceDir, "pocketic-server", "state.json")
+		return path.join(iceDir, "pocketic-server", "monitor.json")
 	})
 
 const leasesDir = (iceDir: string) =>
@@ -212,12 +183,11 @@ const getLeases = (iceDir: string) =>
 		const files = entries.filter((n) => n.endsWith(".json"))
 
 		const fgLeases: LeaseFile[] = []
-        const bgLeases: LeaseFile[] = []
+		const bgLeases: LeaseFile[] = []
 		for (const n of files) {
 			const filePath = path.join(leasesDirPath, n)
 			const fs = yield* FileSystem.FileSystem
-			const raw = yield* fs
-				.readFileString(filePath)
+			const raw = yield* fs.readFileString(filePath)
 			const lease = yield* Effect.try({
 				try: () => JSON.parse(raw) as LeaseFile,
 				catch: (e) => e,
@@ -231,7 +201,6 @@ const getLeases = (iceDir: string) =>
 		}
 		return { fgLeases, bgLeases }
 	})
-
 
 const portOccupied = (bind: string, port: number): Effect.Effect<boolean> =>
 	Effect.async<boolean>((resume) => {
@@ -289,7 +258,7 @@ const snapshot = (iceDir: string, bind: string, port: number) =>
 
 		if (st?.managed && occupied) {
 			const startedAt = st.startedAt!
-            const { fgLeases, bgLeases } = yield* getLeases(iceDir)
+			const { fgLeases, bgLeases } = yield* getLeases(iceDir)
 			const mode: "foreground" | "background" =
 				st.mode ?? (bgLeases.length > 0 ? "background" : "foreground")
 
@@ -365,14 +334,19 @@ const matchesEphemeral = (
 				return actual === 0
 			case "1":
 				return actual === 1
+			// case "1+":
+			// 	return actual >= 1
+			// case "2+":
+			// 	return actual >= 2
 			case "1+":
-				return actual >= 1
+				return actual === 1
 			case "2+":
-				return actual >= 2
+				return actual === 2
 			default:
 				return false
 		}
 	})
+
 
 const launchManualPocketIc = (opts: {
 	bind: string
@@ -406,8 +380,11 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 	} else if (row.existing_server === "managed_fg") {
 		policy = "reuse"
 	}
-	if (row.args_mismatch_selection === "restart") {
-		policy = "restart"
+	// if (row.args_mismatch_selection === "restart") {
+	// 	policy = "restart"
+	// }
+	if (row.args_mismatch_selection !== "-") {
+		policy = row.args_mismatch_selection
 	}
 
 	const globalArgs = {
@@ -432,6 +409,7 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 // ----------------------------- Test ------------------------------------------------
 
 describe("process orchestration — scenarios (public APIs only)", () => {
+	// const scenarios = [loadScenarios()[10]]
 	const scenarios = loadScenarios()
 
 	beforeAll(async () => {
@@ -447,170 +425,91 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 	it.each(
 		scenarios.map((s, idx) => [idx, s]) as Array<[number, ScenarioRow]>,
 	)("scenario #%s: %o", async (idx, row) => {
-		// const idx = scenarios.indexOf(row)
-		const iceDir = path.join(`.ice_test/${idx}`)
-		const port = BASE_PORT + idx
-		const { globalArgs, prepareGlobalArgs } = makeGlobalArgs(row, iceDir)
-		const releasePath = path.join(iceDir, ".release", "lease.txt")
-		const useMismatch = row.args_mismatch === "yes"
-
-		// Create a manual scope that lives for the entire test
-		const testScope = await Effect.runPromise(Scope.make())
-
-		const picReplica = new PocketICReplica({
-			host: DEFAULT_BIND,
-			port,
-			picConfig: {
-				icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
-			},
-		})
-		const mismatchReplica = new PocketICReplica({
-			host: DEFAULT_BIND,
-			port,
-			picConfig: { icpConfig: { betaFeatures: IcpConfigFlag.Disabled } },
-		})
-
-		const prepareIceConfig = {
-			networks: { local: { replica: picReplica } },
-		}
-		const tasks = makeTasks(releasePath)
-		const taskTree = {
-			hold: tasks.hold_task,
-			release: tasks.release_task,
-			noop: tasks.noop_task,
-		} satisfies TaskTree
-
-		const PrepareICEConfigLayer = ICEConfigService.Test(
-			prepareGlobalArgs,
-			taskTree,
-			prepareIceConfig,
-		)
-		const { runtime: prepareRuntime } = makeTestEnvEffect(
-			iceDir,
-			prepareGlobalArgs,
-			idx,
-		)
-
-		const runPrepare = Effect.gen(function* () {
-			let manualPid: number | undefined
-			if (row.existing_server === "manual") {
-				manualPid = yield* launchManualPocketIc({
-					bind: DEFAULT_BIND,
-					port,
-					cwd: iceDir,
-				})
-			}
-
-			const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-			const KVStorageLayer = Layer.succeed(
-				KeyValueStore.KeyValueStore,
-				KVStorageImpl,
+		const testEff = Effect.gen(function* () {
+			// const idx = scenarios.indexOf(row)
+			const iceDir = path.join(`.ice_test/${idx}`)
+			const port = BASE_PORT + idx
+			const { globalArgs, prepareGlobalArgs } = makeGlobalArgs(
+				row,
+				iceDir,
 			)
-			const DeploymentsLayer = DeploymentsService.Live.pipe(
-				Layer.provide(KVStorageLayer),
-			)
-			const prepareIceConfigImpl = yield* ICEConfigService
-			const PrepareICEConfigLayer = Layer.succeed(
-				ICEConfigService,
-				prepareIceConfigImpl,
-			)
-			const { taskLayer, runtime: taskRuntime } = yield* makeTaskLayer(
-				prepareGlobalArgs,
-			).pipe(
-				Effect.provide(PrepareICEConfigLayer),
-				Effect.provide(DeploymentsLayer),
-			)
-			const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-				runtime: taskRuntime,
-				taskLayer,
+			const releasePath = path.join(iceDir, ".release", "lease.txt")
+			const useMismatch = row.args_mismatch === "yes"
+
+			// Create a manual scope that lives for the entire test
+			const testScope = yield* Scope.make()
+
+			const picReplica = new PocketICReplica({
+				host: DEFAULT_BIND,
+				port,
+				picConfig: {
+					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
+				},
+			})
+			const mismatchReplica = new PocketICReplica({
+				host: DEFAULT_BIND,
+				port,
+				picConfig: {
+					icpConfig: { betaFeatures: IcpConfigFlag.Disabled },
+				},
 			})
 
-			// TODO: get from IceConfig
-			const { config } = yield* ICEConfigService
-			const replica = config?.networks?.["local"]?.replica!
-
-			// Start only if precondition demands a managed server
-			if (
-				row.existing_server === "managed_fg" ||
-				row.existing_server === "managed_bg"
-			) {
-				yield* Effect.tryPromise({
-					try: async () => {
-						await replica.start(prepareGlobalArgs)
-					},
-					catch: (e) => {
-						if (e instanceof ReplicaStartError) {
-							return new ReplicaStartError({
-								reason: e.reason,
-								message: e.message,
-							})
-						}
-						return e as Error
-					},
+			const prepareIceConfig = {
+				networks: { local: { replica: picReplica } },
+			}
+			const hold_task = task("hold_lease")
+				.run(async () => {
+					while (true) {
+						try {
+							await fsp.access(releasePath, fs.constants.F_OK)
+							console.log("releasePath exists, breaking")
+							break
+						} catch {}
+						await sleep(50)
+					}
 				})
-				yield* Effect.sleep(STABILIZE_MS)
-			}
+				.make()
 
-			// Create one FG lease beforehand if requested, regardless of FG/BG ownership
-			const shouldCreatePreLease =
-				(row.existing_server === "managed_fg" ||
-					row.existing_server === "managed_bg") &&
-				row.ephemeral_leases_before === "1+"
+			const release_task = task("release_lease")
+				.run(async () => {
+					await fsp.mkdir(path.dirname(releasePath), {
+						recursive: true,
+					})
+					await fsp.writeFile(releasePath, "release", "utf8")
+					console.log("releasePath created")
+				})
+				.make()
 
-			let preHoldFiber: Fiber.RuntimeFiber<unknown, unknown> | undefined
-			if (shouldCreatePreLease) {
-				preHoldFiber = yield* runTask(tasks.hold_task).pipe(
-					Effect.provide(taskLayer),
-					Effect.provide(ChildTaskRuntimeLayer),
-					Effect.forkIn(testScope),
-				)
-			}
-			yield* Effect.sleep(STABILIZE_MS)
-			return { manualPid, preHoldFiber }
-		})
+			const noop_task = task("noop")
+				.run(async () => {})
+				.make()
+			const taskTree = {
+				hold: hold_task,
+				release: release_task,
+				noop: noop_task,
+			} satisfies TaskTree
 
-		const { manualPid, preHoldFiber } = await prepareRuntime.runPromise(
-			runPrepare.pipe(Effect.provide(PrepareICEConfigLayer)),
-		)
-
-		if (preHoldFiber) {
-			const fiberStatus = await Effect.runPromise(
-				Fiber.status(preHoldFiber),
+			const PrepareICEConfigLayer = ICEConfigService.Test(
+				prepareGlobalArgs,
+				taskTree,
+				prepareIceConfig,
 			)
-		}
+			const { runtime: prepareRuntime } = makeTestEnvEffect(
+				iceDir,
+				prepareGlobalArgs,
+				idx,
+			)
 
-		// Check if port is still listening
-		const before = await Effect.runPromise(
-			snapshot(iceDir, DEFAULT_BIND, port).pipe(
-				Effect.provide(NodeContext.layer),
-			),
-		)
-		console.log(
-			`[SNAPSHOT BEFORE #${idx}] Result:`,
-			JSON.stringify(before, null, 2),
-		)
+			const runPrepare = Effect.gen(function* () {
+				let manualPid: number | undefined
+				if (row.existing_server === "manual") {
+					manualPid = yield* launchManualPocketIc({
+						bind: DEFAULT_BIND,
+						port,
+						cwd: iceDir,
+					})
+				}
 
-		const { runtime: mainRuntime } = makeTestEnvEffect(
-			iceDir,
-			globalArgs,
-			idx,
-		)
-
-		const mainIceConfig = {
-			networks: {
-				local: {
-					replica: useMismatch ? mismatchReplica : picReplica,
-				},
-			},
-		}
-		const MainICEConfigLayer = ICEConfigService.Test(
-			globalArgs,
-			taskTree,
-			mainIceConfig,
-		)
-
-		const runMain = () =>
-			Effect.gen(function* () {
 				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
 				const KVStorageLayer = Layer.succeed(
 					KeyValueStore.KeyValueStore,
@@ -619,14 +518,14 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				const DeploymentsLayer = DeploymentsService.Live.pipe(
 					Layer.provide(KVStorageLayer),
 				)
-				const iceConfigImpl = yield* ICEConfigService
-				const MainICEConfigLayer = Layer.succeed(
+				const prepareIceConfigImpl = yield* ICEConfigService
+				const PrepareICEConfigLayer = Layer.succeed(
 					ICEConfigService,
-					iceConfigImpl,
+					prepareIceConfigImpl,
 				)
 				const { taskLayer, runtime: taskRuntime } =
-					yield* makeTaskLayer(globalArgs).pipe(
-						Effect.provide(MainICEConfigLayer),
+					yield* makeTaskLayer(prepareGlobalArgs).pipe(
+						Effect.provide(PrepareICEConfigLayer),
 						Effect.provide(DeploymentsLayer),
 					)
 				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
@@ -634,150 +533,256 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					taskLayer,
 				})
 
+				// TODO: get from IceConfig
 				const { config } = yield* ICEConfigService
 				const replica = config?.networks?.["local"]?.replica!
 
-				const preStartSnapshot = yield* snapshot(
-					iceDir,
-					DEFAULT_BIND,
-					port,
-				)
-				console.log(
-					`[MAIN #${idx}] Pre-start snapshot:`,
-					JSON.stringify(preStartSnapshot, null, 2),
-				)
+				// Start only if precondition demands a managed server
+				if (
+					row.existing_server === "managed_fg" ||
+					row.existing_server === "managed_bg"
+				) {
+					yield* Effect.tryPromise({
+						try: async () => {
+							await replica.start(prepareGlobalArgs)
+						},
+						catch: (e) => {
+							if (e instanceof ReplicaStartError) {
+								return new ReplicaStartError({
+									reason: e.reason,
+									message: e.message,
+								})
+							}
+							return e as Error
+						},
+					})
+					yield* Effect.sleep(STABILIZE_MS)
+				}
 
-				// Start/attach per main scenario
-				yield* Effect.tryPromise({
-					try: async () => {
-						await replica.start(globalArgs)
-					},
-					catch: (e) => {
-						if (e instanceof ReplicaStartError) {
-							return new ReplicaStartError({
-								reason: e.reason,
-								message: e.message,
-							})
-						}
-						return e as Error
-					},
-				})
+				// Create one FG lease beforehand if requested, regardless of FG/BG ownership
+				const shouldCreatePreLease =
+					(row.existing_server === "managed_fg" ||
+						row.existing_server === "managed_bg") &&
+					row.ephemeral_leases_before === "1+"
 
-				// Only FG runs create a main FG lease, and only if start succeeded
-				const shouldCreateMainLease = row.run_mode === "fg"
-
-				let mainHoldFiber:
+				let preHoldFiber:
 					| Fiber.RuntimeFiber<unknown, unknown>
 					| undefined
-				if (shouldCreateMainLease) {
-					mainHoldFiber = yield* runTask(tasks.hold_task).pipe(
+				console.log("shouldCreatePreLease", shouldCreatePreLease)
+				if (shouldCreatePreLease) {
+					preHoldFiber = yield* runTask(hold_task).pipe(
 						Effect.provide(taskLayer),
 						Effect.provide(ChildTaskRuntimeLayer),
 						Effect.forkIn(testScope),
 					)
 				}
-
-				return { mainHoldFiber }
+				return { manualPid, preHoldFiber }
 			})
 
-		const mainResult = await mainRuntime.runPromiseExit(
-			runMain().pipe(Effect.provide(MainICEConfigLayer)),
-		)
+			const { manualPid, preHoldFiber } = yield* Effect.tryPromise({
+				try: () =>
+					prepareRuntime.runPromise(
+						runPrepare.pipe(Effect.provide(PrepareICEConfigLayer)),
+					),
+				catch: (error) => {
+					return error
+				},
+			})
 
-		const mainHoldFiber = Exit.match(mainResult, {
-			onSuccess: (value) => {
-				console.log(
-					`[MAIN RESULT] Success - mainHoldFiber: ${value.mainHoldFiber ? "exists" : "undefined"}`,
-				)
-				return value.mainHoldFiber
-			},
-			onFailure: () => {
-				console.log(`[MAIN RESULT] Failure - no fiber`)
-				return undefined
-			},
-		})
+			yield* Effect.sleep(2000)
 
-		// Give forked task time to create lease
-		if (mainHoldFiber) {
-			await sleep(STABILIZE_MS)
+			if (preHoldFiber && row.ephemeral_leases_before === "0") {
+				// const preCleanupStatus = yield* Fiber.status(preHoldFiber)
+				const preInterruptResult = yield* Fiber.interrupt(preHoldFiber)
+				// TODO: wait or check status?
+				// it should clean up before we run next phase.
+			}
 
-			const mainFiberStatus = await Effect.runPromise(
-				Fiber.status(mainHoldFiber),
-			)
-            await sleep(500)
-		}
-
-		console.log(`\n[SNAPSHOT AFTER #${idx}]`)
-		console.log(
-			`[SNAPSHOT AFTER #${idx}] About to call snapshot with: iceDir=${iceDir}, port=${port}`,
-		)
-		const after = await Effect.runPromise(
-			snapshot(iceDir, DEFAULT_BIND, port).pipe(
+			// Check if port is still listening
+			const before = yield* snapshot(iceDir, DEFAULT_BIND, port).pipe(
 				Effect.provide(NodeContext.layer),
-			),
-		)
-		console.log(
-			`[SNAPSHOT AFTER #${idx}] Result:`,
-			JSON.stringify(after, null, 2),
-		)
+			)
+			console.log(
+				`[SNAPSHOT BEFORE #${idx}] Result:`,
+				JSON.stringify(before, null, 2),
+			)
 
-		const errCode = Exit.match(mainResult, {
-			onSuccess: () => "-" as const,
-			onFailure: (cause) => {
-				if (cause._tag === "Fail") {
-					if (cause.error instanceof ReplicaStartError) {
-						return cause.error.reason
+			const { runtime: mainRuntime } = makeTestEnvEffect(
+				iceDir,
+				globalArgs,
+				idx,
+			)
+
+			const mainIceConfig = {
+				networks: {
+					local: {
+						replica: useMismatch ? mismatchReplica : picReplica,
+					},
+				},
+			}
+			const MainICEConfigLayer = ICEConfigService.Test(
+				globalArgs,
+				taskTree,
+				mainIceConfig,
+			)
+
+			const runMain = () =>
+				Effect.gen(function* () {
+					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+					const KVStorageLayer = Layer.succeed(
+						KeyValueStore.KeyValueStore,
+						KVStorageImpl,
+					)
+					const DeploymentsLayer = DeploymentsService.Live.pipe(
+						Layer.provide(KVStorageLayer),
+					)
+					const iceConfigImpl = yield* ICEConfigService
+					const MainICEConfigLayer = Layer.succeed(
+						ICEConfigService,
+						iceConfigImpl,
+					)
+					const { taskLayer, runtime: taskRuntime } =
+						yield* makeTaskLayer(globalArgs).pipe(
+							Effect.provide(MainICEConfigLayer),
+							Effect.provide(DeploymentsLayer),
+						)
+					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+						runtime: taskRuntime,
+						taskLayer,
+					})
+
+					const { config } = yield* ICEConfigService
+					const replica = config?.networks?.["local"]?.replica!
+
+					// Start/attach per main scenario
+					yield* Effect.tryPromise({
+						try: async () => {
+							await replica.start(globalArgs)
+						},
+						catch: (e) => {
+							if (e instanceof ReplicaStartError) {
+								return new ReplicaStartError({
+									reason: e.reason,
+									message: e.message,
+								})
+							}
+							return e as Error
+						},
+					})
+
+					// Only FG runs create a main FG lease, and only if start succeeded
+					const shouldCreateMainLease = row.run_mode === "fg"
+
+					let mainHoldFiber:
+						| Fiber.RuntimeFiber<unknown, unknown>
+						| undefined
+					if (shouldCreateMainLease) {
+						mainHoldFiber = yield* runTask(hold_task).pipe(
+							Effect.provide(taskLayer),
+							Effect.provide(ChildTaskRuntimeLayer),
+							Effect.forkIn(testScope),
+						)
 					}
-				}
-				// unexpected failures:
-				throw cause
-			},
+
+					return { mainHoldFiber }
+				})
+
+			const mainResult = yield* Effect.tryPromise({
+				try: () =>
+					mainRuntime.runPromiseExit(
+						runMain().pipe(Effect.provide(MainICEConfigLayer)),
+					),
+				catch: (error) => {
+					return error
+				},
+			})
+
+			const mainHoldFiber = Exit.match(mainResult, {
+				onSuccess: (value) => {
+					console.log(
+						`[MAIN RESULT] Success - mainHoldFiber: ${value.mainHoldFiber ? "exists" : "undefined"}`,
+					)
+					return value.mainHoldFiber
+				},
+				onFailure: () => {
+					console.log(`[MAIN RESULT] Failure - no fiber`)
+					return undefined
+				},
+			})
+
+			// Give forked task time to create lease
+			if (mainHoldFiber) {
+				yield* Effect.sleep(STABILIZE_MS)
+
+				const mainFiberStatus = yield* Fiber.status(mainHoldFiber)
+				yield* Effect.sleep(500)
+			}
+
+			console.log(`\n[SNAPSHOT AFTER #${idx}]`)
+			console.log(
+				`[SNAPSHOT AFTER #${idx}] About to call snapshot with: iceDir=${iceDir}, port=${port}`,
+			)
+			const after = yield* snapshot(iceDir, DEFAULT_BIND, port).pipe(
+				Effect.provide(NodeContext.layer),
+			)
+			console.log(
+				`[SNAPSHOT AFTER #${idx}] Result:`,
+				JSON.stringify(after, null, 2),
+			)
+
+			const errCode = Exit.match(mainResult, {
+				onSuccess: () => "-" as const,
+				onFailure: (cause) => {
+					if (cause._tag === "Fail") {
+						if (cause.error instanceof ReplicaStartError) {
+							return cause.error.reason
+						}
+					}
+					// unexpected failures:
+					throw cause
+				},
+			})
+
+			// ------------------ Assertions ------------------
+			console.log(`\n[ASSERTIONS]`)
+			console.log(`[ASSERT] errCode: ${errCode} (expected: ${row.error})`)
+
+			expect(errCode).toBe(row.error)
+
+			const pidDelta = yield* toPidChange(before, after)
+			console.log(
+				`[ASSERT] pidDelta: ${pidDelta} (expected: ${row.pid_change})`,
+			)
+			expect(pidDelta).toBe(row.pid_change)
+
+			const serverAfter = yield* classify(after)
+			expect(serverAfter).toBe(row.server_after)
+
+			const ephOk = yield* matchesEphemeral(
+				after.fgLeases.length,
+				row.ephemeral_leases_after,
+			)
+			expect(ephOk).toBe(true)
+
+			// ------------------ Cleanup (best-effort) ------------------
+
+			if (preHoldFiber) {
+				const preCleanupStatus = yield* Fiber.status(preHoldFiber)
+				const preInterruptResult = yield* Fiber.interrupt(preHoldFiber)
+			}
+			if (mainHoldFiber) {
+				const mainCleanupStatus = yield* Fiber.status(mainHoldFiber)
+				const mainInterruptResult =
+					yield* Fiber.interrupt(mainHoldFiber)
+			}
+
+			if (row.existing_server === "manual" && manualPid) {
+				yield* killManualPocketIc(manualPid)
+			}
+
+			// Close the test scope (will interrupt any remaining fibers)
+			yield* Scope.close(testScope, Exit.void)
 		})
-
-		// ------------------ Assertions ------------------
-		console.log(`\n[ASSERTIONS]`)
-		console.log(`[ASSERT] errCode: ${errCode} (expected: ${row.error})`)
-
-		expect(errCode).toBe(row.error)
-
-		const pidDelta = await Effect.runPromise(toPidChange(before, after))
-		console.log(
-			`[ASSERT] pidDelta: ${pidDelta} (expected: ${row.pid_change})`,
-		)
-		expect(pidDelta).toBe(row.pid_change)
-
-		const serverAfter = await Effect.runPromise(classify(after))
-		expect(serverAfter).toBe(row.server_after)
-
-		const ephOk = await Effect.runPromise(
-			matchesEphemeral(after.fgLeases.length, row.ephemeral_leases_after),
-		)
-		expect(ephOk).toBe(true)
-
-		// ------------------ Cleanup (best-effort) ------------------
-
-		if (preHoldFiber) {
-			const preCleanupStatus = await Effect.runPromise(
-				Fiber.status(preHoldFiber),
-			)
-			const preInterruptResult = await Effect.runPromise(
-				Fiber.interrupt(preHoldFiber),
-			)
-		}
-		if (mainHoldFiber) {
-			const mainCleanupStatus = await Effect.runPromise(
-				Fiber.status(mainHoldFiber),
-			)
-			const mainInterruptResult = await Effect.runPromise(
-				Fiber.interrupt(mainHoldFiber),
-			)
-		}
-
-		if (row.existing_server === "manual" && manualPid) {
-			await Effect.runPromise(killManualPocketIc(manualPid))
-		}
-
-		// Close the test scope (will interrupt any remaining fibers)
-		await Effect.runPromise(Scope.close(testScope, Exit.void))
+		await Effect.runPromise(testEff)
 	})
 })

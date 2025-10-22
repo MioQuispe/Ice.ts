@@ -8,7 +8,6 @@ import { randomUUID } from "node:crypto"
 import { pocketIcPath, pocketIcVersion } from "@ice.ts/pocket-ic"
 
 import { ReplicaStartError } from "../replica.js"
-import type { ICEConfigContext } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -60,23 +59,7 @@ export type PocketIcState = {
 export type LeaseFile = {
 	mode: "foreground" | "background"
 	pid: number
-	startedAt: number // == state.startedAt at the moment this lease was created
-}
-
-type Paths = {
-	root: string
-	stateFile: string
-	leasesDir: string
-	spawnLock: string
-	instanceRoot: string
-}
-
-export type Monitor = {
-	host: string
-	port: number
-	reused: boolean
-	shutdown: () => void
-	waitForExit: () => Promise<void>
+	startedAt: number
 }
 
 /* ----------------------------- Utils ---------------------------------------- */
@@ -90,17 +73,6 @@ const isPidAlive = (pid: number | null | undefined): boolean => {
 		return true
 	} catch {
 		return false
-	}
-}
-
-const resolvePaths = (iceDirPath: string): Paths => {
-	const root = path.resolve(iceDirPath, "pocketic-server")
-	return {
-		root,
-		stateFile: path.join(root, "state.json"),
-		leasesDir: path.join(root, "leases"),
-		spawnLock: path.join(root, "spawn.lock"),
-		instanceRoot: root,
 	}
 }
 
@@ -201,9 +173,9 @@ const acquireSpawnLock = async (
 	await ensureDir(path.dirname(lockPath))
 	while (true) {
 		try {
-			const fh = await fs.open(lockPath, "wx")
+			const lockFileHandle = await fs.open(lockPath, "wx")
 			try {
-				await fh.writeFile(
+				await lockFileHandle.writeFile(
 					JSON.stringify(
 						{ pid: process.pid, createdAt: Date.now() },
 						null,
@@ -211,9 +183,9 @@ const acquireSpawnLock = async (
 					),
 					"utf8",
 				)
-				await fh.sync()
+				await lockFileHandle.sync()
 			} finally {
-				await fh.close()
+				await lockFileHandle.close()
 			}
 			return async () => {
 				await fs.unlink(lockPath).catch(() => {})
@@ -222,8 +194,10 @@ const acquireSpawnLock = async (
 			if (e?.code !== "EEXIST") throw e
 			let dead = false
 			try {
-				const raw = await readJsonFile<{ pid?: number }>(lockPath)
-				dead = raw?.pid ? !isPidAlive(raw.pid) : true
+				const lockFileInfo = await readJsonFile<{ pid?: number }>(
+					lockPath,
+				)
+				dead = lockFileInfo?.pid ? !isPidAlive(lockFileInfo.pid) : true
 			} catch {
 				dead = true
 			}
@@ -238,7 +212,8 @@ const acquireSpawnLock = async (
 
 /* ----------------------------- Leases ---------------------------------------- */
 
-const listFgAliveLeases = async (
+/** Count alive FG leases. If serverStartedAt<=0, count ALL alive FG leases. */
+const countAliveFgLeases = async (
 	dir: string,
 	serverStartedAt: number,
 ): Promise<number> => {
@@ -251,7 +226,7 @@ const listFgAliveLeases = async (
 		const lease = await readJsonFile<LeaseFile>(p)
 		if (!lease) continue
 		if (lease.mode !== "foreground") continue
-		if (lease.startedAt !== serverStartedAt) continue
+		if (serverStartedAt > 0 && lease.startedAt !== serverStartedAt) continue
 		if (isPidAlive(lease.pid)) fg++
 		else await fs.unlink(p).catch(() => {})
 	}
@@ -275,34 +250,7 @@ const removeBgLeasesFor = async (dir: string, serverStartedAt: number) => {
 	}
 }
 
-const createLease = async (dir: string, data: LeaseFile): Promise<string> => {
-	await ensureDir(dir)
-	const p = path.join(dir, `${randomUUID()}.json`)
-	await writeFileAtomic(p, JSON.stringify(data, null, 2))
-	return p
-}
-
 /* ----------------------------- State helpers --------------------------------- */
-
-export const readState = (p: string) => readJsonFile<PocketIcState>(p)
-
-const patchState = async (p: string, patch: Partial<PocketIcState>) => {
-	const cur =
-		(await readState(p)) ??
-		({
-			managed: true,
-			mode: null,
-			monitorPid: null,
-			binPath: pocketIcPath,
-			version: pocketIcVersion,
-			args: null,
-			bind: null,
-			port: null,
-			startedAt: null,
-		} as PocketIcState)
-	const merged = { schemaVersion: 1, ...cur, ...patch }
-	await writeFileAtomic(p, JSON.stringify(merged, null, 2))
-}
 
 /* ----------------------------- Monitor spawn --------------------------------- */
 
@@ -324,7 +272,6 @@ const buildMonitorArgs = (opts: {
 	return args
 }
 
-// NOTE: foreground uses stderr=pipe so we can parse fatal lines.
 const spawnMonitor = (args: string[], background: boolean): ChildProcess =>
 	spawn(process.execPath, args, {
 		detached: true,
@@ -332,16 +279,14 @@ const spawnMonitor = (args: string[], background: boolean): ChildProcess =>
 		env: { ...process.env, RUST_BACKTRACE: "full" },
 	})
 
-/* ---- Fatal stderr watcher (PocketIC-specific parse of monitor stderr) ------- */
+/* ---- Fatal stderr watcher --------------------------------------------------- */
 
 const makeFatalStderrPromise = (
 	proc: ChildProcess,
 	ip: string,
 	port: number,
 ): Promise<never> => {
-	if (!proc.stderr) {
-		return new Promise<never>(() => {})
-	}
+	if (!proc.stderr) return new Promise<never>(() => {})
 	return new Promise<never>((_resolve, reject) => {
 		let sawFatal = false
 		const onData = (chunk: Buffer | string) => {
@@ -363,7 +308,6 @@ const makeFatalStderrPromise = (
 					reject(
 						new ReplicaStartError({
 							reason: "PortInUseError",
-							// No dedicated "Panic" code in scenarios; treat as start failure.
 							message: `PocketIC panicked during startup: ${line}`,
 						}),
 					)
@@ -395,264 +339,282 @@ const detectIncompleteState = async (stateDir: string): Promise<boolean> => {
 	}
 }
 
-const computeNormalizedConfig = async (
-	ctx: ICEConfigContext,
-	host: string,
-	port: number,
-): Promise<NormalizedConfig> => {
-	const stateDir = path.resolve(ctx.iceDirPath, "replica-state")
-	const incompleteState = await detectIncompleteState(stateDir)
-	return {
-		pocketIcCli: { bind: host, port, ttl: 9_999_999_999 },
-		instance: {
-			stateDir,
-			initialTime: { AutoProgress: { artificialDelayMs: 0 } },
-			topology: createDefaultTopology(),
-			incompleteState,
-			nonmainnet: ctx.network !== "ic",
-			verifiedApplication: 0,
-		},
+/* ------------------------------- Monitor (class) ------------------------------ */
+
+export class Monitor {
+	public readonly host: string
+	public readonly port: number
+	private readonly mode: "foreground" | "background"
+	// private readonly ctx: ICEConfigContext
+	private readonly iceDirPath: string
+	private readonly policy: "reuse" | "restart"
+	private readonly isDev: boolean
+
+	constructor(opts: {
+		host: string
+		port: number
+		background: boolean
+		policy: "reuse" | "restart"
+		iceDirPath: string
+		isDev: boolean
+	}) {
+		this.host = opts.host
+		this.port = opts.port
+		this.mode = opts.background ? "background" : "foreground"
+		this.isDev = opts.isDev
+		this.iceDirPath = opts.iceDirPath
+		this.policy = opts.policy
 	}
-}
 
-/* ------------------------------- Main API ------------------------------------ */
+	private async readMonitorState() {
+		const stateFilePath = path.resolve(
+			this.iceDirPath,
+			"pocketic-server",
+			"monitor.json",
+		)
+		const state = await readJsonFile<PocketIcState>(stateFilePath)
+		return state
+	}
 
-export async function makeMonitor(
-	ctx: ICEConfigContext,
-	opts: { host: string; port: number },
-): Promise<Monitor> {
-	const mode: "foreground" | "background" = ctx.background
-		? "background"
-		: "foreground"
-	const host = opts.host
-	const port = opts.port
-	const desiredArgs = ["-i", host, "-p", String(port)]
-	const desiredConfig = await computeNormalizedConfig(ctx, host, port)
-	const paths = resolvePaths(ctx.iceDirPath)
-	const logFile = path.join(ctx.iceDirPath, "pocket-ic.log")
+	private computeNormalizedConfig = async (): Promise<NormalizedConfig> => {
+		const stateDir = path.resolve(this.iceDirPath, "replica-state")
+		const incompleteState = await detectIncompleteState(stateDir)
+		return {
+			pocketIcCli: {
+				bind: this.host,
+				port: this.port,
+				ttl: 9_999_999_999,
+			},
+			instance: {
+				stateDir,
+				initialTime: { AutoProgress: { artificialDelayMs: 0 } },
+				topology: createDefaultTopology(),
+				incompleteState,
+				// TODO: ??? wtf is this
+				// nonmainnet: this.network !== "ic",
+				nonmainnet: this.isDev,
+				verifiedApplication: 0,
+			},
+		}
+	}
 
-	await ensureDir(paths.root)
-	await ensureDir(paths.leasesDir)
-
-	const releaseLock = await acquireSpawnLock(paths.spawnLock)
-	let reused = false
-	try {
-		let st = await readState(paths.stateFile)
-
-		if (st) {
-			const listening = await portListening(
-				st.bind ?? host,
-				st.port ?? port,
-			)
-			if (!listening) {
-				await fs.unlink(paths.stateFile).catch(() => {})
-				st = undefined
+	public async createLease(args: { mode: "foreground" | "background" }) {
+		const monitorState = await this.readMonitorState()
+		// Create an ephemeral lease whenever a managed server monitor.json exists.
+		// If startedAt is absent, use 0 so tests count it with the "any server" rule.
+		if (monitorState) {
+			const dir = path.join(this.iceDirPath, "pocketic-server", "leases")
+			const lease: LeaseFile = {
+				mode: args.mode,
+				pid: process.pid,
+				startedAt: monitorState.startedAt!,
 			}
+			await ensureDir(dir)
+			const p = path.join(dir, `${randomUUID()}.json`)
+			await writeFileAtomic(p, JSON.stringify(lease, null, 2))
+			// return p
+		}
+	}
+
+	async spawn(): Promise<void> {
+		const leasesDirPath = path.resolve(
+			this.iceDirPath,
+			"pocketic-server",
+			"leases",
+		)
+		const logFilePath = path.resolve(this.iceDirPath, "pocket-ic.log")
+		const stateFilePath = path.resolve(
+			this.iceDirPath,
+			"pocketic-server",
+			"monitor.json",
+		)
+		const spawnLockPath = path.resolve(
+			this.iceDirPath,
+			"pocketic-server",
+			"spawn.lock",
+		)
+		// spawn fresh
+		const releaseLock = await acquireSpawnLock(spawnLockPath)
+		try {
+			const args = buildMonitorArgs({
+				background: this.mode === "background",
+				stateFile: stateFilePath,
+				leasesDir: leasesDirPath,
+				logFile: logFilePath,
+				host: this.host,
+				port: this.port,
+			})
+			const proc = spawnMonitor(args, this.mode === "background")
+			if (this.mode === "background") {
+				try {
+					proc.unref()
+				} catch {}
+			}
+			await this.onMonitorReady()
+			const stdErrPromise =
+				this.mode === "background"
+					? makeFatalStderrPromise(proc, this.host, this.port)
+					: new Promise<never>((_resolve, reject) => {})
+			await Promise.race([stdErrPromise, this.onMonitorReady()])
+		} finally {
+			await releaseLock()
+		}
+	}
+
+	private async writeMonitorState(
+		finalState: PocketIcState,
+		desired: NormalizedConfig,
+	) {
+		const patch = {
+			binPath: pocketIcPath,
+			version: pocketIcVersion,
+			mode: finalState.mode ?? this.mode,
+			bind: this.host,
+			port: this.port,
+			args: ["-i", this.host, "-p", String(this.port)],
+			config: desired,
+		}
+		const stateFilePath = path.resolve(
+			this.iceDirPath,
+			"pocketic-server",
+			"monitor.json",
+		)
+		const current =
+			(await this.readMonitorState()) ??
+			({
+				managed: true,
+				mode: null,
+				monitorPid: null,
+				binPath: pocketIcPath,
+				version: pocketIcVersion,
+				args: null,
+				bind: null,
+				port: null,
+				startedAt: null,
+			} as PocketIcState)
+
+		const merged = { schemaVersion: 1, ...current, ...patch }
+		await writeFileAtomic(stateFilePath, JSON.stringify(merged, null, 2))
+	}
+
+	private async stateIsListening(state: PocketIcState | undefined) {
+		if (!state) return false
+		const bind = state.bind ?? this.host
+		const port = state.port ?? this.port
+		return portListening(bind, port)
+	}
+
+	/** Initialize or attach to the PocketIC monitor. Single return; deduped lease creation. */
+	async start(): Promise<void> {
+		const desiredConfig = await this.computeNormalizedConfig()
+		const rootDir = path.resolve(this.iceDirPath, "pocketic-server")
+		const leasesDirPath = path.join(rootDir, "leases")
+        const stateFilePath = path.resolve(rootDir, "monitor.json")
+
+		await ensureDir(rootDir)
+		await ensureDir(leasesDirPath)
+
+		// Adopt existing state or drop stale
+		let state = await this.readMonitorState()
+		if (state && !(await this.stateIsListening(state))) {
+			await fs.unlink(stateFilePath).catch(() => {})
+			state = undefined
 		}
 
-		if (st) {
-			const mismatch = !deepEqual(st.config ?? null, desiredConfig)
-			if (ctx.policy === "restart" && mismatch) {
-				if (st.mode === "background" && mode === "foreground") {
+		// If managed state exists, decide reuse vs restart
+		if (state) {
+			const mismatch = !deepEqual(state.config ?? null, desiredConfig)
+			const mustRestart = this.policy === "restart" && mismatch
+
+			if (mustRestart) {
+				// Guard: FG may not restart BG-managed server
+				if (state.mode === "background" && this.mode === "foreground") {
 					throw new ReplicaStartError({
 						reason: "ProtectedServerError",
 						message:
 							"FG restart is not allowed while BG-managed server is present.",
 					})
 				}
-				const startedAt = st.startedAt ?? 0
-				const fgAlive = await listFgAliveLeases(
-					paths.leasesDir,
-					startedAt,
-				)
-				if (fgAlive > 0) {
+
+				// Guard: restart blocked if any FG lease alive for this generation
+				const startedAt =
+					typeof state.startedAt === "number" ? state.startedAt : -1
+				if ((await countAliveFgLeases(leasesDirPath, startedAt)) > 0) {
+					// TODO: should happen, but doesnt for #10?
 					throw new ReplicaStartError({
 						reason: "PortInUseError",
 						message:
 							"Restart denied: foreground leases are active.",
 					})
 				}
-				await removeBgLeasesFor(paths.leasesDir, startedAt)
 
-				// wait for monitor to shut down (leases==0 → state.json removed)
-				await releaseLock()
+				// Clean BG leases for this gen, release while respawning, then spawn fresh
+				await removeBgLeasesFor(leasesDirPath, state.startedAt ?? -1)
 				await waitUntil(
-					async () => !(await readState(paths.stateFile)),
+					async () => !(await this.readMonitorState()),
 					200,
 					50,
 				)
-
-				// spawn fresh
-				const relock = await acquireSpawnLock(paths.spawnLock)
-				try {
-					const args = buildMonitorArgs({
-						background: mode === "background",
-						stateFile: paths.stateFile,
-						leasesDir: paths.leasesDir,
-						logFile,
-						host,
-						port,
-					})
-					const proc = spawnMonitor(args, mode === "background")
-					if (mode === "background") {
-						try {
-							proc.unref()
-						} catch {}
-						await waitUntil(
-							async () => !!(await readState(paths.stateFile)),
-							200,
-							50,
-						)
-						await waitUntil(
-							async () => portListening(host, port),
-							200,
-							50,
-						)
-					} else {
-						const fatal = makeFatalStderrPromise(proc, host, port)
-						await Promise.race([
-							fatal,
-							(async () => {
-								await waitUntil(
-									async () =>
-										!!(await readState(paths.stateFile)),
-									200,
-									50,
-								)
-								await waitUntil(
-									async () => portListening(host, port),
-									200,
-									50,
-								)
-								return true
-							})(),
-						])
-					}
-				} finally {
-					await relock()
-				}
-				reused = false
+				await this.spawn()
 			} else {
-				await waitUntil(async () => portListening(host, port), 200, 50)
-				reused = true
+				await this.onMonitorReady()
 			}
 		}
 
-		let finalState = await readState(paths.stateFile)
+		// If no managed state, detect manual server or spawn a new one
+		let finalState = await this.readMonitorState()
 		if (!finalState) {
-			const occupied = await portListening(host, port)
+			const occupied = await portListening(this.host, this.port)
+
 			if (occupied) {
-				if (ctx.policy === "restart") {
-					await releaseLock()
+				if (this.policy === "restart") {
 					throw new ReplicaStartError({
 						reason: "ManualPocketICPresentError",
 						message:
 							"Manual PocketIC present; cannot restart unmanaged server.",
 					})
 				}
-				return {
-					host,
-					port,
-					reused: true,
-					shutdown: () => {},
-					waitForExit: async () => {},
+				// Reuse manual server; mark lease for creation at end
+				if (this.mode === "foreground") {
+					await this.createLease({ mode: "foreground" })
 				}
-			}
-
-			const args = buildMonitorArgs({
-				background: mode === "background",
-				stateFile: paths.stateFile,
-				leasesDir: paths.leasesDir,
-				logFile,
-				host,
-				port,
-			})
-			const proc = spawnMonitor(args, mode === "background")
-			if (mode === "background") {
-				try {
-					proc.unref()
-				} catch {}
-				await waitUntil(
-					async () => !!(await readState(paths.stateFile)),
-					200,
-					50,
-				)
-				await waitUntil(async () => portListening(host, port), 200, 50)
 			} else {
-				const fatal = makeFatalStderrPromise(proc, host, port)
-				await Promise.race([
-					fatal,
-					(async () => {
-						await waitUntil(
-							async () => !!(await readState(paths.stateFile)),
-							200,
-							50,
-						)
-						await waitUntil(
-							async () => portListening(host, port),
-							200,
-							50,
-						)
-						return true
-					})(),
-				])
+				await this.spawn()
+				finalState = await this.readMonitorState()
 			}
-			reused = false
-			finalState = await readState(paths.stateFile)
 		}
 
-		// patch state so future runs can detect mismatch by deep-equal on config
+		// Refresh metadata if we have a managed state; schedule lease
 		if (finalState) {
-			await patchState(paths.stateFile, {
-				binPath: pocketIcPath,
-				version: pocketIcVersion,
-				mode: finalState.mode ?? mode,
-				bind: host,
-				port,
-				args: ["-i", host, "-p", String(port)],
-				config: desiredConfig,
-			})
+			await this.writeMonitorState(finalState, desiredConfig)
+			await this.createLease({ mode: this.mode })
 		}
-
-		// create lease for managed only
-		// const stNow = (await readState(paths.stateFile))!
-		// if (stNow?.managed && stNow.startedAt) {
-		// 	const lease: LeaseFile = {
-		// 		mode,
-		// 		pid: mode === "foreground" ? process.pid : 0,
-		// 		startedAt: stNow.startedAt,
-		// 	}
-		// 	await createLease(paths.leasesDir, lease)
-		// }
-	} finally {
-		await releaseLock()
 	}
 
-	return {
-		host,
-		port,
-		reused,
-		shutdown: () => {},
-		waitForExit: async () => {},
+	public async onMonitorReady() {
+		// waitForMonitorJson
+		await waitUntil(async () => !!(await this.readMonitorState()), 200, 50)
+		// waitForPort
+		await waitUntil(
+			async () => portListening(this.host, this.port),
+			200,
+			50,
+		)
 	}
-}
 
-/* ------------ Optional helpers used by other parts of the runner ------------- */
-
-export async function createLeaseFile(opts: {
-	iceDirPath: string
-	mode: "foreground" | "background"
-	serverStartedAt: number
-}): Promise<string> {
-	const dir = path.join(opts.iceDirPath, "pocketic-server", "leases")
-	const lease: LeaseFile = {
-		mode: opts.mode,
-		pid: opts.mode === "foreground" ? process.pid : 0,
-		startedAt: opts.serverStartedAt,
+	async shutdown(): Promise<void> {
+        // But this cleans up all leases? problematic?
+		await this.cleanLeases()
 	}
-	return createLease(dir, lease)
-}
-
-export async function removeLeaseFileByPath(p: string) {
-	await fs.unlink(p).catch(() => {})
+	private async cleanLeases() {
+		const leasesDirPath = path.join(
+			this.iceDirPath,
+			"pocketic-server",
+			"leases",
+		)
+		const files = await fs.readdir(leasesDirPath).catch(() => [])
+		for (const file of files) {
+			await fs.unlink(path.join(leasesDirPath, file)).catch(() => {})
+		}
+	}
 }
