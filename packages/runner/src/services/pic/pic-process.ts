@@ -44,7 +44,6 @@ export type NormalizedConfig = {
 export type PocketIcState = {
 	schemaVersion?: number
 	managed: boolean
-	mode: "foreground" | "background" | null
 	monitorPid: number | null
 	binPath: string | null
 	version: string | null
@@ -233,23 +232,6 @@ const countAliveFgLeases = async (
 	return fg
 }
 
-const removeBgLeasesFor = async (dir: string, serverStartedAt: number) => {
-	await ensureDir(dir)
-	const files = await fs.readdir(dir).catch(() => [])
-	for (const f of files) {
-		if (!f.endsWith(".json")) continue
-		const p = path.join(dir, f)
-		const lease = await readJsonFile<LeaseFile>(p)
-		if (!lease) continue
-		if (
-			lease.mode === "background" &&
-			lease.startedAt === serverStartedAt
-		) {
-			await fs.unlink(p).catch(() => {})
-		}
-	}
-}
-
 /* ----------------------------- State helpers --------------------------------- */
 
 /* ----------------------------- Monitor spawn --------------------------------- */
@@ -268,14 +250,24 @@ const buildMonitorArgs = (opts: {
 	args.push("--leases-dir", opts.leasesDir)
 	args.push("--bin", pocketIcPath)
 	if (opts.logFile) args.push("--log-file", path.resolve(opts.logFile))
-	args.push("--", "-i", opts.host, "-p", String(opts.port))
+	args.push(
+		"--",
+		"-i",
+		opts.host,
+		"-p",
+		String(opts.port),
+		"--ttl",
+		"99999999999",
+	)
 	return args
 }
 
 const spawnMonitor = (args: string[], background: boolean): ChildProcess =>
 	spawn(process.execPath, args, {
 		detached: true,
-		stdio: background ? "ignore" : ["ignore", "inherit", "pipe"],
+		stdio:
+			// background ? "ignore" :
+			[/* stdin */ "ignore", /* stdout */ "inherit", /* stderr */ "pipe"],
 		env: { ...process.env, RUST_BACKTRACE: "full" },
 	})
 
@@ -349,7 +341,9 @@ export class Monitor {
 	private readonly iceDirPath: string
 	private readonly policy: "reuse" | "restart"
 	private readonly isDev: boolean
-
+	private readonly fgLeases: string[]
+	private readonly bgLeases: string[]
+	private proc: ChildProcess | undefined
 	constructor(opts: {
 		host: string
 		port: number
@@ -364,6 +358,8 @@ export class Monitor {
 		this.isDev = opts.isDev
 		this.iceDirPath = opts.iceDirPath
 		this.policy = opts.policy
+		this.fgLeases = []
+		this.bgLeases = []
 	}
 
 	private async readMonitorState() {
@@ -402,6 +398,12 @@ export class Monitor {
 		const monitorState = await this.readMonitorState()
 		// Create an ephemeral lease whenever a managed server monitor.json exists.
 		// If startedAt is absent, use 0 so tests count it with the "any server" rule.
+		// if (!monitorState) {
+		// 	throw new ReplicaStartError({
+		// 		reason: "MonitorStateNotFoundError",
+		// 		message: "Monitor state not found after createLease.",
+		// 	})
+		// }
 		if (monitorState) {
 			const dir = path.join(this.iceDirPath, "pocketic-server", "leases")
 			const lease: LeaseFile = {
@@ -412,11 +414,18 @@ export class Monitor {
 			await ensureDir(dir)
 			const p = path.join(dir, `${randomUUID()}.json`)
 			await writeFileAtomic(p, JSON.stringify(lease, null, 2))
+			console.log("lease created", lease, "path", p)
+			if (args.mode === "foreground") {
+				this.fgLeases.push(p)
+			} else {
+				this.bgLeases.push(p)
+			}
 			// return p
 		}
+		// return p
 	}
 
-	async spawn(): Promise<void> {
+	async spawn(desiredConfig: NormalizedConfig): Promise<PocketIcState> {
 		const leasesDirPath = path.resolve(
 			this.iceDirPath,
 			"pocketic-server",
@@ -433,6 +442,17 @@ export class Monitor {
 			"pocketic-server",
 			"spawn.lock",
 		)
+		if (await this.readMonitorState()) {
+			try {
+				await waitUntil(
+					async () => !(await this.readMonitorState()),
+					400,
+					100,
+				)
+			} catch (e) {
+				console.error("error waiting until pocket-ic is dead", e)
+			}
+		}
 		// spawn fresh
 		const releaseLock = await acquireSpawnLock(spawnLockPath)
 		try {
@@ -444,21 +464,35 @@ export class Monitor {
 				host: this.host,
 				port: this.port,
 			})
-			const proc = spawnMonitor(args, this.mode === "background")
+			this.proc = spawnMonitor(args, this.mode === "background")
 			if (this.mode === "background") {
 				try {
-					proc.unref()
-				} catch {}
+					// TODO: not working??
+					// this.proc.stdin?.end()
+					this.proc.unref()
+				} catch (e) {
+					console.error("error unrefing monitor process", e)
+				}
 			}
 			await this.onMonitorReady()
 			const stdErrPromise =
 				this.mode === "background"
-					? makeFatalStderrPromise(proc, this.host, this.port)
+					? makeFatalStderrPromise(this.proc, this.host, this.port)
 					: new Promise<never>((_resolve, reject) => {})
 			await Promise.race([stdErrPromise, this.onMonitorReady()])
 		} finally {
 			await releaseLock()
 		}
+		const monitor = await this.readMonitorState()
+		if (!monitor) {
+			throw new ReplicaStartError({
+				reason: "MonitorStateNotFoundError",
+				message: "Monitor state not found after spawn.",
+			})
+		}
+		// TODO: already readsMonitorState. remove it from inside writeMonitorState.
+		await this.writeMonitorState(monitor, desiredConfig)
+		return monitor
 	}
 
 	private async writeMonitorState(
@@ -468,7 +502,6 @@ export class Monitor {
 		const patch = {
 			binPath: pocketIcPath,
 			version: pocketIcVersion,
-			mode: finalState.mode ?? this.mode,
 			bind: this.host,
 			port: this.port,
 			args: ["-i", this.host, "-p", String(this.port)],
@@ -483,7 +516,6 @@ export class Monitor {
 			(await this.readMonitorState()) ??
 			({
 				managed: true,
-				mode: null,
 				monitorPid: null,
 				binPath: pocketIcPath,
 				version: pocketIcVersion,
@@ -506,88 +538,146 @@ export class Monitor {
 
 	/** Initialize or attach to the PocketIC monitor. Single return; deduped lease creation. */
 	async start(): Promise<void> {
+		console.log("starting pic-process")
 		const desiredConfig = await this.computeNormalizedConfig()
 		const rootDir = path.resolve(this.iceDirPath, "pocketic-server")
 		const leasesDirPath = path.join(rootDir, "leases")
-        const stateFilePath = path.resolve(rootDir, "monitor.json")
+		const stateFilePath = path.resolve(rootDir, "monitor.json")
 
 		await ensureDir(rootDir)
 		await ensureDir(leasesDirPath)
 
 		// Adopt existing state or drop stale
-		let state = await this.readMonitorState()
-		if (state && !(await this.stateIsListening(state))) {
+		let existingMonitor = await this.readMonitorState()
+		console.log("existingMonitor", existingMonitor)
+		const existingLeasesFiles = (
+			await fs.readdir(leasesDirPath).catch(() => [])
+		).filter((l) => l.endsWith(".json"))
+		const existingLeases = await Promise.all(
+			existingLeasesFiles.map((l) =>
+				readJsonFile<LeaseFile>(path.join(leasesDirPath, l)),
+			),
+		)
+		// .map((l) => readJsonFile<LeaseFile>(path.join(leasesDirPath, l)))
+		const existingFgLeases = existingLeases.filter(
+			(l) => l?.mode === "foreground",
+		)
+		const existingBgLeases = existingLeases.filter(
+			(l) => l?.mode === "background",
+		)
+		const existingMode =
+			existingBgLeases.length > 0
+				? "background"
+				: existingFgLeases.length > 0
+					? "foreground"
+					: undefined
+		if (
+			existingMonitor &&
+			!(await this.stateIsListening(existingMonitor))
+		) {
 			await fs.unlink(stateFilePath).catch(() => {})
-			state = undefined
+			existingMonitor = undefined
 		}
 
 		// If managed state exists, decide reuse vs restart
-		if (state) {
-			const mismatch = !deepEqual(state.config ?? null, desiredConfig)
-			const mustRestart = this.policy === "restart" && mismatch
+		const mismatch = !deepEqual(
+			existingMonitor?.config ?? null,
+			desiredConfig,
+		)
+		const mustRestart = this.policy === "restart" && mismatch
+		// Guard: FG may not restart BG-managed server
+		console.log("mustRestart", mustRestart)
+		console.log("existingMode", existingMode)
+		console.log("mismatch", mismatch)
+		if (
+			existingMonitor &&
+			mustRestart &&
+			existingMode === "background" &&
+			this.mode === "foreground"
+		) {
+			throw new ReplicaStartError({
+				reason: "ProtectedServerError",
+				message:
+					"FG restart is not allowed while BG-managed server is present.",
+			})
+		}
 
-			if (mustRestart) {
-				// Guard: FG may not restart BG-managed server
-				if (state.mode === "background" && this.mode === "foreground") {
-					throw new ReplicaStartError({
-						reason: "ProtectedServerError",
-						message:
-							"FG restart is not allowed while BG-managed server is present.",
-					})
-				}
-
-				// Guard: restart blocked if any FG lease alive for this generation
-				const startedAt =
-					typeof state.startedAt === "number" ? state.startedAt : -1
-				if ((await countAliveFgLeases(leasesDirPath, startedAt)) > 0) {
-					// TODO: should happen, but doesnt for #10?
-					throw new ReplicaStartError({
-						reason: "PortInUseError",
-						message:
-							"Restart denied: foreground leases are active.",
-					})
-				}
-
-				// Clean BG leases for this gen, release while respawning, then spawn fresh
-				await removeBgLeasesFor(leasesDirPath, state.startedAt ?? -1)
-				await waitUntil(
-					async () => !(await this.readMonitorState()),
-					200,
-					50,
+		// Guard: restart blocked if any FG lease alive for this generation
+		const fgAliveLeases = existingMonitor
+			? await countAliveFgLeases(
+					leasesDirPath,
+					existingMonitor.startedAt ?? -1,
 				)
-				await this.spawn()
-			} else {
-				await this.onMonitorReady()
-			}
+			: 0
+		console.log("fgAliveLeases", fgAliveLeases)
+		if (existingMonitor && mustRestart && fgAliveLeases > 0) {
+			throw new ReplicaStartError({
+				reason: "PortInUseError",
+				message: "Restart denied: foreground leases are active.",
+			})
+		}
+		const occupied = await portListening(this.host, this.port)
+		console.log("occupied", occupied)
+
+		if (!existingMonitor && occupied && this.policy === "restart") {
+			throw new ReplicaStartError({
+				reason: "ManualPocketICPresentError",
+				message:
+					"Manual PocketIC present; cannot restart unmanaged server.",
+			})
 		}
 
-		// If no managed state, detect manual server or spawn a new one
-		let finalState = await this.readMonitorState()
-		if (!finalState) {
-			const occupied = await portListening(this.host, this.port)
+		// if (existingMonitor && mustRestart) {
+		// 	// Clean BG leases for this gen, release while respawning, then spawn fresh
+		// 	await this.cleanLeases()
+		// 	// TODO: clean up state!!
+		// 	// TODO: ??
+		// 	// await this.writeMonitorState({} as PocketIcState, desiredConfig)
+		// 	await this.cleanMonitorState()
+		// }
 
-			if (occupied) {
-				if (this.policy === "restart") {
-					throw new ReplicaStartError({
-						reason: "ManualPocketICPresentError",
-						message:
-							"Manual PocketIC present; cannot restart unmanaged server.",
-					})
-				}
-				// Reuse manual server; mark lease for creation at end
-				if (this.mode === "foreground") {
-					await this.createLease({ mode: "foreground" })
-				}
-			} else {
-				await this.spawn()
-				finalState = await this.readMonitorState()
-			}
+		let freshSpawn = false
+		if (mustRestart || !occupied) {
+			// TODO: gives timeout?? why??
+			// because state hasnt been cleaned?
+			// await this.cleanLeases({ scope: "background" })
+			// console.log("cleaned leases")
+			// await this.cleanMonitorState()
+			await this.stop({ scope: "background" })
+			console.log("stopped monitor")
+			// wait until pocket-ic is dead
+
+			// TODO: this fails??
+			// try {
+			// 	await waitUntil(
+			// 		async () => !(await this.readMonitorState()),
+			// 		400,
+			// 		100,
+			// 	)
+			// } catch (e) {
+			// 	console.error("error waiting until pocket-ic is dead", e)
+			// }
+			console.log("pocket-ic is dead")
+			console.log("created foreground lease")
+			await this.spawn(desiredConfig)
+			freshSpawn = true
+			console.log("spawned new monitor")
+			// await this.createLease({ mode: "foreground" })
+			// if (this.mode === "background") {
+			// 	// TODO: creates an extra one on fresh spawns....
+			// 	await this.createLease({ mode: "background" })
+			// }
 		}
-
-		// Refresh metadata if we have a managed state; schedule lease
-		if (finalState) {
-			await this.writeMonitorState(finalState, desiredConfig)
-			await this.createLease({ mode: this.mode })
+		await this.createLease({ mode: "foreground" })
+		if ((mustRestart || !occupied) && this.mode === "background") {
+			await this.createLease({ mode: "background" })
+		}
+		if (
+			this.mode === "background" &&
+			existingMode !== "background" &&
+			!freshSpawn
+		) {
+			await this.createLease({ mode: "background" })
 		}
 	}
 
@@ -602,19 +692,103 @@ export class Monitor {
 		)
 	}
 
-	async shutdown(): Promise<void> {
-        // But this cleans up all leases? problematic?
-		await this.cleanLeases()
+	public async stop({
+		scope,
+	}: {
+		scope: "foreground" | "background"
+	}): Promise<void> {
+		console.log("stopping monitor with scope..........", scope)
+		// const monitorState = await this.readMonitorState()
+		// console.log("at stop monitor state", monitorState)
+		await this.cleanLeases({ scope })
+		// To prevent monitor from cleaning up new leases after restart
+		if (scope === "background") {
+			// console.log("got monitor state", monitorState)
+			try {
+				this.proc?.kill("SIGTERM")
+			} catch (e) {
+				console.error("this.proc error killing monitor process", e)
+			}
+			// if (this.proc) {
+			// 	try {
+			// 		this.proc.kill("SIGTERM")
+			// 	} catch (e) {
+			// 		console.error("this.proc error killing monitor process", e)
+			// 	}
+			// } else if (monitorState?.monitorPid) {
+			// 	try {
+			// 		process.kill(monitorState.monitorPid, "SIGTERM")
+			// 	} catch (e) {
+			// 		console.error(
+			// 			"monitorState.monitorPid error killing monitor process",
+			// 			e,
+			// 		)
+			// 	}
+			// 	console.log("killing monitor process SIGTERM.........")
+			// } else {
+			// 	console.error("monitor process pid not found")
+			// }
+		}
 	}
-	private async cleanLeases() {
+
+	// async shutdown(): Promise<void> {
+	//     // Just foreground?
+	// 	await this.cleanLeases()
+	// }
+	public async cleanLeases(
+		args: { scope: "foreground" | "background" } = { scope: "foreground" },
+	) {
 		const leasesDirPath = path.join(
 			this.iceDirPath,
 			"pocketic-server",
 			"leases",
 		)
+		console.log("cleaning leases", args.scope)
 		const files = await fs.readdir(leasesDirPath).catch(() => [])
-		for (const file of files) {
-			await fs.unlink(path.join(leasesDirPath, file)).catch(() => {})
+		// const allBgLeases = files.filter(
+		// 	async (f) =>
+		// 		f.endsWith(".json") &&
+		// 		(await readJsonFile<LeaseFile>(path.join(leasesDirPath, f)))
+		// 			?.mode === "background",
+		// )
+		// const files = this.fgLeases.concat(allBgLeases)
+		console.log("lease files", files)
+		for (const lease of files) {
+			const leasePath = path.join(leasesDirPath, lease)
+			// const leasePath = lease
+			const leaseData = await readJsonFile<LeaseFile>(leasePath)
+			if (leaseData?.mode === "foreground") {
+				if (!this.fgLeases.includes(leasePath)) {
+					continue
+				}
+				console.log("cleaning foreground lease", lease, leaseData)
+				await fs.unlink(leasePath).catch((e) => {
+					console.error("error cleaning foreground lease", e)
+				})
+			}
+			if (
+				leaseData?.mode === "background" &&
+				args.scope === "background"
+			) {
+				console.log("cleaning background lease", lease, leaseData)
+				await fs.unlink(leasePath).catch((e) => {
+					console.error("error cleaning background lease", e)
+				})
+			}
 		}
+
+		// const files = await fs.readdir(leasesDirPath).catch(() => [])
+		// for (const file of files) {
+		// 	await fs.unlink(path.join(leasesDirPath, file)).catch(() => {})
+		// }
 	}
+
+	// public async cleanMonitorState() {
+	// 	const stateFilePath = path.resolve(
+	// 		this.iceDirPath,
+	// 		"pocketic-server",
+	// 		"monitor.json",
+	// 	)
+	// 	await fs.unlink(stateFilePath).catch(() => {})
+	// }
 }

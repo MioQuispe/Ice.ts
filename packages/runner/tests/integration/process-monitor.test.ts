@@ -44,7 +44,10 @@ type ExpectedAction =
 
 type PidChange = "new" | "same"
 type ServerAfter = "managed_fg" | "managed_bg" | "manual" | "none"
-type EphemeralLeasesAfter = "0" | "1" | "1+" | "2+"
+type EphemeralLeasesAfter = "0" | "1" | "2"
+type EphemeralLeasesBefore = "0" | "1" | "2"
+type BgLeasesBefore = "0" | "1"
+type BgLeasesAfter = "0" | "1"
 type ErrorCode =
 	| "-"
 	| "PortInUseError"
@@ -57,7 +60,9 @@ interface ScenarioRow {
 	existing_server: ExistingServer
 	args_mismatch: ArgsMismatch
 	args_mismatch_selection: ArgsMismatchSelection
-	ephemeral_leases_before: "0" | "1+"
+	ephemeral_leases_before: EphemeralLeasesBefore
+	bg_leases_before: BgLeasesBefore
+	bg_leases_after: BgLeasesAfter
 	expected_action: ExpectedAction
 	pid_change: PidChange
 	server_after: ServerAfter
@@ -75,7 +80,7 @@ const FIXTURES_DIR = path.join(
 )
 const SCENARIOS_CSV_PATH = path.join(
 	FIXTURES_DIR,
-	"process_monitor_scenarios.csv",
+	"process_monitor_scenarios_latest.csv",
 )
 
 const DEFAULT_BIND = "0.0.0.0"
@@ -259,8 +264,23 @@ const snapshot = (iceDir: string, bind: string, port: number) =>
 		if (st?.managed && occupied) {
 			const startedAt = st.startedAt!
 			const { fgLeases, bgLeases } = yield* getLeases(iceDir)
-			const mode: "foreground" | "background" =
-				st.mode ?? (bgLeases.length > 0 ? "background" : "foreground")
+			let mode: "foreground" | "background" | undefined
+			if (fgLeases.length > 0) {
+				mode = "foreground"
+			}
+			if (bgLeases.length > 0) {
+				mode = "background"
+			}
+			if (!mode) {
+				console.error("Mode not found for state:", st)
+				return {
+					kind: "none",
+					mode: undefined,
+					startedAt: undefined,
+					fgLeases: [],
+					bgLeases: [],
+				} satisfies SnapNone
+			}
 
 			return {
 				kind: "managed",
@@ -292,10 +312,6 @@ const snapshot = (iceDir: string, bind: string, port: number) =>
 
 // ----------------------------- Utilities ------------------------------------------
 
-const sanitize = (s: string) => s.replace(/[^\w.-]+/g, "_").slice(0, 80)
-
-type SnapshotResult = Effect.Effect.Success<ReturnType<typeof snapshot>>
-
 const classify = (after: Snapshot): Effect.Effect<ServerAfter> =>
 	Effect.sync(() => {
 		if (after.kind === "none") return "none"
@@ -315,11 +331,6 @@ const toPidChange = (
 			}
 		}
 		return "new"
-		// const b = before.kind === "managed" ? before.startedAt : undefined
-		// const a = after.kind === "managed" ? after.startedAt : undefined
-		// if (!b && a) return "new"
-		// if (b && a && b !== a) return "new"
-		// return "same"
 	})
 
 const matchesEphemeral = (
@@ -338,15 +349,12 @@ const matchesEphemeral = (
 			// 	return actual >= 1
 			// case "2+":
 			// 	return actual >= 2
-			case "1+":
-				return actual === 1
-			case "2+":
+			case "2":
 				return actual === 2
 			default:
 				return false
 		}
 	})
-
 
 const launchManualPocketIc = (opts: {
 	bind: string
@@ -380,9 +388,6 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 	} else if (row.existing_server === "managed_fg") {
 		policy = "reuse"
 	}
-	// if (row.args_mismatch_selection === "restart") {
-	// 	policy = "restart"
-	// }
 	if (row.args_mismatch_selection !== "-") {
 		policy = row.args_mismatch_selection
 	}
@@ -409,7 +414,7 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 // ----------------------------- Test ------------------------------------------------
 
 describe("process orchestration — scenarios (public APIs only)", () => {
-	// const scenarios = [loadScenarios()[10]]
+	// const scenarios = [loadScenarios()[10 - 1]]
 	const scenarios = loadScenarios()
 
 	beforeAll(async () => {
@@ -423,7 +428,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 	})
 
 	it.each(
-		scenarios.map((s, idx) => [idx, s]) as Array<[number, ScenarioRow]>,
+		scenarios.map((s, idx) => [idx + 1, s]) as Array<[number, ScenarioRow]>,
 	)("scenario #%s: %o", async (idx, row) => {
 		const testEff = Effect.gen(function* () {
 			// const idx = scenarios.indexOf(row)
@@ -470,23 +475,8 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				})
 				.make()
 
-			const release_task = task("release_lease")
-				.run(async () => {
-					await fsp.mkdir(path.dirname(releasePath), {
-						recursive: true,
-					})
-					await fsp.writeFile(releasePath, "release", "utf8")
-					console.log("releasePath created")
-				})
-				.make()
-
-			const noop_task = task("noop")
-				.run(async () => {})
-				.make()
 			const taskTree = {
 				hold: hold_task,
-				release: release_task,
-				noop: noop_task,
 			} satisfies TaskTree
 
 			const PrepareICEConfigLayer = ICEConfigService.Test(
@@ -559,22 +549,38 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					yield* Effect.sleep(STABILIZE_MS)
 				}
 
-				// Create one FG lease beforehand if requested, regardless of FG/BG ownership
-				const shouldCreatePreLease =
-					(row.existing_server === "managed_fg" ||
-						row.existing_server === "managed_bg") &&
-					row.ephemeral_leases_before === "1+"
-
 				let preHoldFiber:
 					| Fiber.RuntimeFiber<unknown, unknown>
 					| undefined
-				console.log("shouldCreatePreLease", shouldCreatePreLease)
-				if (shouldCreatePreLease) {
-					preHoldFiber = yield* runTask(hold_task).pipe(
-						Effect.provide(taskLayer),
-						Effect.provide(ChildTaskRuntimeLayer),
-						Effect.forkIn(testScope),
-					)
+				preHoldFiber = yield* runTask(hold_task).pipe(
+					Effect.provide(taskLayer),
+					Effect.provide(ChildTaskRuntimeLayer),
+					Effect.forkIn(testScope),
+				)
+				if (row.ephemeral_leases_before === "0") {
+					yield* Effect.sleep(1000)
+					yield* Effect.tryPromise({
+						try: () => replica.stop({ scope: "foreground" }),
+						catch: (error) => {
+							console.error("error stopping replica", error)
+							return error
+						},
+					})
+					yield* Effect.sleep(1000)
+				}
+				if (
+					row.bg_leases_before === "0" &&
+					row.existing_server === "managed_bg"
+				) {
+					yield* Effect.sleep(1000)
+					yield* Effect.tryPromise({
+						try: () => replica.stop({ scope: "background" }),
+						catch: (error) => {
+							console.error("error stopping replica", error)
+							return error
+						},
+					})
+					yield* Effect.sleep(1000)
 				}
 				return { manualPid, preHoldFiber }
 			})
@@ -589,13 +595,11 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				},
 			})
 
-			yield* Effect.sleep(2000)
-
+			yield* Effect.sleep(1000)
 			if (preHoldFiber && row.ephemeral_leases_before === "0") {
-				// const preCleanupStatus = yield* Fiber.status(preHoldFiber)
 				const preInterruptResult = yield* Fiber.interrupt(preHoldFiber)
-				// TODO: wait or check status?
-				// it should clean up before we run next phase.
+				yield* Scope.close(testScope, Exit.void)
+				yield* prepareRuntime.disposeEffect
 			}
 
 			// Check if port is still listening
@@ -670,18 +674,32 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 						},
 					})
 
-					// Only FG runs create a main FG lease, and only if start succeeded
-					const shouldCreateMainLease = row.run_mode === "fg"
+					const mainHoldFiber = yield* runTask(hold_task).pipe(
+						Effect.provide(taskLayer),
+						Effect.provide(ChildTaskRuntimeLayer),
+						Effect.forkIn(testScope),
+					)
 
-					let mainHoldFiber:
-						| Fiber.RuntimeFiber<unknown, unknown>
-						| undefined
-					if (shouldCreateMainLease) {
-						mainHoldFiber = yield* runTask(hold_task).pipe(
-							Effect.provide(taskLayer),
-							Effect.provide(ChildTaskRuntimeLayer),
-							Effect.forkIn(testScope),
-						)
+					const fgStop =
+						row.ephemeral_leases_after === "0" &&
+						row.ephemeral_leases_before !== "0"
+
+					// const bgStop =
+					// 	row.bg_leases_after === "0" &&
+					// 	row.bg_leases_before !== "0"
+
+					if (fgStop) {
+						// TODO: clean just leases
+						console.log("fgStop called on main replica")
+						yield* Effect.tryPromise({
+							try: () => replica.stop({ scope: "foreground" }),
+							catch: (error) => {
+								console.error("error stopping replica", error)
+								return error
+							},
+						})
+						yield* Effect.sleep(1000)
+						console.log("Main Foreground replica stopped")
 					}
 
 					return { mainHoldFiber }
@@ -758,23 +776,12 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			const serverAfter = yield* classify(after)
 			expect(serverAfter).toBe(row.server_after)
 
-			const ephOk = yield* matchesEphemeral(
-				after.fgLeases.length,
-				row.ephemeral_leases_after,
-			)
+			const ephOk =
+				after.fgLeases.length === Number(row.ephemeral_leases_after)
 			expect(ephOk).toBe(true)
 
-			// ------------------ Cleanup (best-effort) ------------------
-
-			if (preHoldFiber) {
-				const preCleanupStatus = yield* Fiber.status(preHoldFiber)
-				const preInterruptResult = yield* Fiber.interrupt(preHoldFiber)
-			}
-			if (mainHoldFiber) {
-				const mainCleanupStatus = yield* Fiber.status(mainHoldFiber)
-				const mainInterruptResult =
-					yield* Fiber.interrupt(mainHoldFiber)
-			}
+			const bgOk = after.bgLeases.length === Number(row.bg_leases_after)
+			expect(bgOk).toBe(true)
 
 			if (row.existing_server === "manual" && manualPid) {
 				yield* killManualPocketIc(manualPid)

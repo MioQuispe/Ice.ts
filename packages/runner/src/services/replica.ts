@@ -196,7 +196,6 @@ export type CanisterStatusResult =
 
 export type CanisterInfo = CanisterStatusResult
 
-
 // TODO: combine these and use reason field
 export class CanisterStatusError extends Data.TaggedError(
 	"CanisterStatusError",
@@ -241,9 +240,9 @@ export class ReplicaError extends Data.TaggedError("ReplicaError")<{
 	readonly message: string
 }> {}
 
-
 export class ReplicaStartError extends Data.TaggedError("ReplicaStartError")<{
 	readonly reason:
+		| "MonitorStateNotFoundError"
 		| "PortInUseError"
 		| "ManualPocketICPresentError"
 		| "ProtectedServerError"
@@ -293,7 +292,7 @@ export type ReplicaServiceClass = {
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
 	start: (ctx: ICEConfigContext) => Promise<void>
-	stop: () => Promise<void>
+	stop: (args?: { scope: "background" | "foreground" }) => Promise<void>
 }
 
 export class Replica extends Context.Tag("Replica")<
@@ -306,7 +305,10 @@ export class DefaultReplica extends Context.Tag("DefaultReplica")<
 	ReplicaServiceClass
 >() {}
 
-export function layerFromAsyncReplica(replica: ReplicaServiceClass, ctx: ICEConfigContext) {
+export function layerFromAsyncReplica(
+	replica: ReplicaServiceClass,
+	ctx: ICEConfigContext,
+) {
 	return Layer.scoped(
 		DefaultReplica,
 		Effect.acquireRelease(
@@ -322,7 +324,17 @@ export function layerFromAsyncReplica(replica: ReplicaServiceClass, ctx: ICEConf
 			}),
 			// On scope release, stop the *original* replica (not the wrapped one),
 			// so we always hit the class' real shutdown logic.
-			() => Effect.tryPromise(() => replica.stop()).pipe(Effect.ignore),
+			() =>
+				Effect.tryPromise({
+					try: async () => {
+						await replica.stop({ scope: "foreground" })
+					},
+					catch: (e) => {
+						return new ReplicaError({
+							message: `replica.stop failed: ${String(e)}`,
+						})
+					},
+				}).pipe(Effect.ignore),
 		),
 	)
 }

@@ -93,6 +93,7 @@ export class PICReplica implements ReplicaServiceClass {
 			isDev: ctx.network !== "ic",
 		})
 		try {
+			// TODO: restart fails? timeout
 			await monitor.start()
 			this.monitor = monitor
 
@@ -145,14 +146,20 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 	}
 
-	async stop(): Promise<void> {
+	async stop(
+		args: { scope: "background" | "foreground" } = { scope: "foreground" },
+	): Promise<void> {
 		// TODO: ? tell monitor to remove leases?
-		// await monitor.shutdown() //???
-		// const toRemove = [...this.sessionLeasePaths]
-		// this.sessionLeasePaths = []
-		// await Promise.all(
-		// 	toRemove.map((p) => removeLeaseFileByPath(p).catch(() => {})),
-		// )
+		// TODO: bg leases are not cleaned currently
+		// shutdown? or take parameter for bg?
+		// what does the API look like?
+		await this.monitor?.stop({ scope: args.scope }) //???
+		// TODO: only for bg mode?
+		// if (args.scope === "background") {
+		// 	// await this.monitor?.cleanMonitorState()
+		// 	await this.monitor?.stop({ scope: "background" })
+		// 	console.log("######################## monitor state cleaned")
+		// }
 	}
 
 	// ---------------- operations ----------------

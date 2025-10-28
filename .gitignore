@@ -21,3 +21,11 @@ cursor/**
 **/.cursorrules
 **/.cursorignore
 **/pocket-ic
+changes.diff
+.gitignore
+integration_test.md
+chat.md
+pocket_ic_server.md
+packages/runner/tests/fixtures/ice_deploy_trace.json
+.gitignore
+packages/runner/tests/integration/caching-test-sharded.sh

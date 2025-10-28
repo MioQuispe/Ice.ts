@@ -88,7 +88,6 @@ import { existsSync } from "node:fs"
 import { readdirSync } from "node:fs"
 import { join } from "node:path"
 
-
 const PROCESSING_TIME_VALUE_MS = 30_000
 
 export class PocketIcClient {
@@ -113,38 +112,53 @@ export class PocketIcClient {
 		const processingTimeoutMs =
 			req?.processingTimeoutMs ?? PROCESSING_TIME_VALUE_MS
 		const serverClient = new Http2Client(url, processingTimeoutMs)
+		let instanceId = 0
+		const instances = await serverClient.jsonGet<Array<string>>({
+			path: "/instances",
+		})
 
-		// Always create a new instance to ensure desired configuration (e.g., state_dir)
-		const body = encodeCreateInstanceRequest(req)
-		const t0 = Date.now()
-		const res = await serverClient
-			.jsonPost<EncodedCreateInstanceRequest, CreateInstanceResponse>({
-				path: "/instances",
-				body,
-			})
-			.catch((error) => {
-				const detail =
-					error instanceof Error
-						? `${error.message}${
-								error.cause
-									? ` (cause=${String(error.cause)})`
-									: ""
-							}`
-						: String(error)
-				console.error(
-					`[PocketIcClient] create_instance request failed url=${url} stateDir=${req?.stateDir ?? "-"}: ${detail}`,
+		console.log("instances from pocket-ic-server", instances)
+
+        // TODO: could happen while other task just started
+        // store instanceId in monitor.json!!
+        // fix!!!!
+		if (instances.length === 0) {
+			const body = encodeCreateInstanceRequest(req)
+			console.log("creating new instance for pocket-ic-server")
+			const res = await serverClient
+				.jsonPost<EncodedCreateInstanceRequest, CreateInstanceResponse>(
+					{
+						path: "/instances",
+						body,
+					},
 				)
-				throw error
-			})
-		const t1 = Date.now()
+				.catch((error) => {
+					const detail =
+						error instanceof Error
+							? `${error.message}${
+									error.cause
+										? ` (cause=${String(error.cause)})`
+										: ""
+								}`
+							: String(error)
+					console.error(
+						`[PocketIcClient] create_instance request failed url=${url} stateDir=${req?.stateDir ?? "-"}: ${detail}`,
+					)
+					throw error
+				})
 
-		if ("Error" in res) {
-			console.error("Error creating instance", res.Error.message)
-			throw new Error(res.Error.message)
+			if ("Error" in res) {
+				console.error("Error creating instance", res.Error.message)
+				throw new Error(res.Error.message)
+			}
+
+			console.log(
+				"instance created for pocket-ic-server",
+				res.Created.instance_id,
+			)
+			instanceId = res.Created.instance_id
 		}
-
-		const instanceId = res.Created.instance_id
-		// const instanceId = 0
+		// console.log("instanceId", instanceId)
 		return new PocketIcClient(
 			serverClient,
 			`/instances/${instanceId}`,

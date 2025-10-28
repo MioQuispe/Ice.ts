@@ -154,7 +154,7 @@ export const GlobalArgs = type({
 	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
 		(str) => str === "1" || str === "true" || str === "" || str === true,
 	),
-    policy: "'reuse' | 'restart'",
+	policy: "'reuse' | 'restart'",
 }) satisfies StandardSchemaV1<Record<string, unknown>>
 export type GlobalArgs = {
 	network: string
@@ -170,7 +170,12 @@ export const logLevelMap = {
 }
 
 type MakeCliRuntimeArgs = {
-	globalArgs: { network: string; logLevel: string; background: boolean; policy: string }
+	globalArgs: {
+		network: string
+		logLevel: string
+		background: boolean
+		policy: string
+	}
 	// fix type
 	telemetryExporter?: SpanExporter
 }
@@ -285,7 +290,9 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 	const background =
 		Boolean(parsed["background"]) || parsed["background"] === ""
 	const rawPolicy = String(parsed["policy"]).toLowerCase()
-	const policy = ["reuse", "restart"].includes(rawPolicy) ? rawPolicy as "reuse" | "restart" : "reuse"
+	const policy = ["reuse", "restart"].includes(rawPolicy)
+		? (rawPolicy as "reuse" | "restart")
+		: "reuse"
 	return { network, logLevel, background, policy }
 }
 
@@ -367,15 +374,14 @@ const runCommand = defineCommand({
 								).pipe(Effect.provide(ChildTaskRuntimeLayer))
 								// TODO: clean up. use Replica
 								const replica = yield* DefaultReplica
-								yield* Effect.logDebug("Stopping replica")
 								yield* Effect.tryPromise({
-									try: () => replica.stop(),
+									try: () =>
+										replica.stop({ scope: "foreground" }),
 									catch: (e) =>
 										new ReplicaError({
 											message: String(e),
 										}),
 								})
-								yield* Effect.logInfo("Stopped replica")
 							}),
 						),
 					catch: (error) => {
@@ -433,7 +439,7 @@ const deployRun = async ({
 	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
-    policy: "reuse" | "restart"
+	policy: "reuse" | "restart"
 	cliTaskArgs: {
 		positionalArgs: string[]
 		namedArgs: Record<string, string>
@@ -499,10 +505,9 @@ const deployRun = async ({
 		const replica = yield* DefaultReplica
 		yield* Effect.logDebug("Stopping replica")
 		yield* Effect.tryPromise({
-			try: () => replica.stop(),
+			try: () => replica.stop({ scope: "foreground" }),
 			catch: (e) => new ReplicaError({ message: String(e) }),
 		})
-		yield* Effect.logInfo("Stopped replica")
 
 		const count = yield* Metric.value(totalTaskCount)
 		const cachedCount = yield* Metric.value(cachedTaskCount)
@@ -624,8 +629,10 @@ const deployRun = async ({
 					})
 				},
 			})
+            yield* Effect.logDebug("####### Got to end of program #######")
 		}),
 	)
+    console.log("####### Got to end of makeCliRuntime #######")
 }
 
 const canistersCreateCommand = defineCommand({
@@ -893,7 +900,7 @@ const canistersInstallCommand = defineCommand({
 		// TODO: mode
 		await makeCliRuntime({
 			globalArgs: {
-                policy,
+				policy,
 				network,
 				logLevel,
 				background,
@@ -1172,7 +1179,7 @@ const canistersRemoveCommand = defineCommand({
 		const { network, logLevel, background, policy } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
-                policy,
+				policy,
 				network,
 				logLevel,
 				background,
@@ -1353,7 +1360,7 @@ const canisterCommand = defineCommand({
 
 			await makeCliRuntime({
 				globalArgs: {
-                    policy,
+					policy,
 					network,
 					logLevel,
 					background,
@@ -1537,7 +1544,13 @@ const main = defineCommand({
 		}
 
 		if (args._.length === 0) {
-			await deployRun({ network, logLevel, background, policy, cliTaskArgs })
+			await deployRun({
+				network,
+				logLevel,
+				background,
+				policy,
+				cliTaskArgs,
+			})
 			// await deployRun(globalArgs)
 		}
 	},

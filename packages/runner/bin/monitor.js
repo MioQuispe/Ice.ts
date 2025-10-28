@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process"
 import * as fsp from "node:fs/promises"
-import fs from "node:fs"
-import path from "node:path"
-import process from "node:process"
+import * as fs from "node:fs"
+import * as path from "node:path"
+import * as process from "node:process"
 
 const LEASE_CHECK_INTERVAL_MS = 100
 // Small grace so FG doesn't get torn down before the first lease appears.
@@ -57,24 +57,28 @@ async function readActiveLeaseCount(leasesDir) {
 		let active = 0
 		for (const entry of entries) {
 			if (!entry.endsWith(".json")) continue
-			const absolute = path.join(leasesDir, entry)
+			const leasePath = path.join(leasesDir, entry)
 			try {
-				const raw = await fsp.readFile(absolute, "utf8")
-				const data = JSON.parse(raw)
+				const raw = await fsp.readFile(leasePath, "utf8")
+				const leaseData = JSON.parse(raw)
 				// Lease is considered active if:
 				//  - it has no pid field (we err on the side of keeping it), OR
 				//  - its pid is still alive.
 				const ownerPid =
-					typeof data.pid === "number" ? data.pid : undefined
+					typeof leaseData.pid === "number"
+						? leaseData.pid
+						: undefined
 				if (ownerPid == null || isAlive(ownerPid)) {
 					active++
 				} else {
 					// owner is dead -> reap stale lease
-					await removeFile(absolute)
+					if (leaseData.mode === "foreground") {
+						await removeFile(leasePath)
+					}
 				}
 			} catch {
 				// unreadable/corrupt -> reap
-				await removeFile(absolute)
+				await removeFile(leasePath)
 			}
 		}
 		return active
@@ -170,7 +174,9 @@ async function main() {
 	//   const spawnOpts = { detached: true, stdio: background ? "ignore" : ["ignore", "pipe", "pipe"] }
 	const child = spawn(bin, args, {
 		detached: true,
-		stdio: background ? "ignore" : ["ignore", "inherit", "pipe"],
+		stdio:
+			// background ? "ignore" :
+			[/* stdin */ "ignore", /* stdout */ "ignore", /* stderr */ "pipe"],
 		env: {
 			...process.env,
 			RUST_BACKTRACE: "full",
@@ -207,24 +213,22 @@ async function main() {
 		try {
 			await fsp.mkdir(path.dirname(logFile), { recursive: true })
 			const ws = fs.createWriteStream(logFile, { flags: "a" })
-			child.stdout.pipe(ws)
+			// child.stdout.pipe(ws)
 			child.stderr.pipe(ws)
 		} catch (error) {
 			console.error("[pocketic-monitor] failed to pipe logs:", error)
 		}
 	}
 
-	const handleExitCleanup = async () => {
-		await cleanupState(stateFile)
-		process.exit(0)
-	}
-
-	for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-		process.on(signal, async () => {
-			await gracefulStop(child.pid)
-			await handleExitCleanup()
-		})
-	}
+    // TODO: this causes issue!!!
+	// for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+	// 	process.on(signal, async () => {
+	// 		console.log("signal received, starting graceful stop")
+	// 		await gracefulStop(child.pid)
+	// 		await cleanupState(stateFile)
+	// 		process.exit(0)
+	// 	})
+	// }
 
 	child.on("exit", async (code, signal) => {
 		await cleanupState(stateFile)
@@ -234,7 +238,9 @@ async function main() {
 
 	// Lease watcher: no TTL. Reap only leases whose owner pid is dead.
 	const leaseWatcher = async () => {
-		if (!leasesDir) return
+		if (!leasesDir) {
+			return
+		}
 		const graceUntil = startedAt + INITIAL_LEASE_GRACE_MS
 		let sawAnyLease = false
 
@@ -247,6 +253,7 @@ async function main() {
 
 			// Stop strictly when there are 0 active leases, but don’t tear down during the initial grace window.
 			if (active === 0 && (sawAnyLease || Date.now() > graceUntil)) {
+				console.log("active leases are 0, starting graceful stop")
 				await gracefulStop(child.pid)
 				await cleanupState(stateFile)
 				process.exit(0)
