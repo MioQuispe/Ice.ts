@@ -22,7 +22,6 @@
 // 	CanisterCreateError,
 // 	CanisterStopError,
 // 	CanisterDeleteError,
-// 	DefaultReplica,
 // 	Replica,
 // 	AgentError,
 // } from "./replica.js"
@@ -517,5 +516,3 @@
 // })
 
 // export const DfxReplica = Layer.effect(Replica, dfxReplicaImpl)
-
-// export const DfxDefaultReplica = Layer.effect(DefaultReplica, dfxReplicaImpl)

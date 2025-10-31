@@ -48,7 +48,16 @@ async function removeFile(filePath) {
 	await fsp.unlink(filePath).catch(() => {})
 }
 
-async function readActiveLeaseCount(leasesDir) {
+async function readState(stateFile) {
+	try {
+        const raw = await fsp.readFile(stateFile, "utf8")
+        return JSON.parse(raw)
+    } catch {
+        return undefined
+    }
+}
+
+async function readActiveLeaseCount(leasesDir, stateFile) {
 	try {
 		await fsp.mkdir(leasesDir, { recursive: true })
 		const entries = await fsp.readdir(leasesDir)
@@ -64,18 +73,26 @@ async function readActiveLeaseCount(leasesDir) {
 				// Lease is considered active if:
 				//  - it has no pid field (we err on the side of keeping it), OR
 				//  - its pid is still alive.
-				const ownerPid =
-					typeof leaseData.pid === "number"
-						? leaseData.pid
-						: undefined
-				if (ownerPid == null || isAlive(ownerPid)) {
-					active++
-				} else {
-					// owner is dead -> reap stale lease
-					if (leaseData.mode === "foreground") {
+				if (leaseData.mode === "foreground") {
+					const ownerPid =
+						typeof leaseData.pid === "number"
+							? leaseData.pid
+							: undefined
+					if (ownerPid == null || isAlive(ownerPid)) {
+						active++
+					} else {
+						// owner is dead -> reap stale lease
 						await removeFile(leasePath)
 					}
 				}
+                if (leaseData.mode === "background") {
+                    const state = await readState(stateFile)
+                    if (leaseData.startedAt !== state.startedAt) {
+                        await removeFile(leasePath)
+                    } else {
+                        active++
+                    }
+                }
 			} catch {
 				// unreadable/corrupt -> reap
 				await removeFile(leasePath)
@@ -171,18 +188,16 @@ async function main() {
 	}
 
 	// Keep the monitor alive in both FG and BG
-	//   const spawnOpts = { detached: true, stdio: background ? "ignore" : ["ignore", "pipe", "pipe"] }
 	const child = spawn(bin, args, {
 		detached: true,
 		stdio:
 			// background ? "ignore" :
-			[/* stdin */ "ignore", /* stdout */ "ignore", /* stderr */ "pipe"],
+			[/* stdin */ "ignore", /* stdout */ "inherit", /* stderr */ "pipe"],
 		env: {
 			...process.env,
 			RUST_BACKTRACE: "full",
 		},
 	})
-	//   const child = spawn(bin, args, spawnOpts)
 	try {
 		child.unref()
 	} catch {}
@@ -220,7 +235,7 @@ async function main() {
 		}
 	}
 
-    // TODO: this causes issue!!!
+	// TODO: this causes issue
 	// for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
 	// 	process.on(signal, async () => {
 	// 		console.log("signal received, starting graceful stop")
@@ -248,12 +263,11 @@ async function main() {
 			await sleep(LEASE_CHECK_INTERVAL_MS)
 			if (!isAlive(child.pid)) break
 
-			const active = await readActiveLeaseCount(leasesDir)
+			const active = await readActiveLeaseCount(leasesDir, stateFile)
 			if (active > 0) sawAnyLease = true
 
 			// Stop strictly when there are 0 active leases, but don’t tear down during the initial grace window.
 			if (active === 0 && (sawAnyLease || Date.now() > graceUntil)) {
-				console.log("active leases are 0, starting graceful stop")
 				await gracefulStop(child.pid)
 				await cleanupState(stateFile)
 				process.exit(0)

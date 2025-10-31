@@ -11,7 +11,7 @@ import {
 	// customCanister,
 	makeCustomCanister,
 } from "../../src/builders/custom.js"
-import { CanisterScopeSimple } from "../../src/index.js"
+import { CanisterScopeSimple, PocketICReplica } from "../../src/index.js"
 import { CachedTask, Task } from "../../src/types/types.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { layerMemory } from "@effect/platform/KeyValueStore"
@@ -23,6 +23,7 @@ import { runTasks } from "../../src/tasks/run.js"
 import { ICEConfig } from "../../src/types/types.js"
 import { KeyValueStore } from "@effect/platform"
 import { CanisterIdsService } from "../../src/services/canisterIds.js"
+import { IcpConfigFlag } from "@dfinity/pic"
 
 type Mode = "auto" | "install" | "reinstall" | "upgrade"
 
@@ -136,28 +137,27 @@ const globalArgs = {
 	logLevel: "debug",
 	background: false,
 	policy: "restart",
+	origin: "cli",
 } as const
 
 // const scenarios = [parseCsv(csv)[24]!]
 
 // TODO: not working properly?
-const SHARDS = Number(process.env["SHARDS"]) || 1
-const SHARD = Number(process.env["SHARD"]) || 0
-const scenarios =
-	SHARDS > 1
-		? allScenarios.filter((_, i) => i % SHARDS === SHARD)
-		: allScenarios
+// const SHARDS = Number(process.env["SHARDS"]) || 1
+// const SHARD = Number(process.env["SHARD"]) || 0
+// const scenarios =
+// 	SHARDS > 1
+// 		? allScenarios.filter((_, i) => i % SHARDS === SHARD)
+// 		: allScenarios
 
 describe("deployments & caching decision table", () => {
-	it.concurrent.each(
-		scenarios.map((s, idx) => [
-			idx + 1 + SHARD * SHARDS,
-			s,
-			s.lineNumber,
-		]) as Array<[number, Scenario, number]>,
+	it.each(
+		allScenarios.map((s, idx) => [idx + 1, s, s.lineNumber]) as Array<
+			[number, Scenario, number]
+		>,
 	)("scenario #%s: %o. line number: %s", async (idx, s, lineNumber) => {
 		const { runtime, telemetryExporter, customCanister } =
-			makeTestEnvEffect(`.ice_test/deploy_${idx}`, globalArgs)
+			makeTestEnvEffect(`.ice_test/deploy_${idx}`, globalArgs, idx)
 
 		const wasm = path.resolve(
 			__dirname,
@@ -250,7 +250,16 @@ describe("deployments & caching decision table", () => {
 						[canisterKey]: scenario_canister,
 					}
 
-					const config = {} satisfies Partial<ICEConfig>
+					const picReplica = new PocketICReplica({
+						host: "0.0.0.0",
+						port: 8081 + idx,
+						picConfig: {
+							icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
+						},
+					})
+					const config = {
+						networks: { local: { replica: picReplica } },
+					} satisfies Partial<ICEConfig>
 					const ICEConfigSeed = ICEConfigService.Test(
 						globalArgs,
 						taskTreeSeed,
@@ -437,14 +446,22 @@ describe("deployments & caching decision table", () => {
 							// }
 						} else {
 							// Only create canister; no module installed
-							seededCanisterId = yield* runTask(
+							const createResult = yield* runTask(
 								seed_canister.children.create,
 							).pipe(
 								Effect.provide(taskLayerSeed),
 								Effect.provide(ChildTaskRuntimeSeedLayer),
 							)
+							if (!createResult) {
+								return yield* Effect.fail(
+									new Error("Failed to create seed canister"),
+								)
+							}
+							seededCanisterId = createResult
 							// Prepare artifacts for later install args encoding
-							yield* runTask(seed_canister.children.build).pipe(
+							const buildResult = yield* runTask(
+								seed_canister.children.build,
+							).pipe(
 								Effect.provide(taskLayerSeed),
 								Effect.provide(ChildTaskRuntimeSeedLayer),
 							)
@@ -463,12 +480,18 @@ describe("deployments & caching decision table", () => {
 						!(s.canisterExists && s.modulePresent)
 					) {
 						if (!seededCanisterId) {
-							seededCanisterId = yield* runTask(
+							const createResult = yield* runTask(
 								seed_canister.children.create,
 							).pipe(
 								Effect.provide(taskLayerSeed),
 								Effect.provide(ChildTaskRuntimeSeedLayer),
 							)
+							if (!createResult) {
+								return yield* Effect.fail(
+									new Error("Failed to create seed canister"),
+								)
+							}
+							seededCanisterId = createResult
 						}
 						yield* runTask(seed_canister.children.build).pipe(
 							Effect.provide(taskLayerSeed),

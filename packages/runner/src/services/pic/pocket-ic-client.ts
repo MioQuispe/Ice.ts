@@ -117,14 +117,9 @@ export class PocketIcClient {
 			path: "/instances",
 		})
 
-		console.log("instances from pocket-ic-server", instances)
 
-        // TODO: could happen while other task just started
-        // store instanceId in monitor.json!!
-        // fix!!!!
 		if (instances.length === 0) {
 			const body = encodeCreateInstanceRequest(req)
-			console.log("creating new instance for pocket-ic-server")
 			const res = await serverClient
 				.jsonPost<EncodedCreateInstanceRequest, CreateInstanceResponse>(
 					{
@@ -141,24 +136,15 @@ export class PocketIcClient {
 										: ""
 								}`
 							: String(error)
-					console.error(
-						`[PocketIcClient] create_instance request failed url=${url} stateDir=${req?.stateDir ?? "-"}: ${detail}`,
-					)
 					throw error
 				})
 
 			if ("Error" in res) {
-				console.error("Error creating instance", res.Error.message)
 				throw new Error(res.Error.message)
 			}
 
-			console.log(
-				"instance created for pocket-ic-server",
-				res.Created.instance_id,
-			)
 			instanceId = res.Created.instance_id
 		}
-		// console.log("instanceId", instanceId)
 		return new PocketIcClient(
 			serverClient,
 			`/instances/${instanceId}`,

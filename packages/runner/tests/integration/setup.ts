@@ -20,9 +20,7 @@ import { DefaultConfig } from "../../src/services/defaultConfig.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { Moc } from "../../src/services/moc.js"
 import { PICReplica } from "../../src/services/pic/pic.js"
-import {
-	DefaultReplica,
-} from "../../src/services/replica.js"
+import { layerFromAsyncReplica } from "../../src/services/replica.js"
 import { TaskRegistry } from "../../src/services/taskRegistry.js"
 import { CachedTask, ICEConfig, Task, TaskTree } from "../../src/types/types.js"
 import { NodeSdk as OpenTelemetryNodeSdk } from "@effect/opentelemetry"
@@ -59,18 +57,18 @@ export const makeTestEnvEffect = (
 		network: string
 		logLevel: "debug" | "info" | "error"
 		background: boolean
-        policy: "reuse" | "restart"
+		policy: "reuse" | "restart"
+		origin: "extension" | "cli"
 	} = {
 		network: "local",
 		logLevel: "debug",
 		background: false,
 		policy: "reuse",
+		origin: "cli",
 	} as const,
-    idx: number = 0,
+	idx: number = 0,
 ) => {
-	const configMap = new Map([
-		["APP_DIR", fs.realpathSync(process.cwd())],
-	])
+	const configMap = new Map([["APP_DIR", fs.realpathSync(process.cwd())]])
 
 	const configLayer = Layer.setConfigProvider(
 		ConfigProvider.fromMap(configMap),
@@ -81,33 +79,33 @@ export const makeTestEnvEffect = (
 		Layer.provide(configLayer),
 	)
 
-	// const DefaultReplicaService = layerFromAsyncReplica(
-	// 	new PICReplica({
-	// 		host: "0.0.0.0",
-	// 		port: 8081 + idx,
-	// 		ttlSeconds: 9_999_999_999,
-	// 	}),
-	// 	{
-	// 		iceDirPath: iceDirName,
-	// 		network: globalArgs.network,
-	// 		logLevel: globalArgs.logLevel,
-	// 		background: globalArgs.background,
-	// 		policy: globalArgs.policy,
-	// 	},
-	// )
-    // TODO: fix for other tests
-    const DefaultReplicaService = Layer.mock(DefaultReplica, {
-        start: async () => {},
-        stop: async () => {},
-        getTopology: async () => ({}),
-        getMgmt: async () => ({}),
-        getCanisterStatus: async () => ({}),
-        getCanisterInfo: async () => ({}),
-        createCanister: async () => ({}),
-    } as any)
+	const ReplicaService = layerFromAsyncReplica(
+		new PICReplica({
+			host: "0.0.0.0",
+			port: 8081 + idx,
+			ttlSeconds: 9_999_999_999,
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
+	)
+	// TODO: fix for other tests
+	// const DefaultReplicaService = Layer.mock(DefaultReplica, {
+	//     start: async () => {},
+	//     stop: async () => {},
+	//     getTopology: async () => ({}),
+	//     getMgmt: async () => ({}),
+	//     getCanisterStatus: async () => ({}),
+	//     getCanisterInfo: async () => ({}),
+	//     createCanister: async () => ({}),
+	// } as any)
 
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
-		Layer.provide(DefaultReplicaService),
+		Layer.provide(ReplicaService),
 	)
 
 	// TODO: find out cleaner way to do this
@@ -154,7 +152,7 @@ export const makeTestEnvEffect = (
 		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
 		InFlightLayer,
 		iceDirLayer,
-		DefaultReplicaService,
+		ReplicaService,
 		PromptsLayer,
 	)
 
@@ -190,6 +188,7 @@ export const makeTestEnvEffect = (
 
 	return {
 		runtime: ManagedRuntime.make(testLayer),
+        layer: testLayer,
 		telemetryExporter,
 		customCanister: custom,
 		motokoCanister: motoko,

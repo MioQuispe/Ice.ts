@@ -390,14 +390,18 @@ export const makeCreateTask = <Config extends CreateConfig>(
 										return Effect.gen(function* () {
 											const confirmResult =
 												yield* Effect.tryPromise({
-													try: () =>
-														taskCtx.prompts.confirm(
+													try: () => {
+                                                        if (taskCtx.origin === "extension") {
+                                                            return Promise.resolve(true)
+                                                        }
+														return taskCtx.prompts.confirm(
 															{
 																message:
 																	"Target canister id is not in subnet range. Do you want to create a new canister id for it?",
 																initialValue: true,
 															},
-														),
+														)
+                                                    },
 													catch: (error) =>
 														new TaskError({
 															message:
@@ -1481,6 +1485,10 @@ export const resolveMode = (
 						if (
 							lastDeployment.installArgsHash !== installArgsHash
 						) {
+                            if (taskCtx.origin === "extension") {
+                                // do not wipe canister state unless confirmed
+                                return "upgrade"
+                            }
 							return "reinstall"
 						}
 						if (
@@ -2354,6 +2362,8 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					if (
 						resolvedMode === "reinstall" &&
 						!taskArgs.forceReinstall
+                        && taskCtx.origin !== "extension"
+                        // TODO: check if running from extension
 					) {
 						const confirmResult = yield* Effect.tryPromise({
 							try: () =>

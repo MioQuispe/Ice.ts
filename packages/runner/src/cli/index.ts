@@ -19,7 +19,7 @@ import { ICEConfigService } from "../services/iceConfig.js"
 import {
 	CanisterStatus,
 	CanisterStatusError,
-	DefaultReplica,
+	layerFromAsyncReplica,
 	Replica,
 	ReplicaError,
 } from "../services/replica.js"
@@ -155,12 +155,14 @@ export const GlobalArgs = type({
 		(str) => str === "1" || str === "true" || str === "" || str === true,
 	),
 	policy: "'reuse' | 'restart'",
+	origin: "'extension' | 'cli'",
 }) satisfies StandardSchemaV1<Record<string, unknown>>
 export type GlobalArgs = {
 	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	policy: "reuse" | "restart"
+	origin: "extension" | "cli"
 }
 
 export const logLevelMap = {
@@ -175,6 +177,7 @@ type MakeCliRuntimeArgs = {
 		logLevel: string
 		background: boolean
 		policy: string
+		origin: "extension" | "cli"
 	}
 	// fix type
 	telemetryExporter?: SpanExporter
@@ -189,9 +192,11 @@ export const makeCliRuntime = ({
 		throw new Error(globalArgs.summary)
 	}
 
+	const iceDirName = ".ice"
+
 	// const DfxReplicaService = DfxReplica.pipe(Layer.provide(NodeContext.layer))
 
-	const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
+	const IceDirLayer = IceDir.Live({ iceDirName }).pipe(
 		Layer.provide(NodeContext.layer),
 		Layer.provide(configLayer),
 	)
@@ -201,6 +206,7 @@ export const makeCliRuntime = ({
 		logLevel: globalArgs.logLevel,
 		background: globalArgs.background,
 		policy: globalArgs.policy,
+		origin: globalArgs.origin,
 	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
 
 	// const telemetryExporter = new OTLPTraceExporter()
@@ -222,9 +228,27 @@ export const makeCliRuntime = ({
 		Layer.provide(NodeContext.layer),
 	)
 
-	const TaskRegistryLayer = TaskRegistry.Live.pipe(
-		Layer.provide(KVStorageLayer),
+	// const TaskRegistryLayer = TaskRegistry.Live.pipe(
+	// 	Layer.provide(KVStorageLayer),
+	// )
+	const ReplicaService = layerFromAsyncReplica(
+		new PICReplica({
+			host: "0.0.0.0",
+			port: 8081,
+			ttlSeconds: 9_999_999_999,
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
 	)
+	const DefaultConfigLayer = DefaultConfig.Live
+		.pipe(
+            Layer.provide(ReplicaService)
+        )
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
 	const DeploymentsLayer = DeploymentsService.Live.pipe(
@@ -241,11 +265,11 @@ export const makeCliRuntime = ({
 			Layer.provide(KVStorageLayer),
 		),
 		PromptsService.Live,
-		TaskRegistryLayer,
+		// TaskRegistryLayer,
 		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
-		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+		// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		ClackLoggingLive,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		CanisterIdsLayer,
@@ -255,6 +279,10 @@ export const makeCliRuntime = ({
 		ICEConfigLayer,
 		telemetryLayer,
 		telemetryConfigLayer,
+		ReplicaService,
+		DefaultConfigLayer.pipe(
+            Layer.provide(ReplicaService)
+        ),
 		// 	DevTools.layerWebSocket().pipe(
 		//      Layer.provide(NodeSocket.layerWebSocketConstructor),
 		// ),
@@ -279,7 +307,7 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 		firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
 	const parsed = mri(globalSlice, {
 		boolean: ["background"],
-		string: ["logLevel", "network", "policy"],
+		string: ["logLevel", "network", "policy", "origin"],
 		default: { background: false },
 	}) as Record<string, unknown>
 	const rawLogLevel = String(parsed["logLevel"] ?? "info").toLowerCase()
@@ -287,13 +315,17 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 		? (rawLogLevel as "debug" | "info" | "error")
 		: "info"
 	const network = String(parsed["network"] ?? "local")
+	const rawOrigin = String(parsed["origin"] ?? "cli").toLowerCase()
+	const origin = ["extension", "cli"].includes(rawOrigin)
+		? (rawOrigin as "extension" | "cli")
+		: "cli"
 	const background =
 		Boolean(parsed["background"]) || parsed["background"] === ""
 	const rawPolicy = String(parsed["policy"]).toLowerCase()
 	const policy = ["reuse", "restart"].includes(rawPolicy)
 		? (rawPolicy as "reuse" | "restart")
 		: "reuse"
-	return { network, logLevel, background, policy }
+	return { network, logLevel, background, policy, origin }
 }
 
 const globalArgs = {
@@ -359,38 +391,35 @@ const runCommand = defineCommand({
 				yield* s.start(
 					`Running task... ${color.green(color.underline(args.taskPath))}`,
 				)
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
+				// const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
+				// const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+				// 	runtime,
+				// 	taskLayer,
+				// })
+				// yield* Effect.tryPromise({
+				// 	try: () =>
+				// 		runtime.runPromise(
+				// 			Effect.gen(function* () {
+				yield* runTaskByPath(args.taskPath, cliTaskArgs)
+				// .pipe(Effect.provide(ChildTaskRuntimeLayer))
+				// TODO: clean up. use Replica
+				const replica = yield* Replica
 				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							Effect.gen(function* () {
-								yield* runTaskByPath(
-									args.taskPath,
-									cliTaskArgs,
-								).pipe(Effect.provide(ChildTaskRuntimeLayer))
-								// TODO: clean up. use Replica
-								const replica = yield* DefaultReplica
-								yield* Effect.tryPromise({
-									try: () =>
-										replica.stop({ scope: "foreground" }),
-									catch: (e) =>
-										new ReplicaError({
-											message: String(e),
-										}),
-								})
-							}),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
+					try: () => replica.stop({ scope: "foreground" }),
+					catch: (e) =>
+						new ReplicaError({
+							message: String(e),
+						}),
 				})
+				// 			}),
+				// 		),
+				// 	catch: (error) => {
+				// 		return new TaskRuntimeError({
+				// 			message: String(error),
+				// 			error,
+				// 		})
+				// 	},
+				// })
 
 				// yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
 				// 	Effect.provide(ChildTaskRuntimeLayer),
@@ -434,12 +463,14 @@ const deployRun = async ({
 	logLevel,
 	background,
 	policy,
+	origin,
 	cliTaskArgs,
 }: {
 	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	policy: "reuse" | "restart"
+	origin: "extension" | "cli"
 	cliTaskArgs: {
 		positionalArgs: string[]
 		namedArgs: Record<string, string>
@@ -452,6 +483,7 @@ const deployRun = async ({
 		logLevel,
 		background,
 		policy,
+		origin,
 	}
 	const telemetryExporter = new InMemorySpanExporter()
 	// TODO: convert to task
@@ -502,7 +534,7 @@ const deployRun = async ({
 		}).pipe(Effect.annotateLogs("caller", "deployRun"))
 
 		// TODO: clean up. use Replica
-		const replica = yield* DefaultReplica
+		const replica = yield* Replica
 		yield* Effect.logDebug("Stopping replica")
 		yield* Effect.tryPromise({
 			try: () => replica.stop({ scope: "foreground" }),
@@ -629,10 +661,10 @@ const deployRun = async ({
 					})
 				},
 			})
-            yield* Effect.logDebug("####### Got to end of program #######")
+			yield* Effect.logDebug("####### Got to end of program #######")
 		}),
 	)
-    console.log("####### Got to end of makeCliRuntime #######")
+	console.log("####### Got to end of makeCliRuntime #######")
 }
 
 const canistersCreateCommand = defineCommand({
@@ -645,7 +677,7 @@ const canistersCreateCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("create")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -683,6 +715,7 @@ const canistersCreateCommand = defineCommand({
 				logLevel,
 				background,
 				policy,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -718,7 +751,7 @@ const canistersBuildCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("build")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -755,6 +788,7 @@ const canistersBuildCommand = defineCommand({
 				logLevel,
 				background,
 				policy,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -790,7 +824,7 @@ const canistersBindingsCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("bindings")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -830,6 +864,7 @@ const canistersBindingsCommand = defineCommand({
 				logLevel,
 				background,
 				policy,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -865,7 +900,7 @@ const canistersInstallCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("install")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -904,6 +939,7 @@ const canistersInstallCommand = defineCommand({
 				network,
 				logLevel,
 				background,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -939,7 +975,7 @@ const canistersStopCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("stop")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1005,6 +1041,7 @@ const canistersStopCommand = defineCommand({
 				logLevel,
 				background,
 				policy,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -1047,13 +1084,13 @@ const canistersStatusCommand = defineCommand({
 		// TODO: support canister name or ID
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("status")
-			const { network, logLevel, background, policy } = globalArgs
+			const { network, logLevel, background, policy, origin } = globalArgs
 
 			const program = Effect.gen(function* () {
 				const canisterIdsService = yield* CanisterIdsService
 				const canisterIdsMap =
 					yield* canisterIdsService.getCanisterIds()
-				const replica = yield* DefaultReplica
+				const replica = yield* Replica
 				const identity = Ed25519KeyIdentity.generate()
 				const canisterStatusesEffects = Object.keys(canisterIdsMap).map(
 					(canisterName) =>
@@ -1137,6 +1174,7 @@ ${color.underline(right.canisterName)}
 					network,
 					logLevel,
 					background,
+					origin,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1176,13 +1214,14 @@ const canistersRemoveCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("remove")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 		await makeCliRuntime({
 			globalArgs: {
 				policy,
 				network,
 				logLevel,
 				background,
+				origin,
 			},
 		}).runPromise(
 			Effect.gen(function* () {
@@ -1245,7 +1284,7 @@ const canistersDeployCommand = defineCommand({
 	},
 	run: async ({ args, rawArgs }) => {
 		const globalArgs = getGlobalArgs("deploy")
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1262,6 +1301,7 @@ const canistersDeployCommand = defineCommand({
 			logLevel,
 			background,
 			policy,
+			origin,
 			cliTaskArgs,
 		})
 	},
@@ -1279,7 +1319,7 @@ const canisterCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("canister")
-			const { network, logLevel, background, policy } = globalArgs
+			const { network, logLevel, background, policy, origin } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1364,6 +1404,7 @@ const canisterCommand = defineCommand({
 					network,
 					logLevel,
 					background,
+					origin,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1415,7 +1456,7 @@ const taskCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("task")
-			const { network, logLevel, background, policy } = globalArgs
+			const { network, logLevel, background, policy, origin } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1472,6 +1513,7 @@ const taskCommand = defineCommand({
 					network,
 					logLevel,
 					background,
+					origin,
 				},
 			}).runPromise(
 				Effect.gen(function* () {
@@ -1537,7 +1579,7 @@ const main = defineCommand({
 		)
 		const positionalArgs = parsedArgs._
 		const mode = namedArgs["mode"] as string | undefined
-		const { network, logLevel, background, policy } = globalArgs
+		const { network, logLevel, background, policy, origin } = globalArgs
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
@@ -1550,6 +1592,7 @@ const main = defineCommand({
 				background,
 				policy,
 				cliTaskArgs,
+				origin,
 			})
 			// await deployRun(globalArgs)
 		}

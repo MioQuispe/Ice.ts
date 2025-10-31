@@ -5,12 +5,18 @@ import * as path from "node:path"
 import * as fs from "node:fs/promises"
 import { Principal } from "@icp-sdk/core/principal"
 import { type SignIdentity } from "@icp-sdk/core/agent"
-import { CreateInstanceOptions, PocketIc, createActorClass } from "@dfinity/pic"
+import {
+	CreateInstanceOptions,
+	IcpConfigFlag,
+	PocketIc,
+	createActorClass,
+} from "@dfinity/pic"
 import { PocketIcClient as CustomPocketIcClient } from "./pocket-ic-client.js"
 import {
 	ChunkHash,
 	encodeInstallCodeChunkedRequest,
 	encodeInstallCodeRequest,
+	InstallCodeChunkedRequest,
 } from "../../canisters/pic_management/index.js"
 import {
 	AgentError,
@@ -34,7 +40,7 @@ import {
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
 import { ActorSubclass } from "../../types/actor.js"
-import { Monitor } from "./pic-process.js"
+import { acquireSpawnLock, Monitor } from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
@@ -59,45 +65,61 @@ const defaultPicConfig: CreateInstanceOptions = {
 }
 
 export class PICReplica implements ReplicaServiceClass {
-	public readonly host: string
-	public readonly port: number
+	public host: string
+	public port: number
 	public readonly ttlSeconds: number
-	private readonly picConfig: CreateInstanceOptions
+	public readonly manual?: boolean
+	public readonly picConfig: CreateInstanceOptions
 
-	private monitor: Monitor | undefined
-	private client?: InstanceType<typeof CustomPocketIcClient>
-	private pic?: PocketIc
-	private ctx: ICEConfigContext | undefined
+	public monitor: Monitor | undefined
+	public client?: InstanceType<typeof CustomPocketIcClient>
+	public pic?: PocketIc
+	public ctx: ICEConfigContext | undefined
 
 	constructor(opts: {
 		host?: string
 		port: number
 		ttlSeconds?: number
 		picConfig?: CreateInstanceOptions
+		manual?: boolean
 	}) {
 		this.host = opts.host ?? "0.0.0.0"
 		this.port = opts.port
 		this.ttlSeconds = opts.ttlSeconds ?? 9_999_999_999
 		this.picConfig = opts.picConfig ?? defaultPicConfig
+		this.manual = opts.manual ?? false
 	}
 
 	async start(ctx: ICEConfigContext): Promise<void> {
 		this.ctx = ctx
 
-		const monitor = new Monitor({
-			background: ctx.background,
-			policy: ctx.policy,
-			iceDirPath: ctx.iceDirPath,
-			host: this.host,
-			port: this.port,
-			isDev: ctx.network !== "ic",
-		})
 		try {
-			// TODO: restart fails? timeout
-			await monitor.start()
-			this.monitor = monitor
+            let releaseSpawnLock
+            console.log("this.manual", this.manual)
+			if (!this.manual) {
+				const monitor = new Monitor({
+					background: ctx.background,
+					policy: ctx.policy,
+					iceDirPath: ctx.iceDirPath,
+					host: this.host,
+					port: this.port,
+					isDev: ctx.network !== "ic",
+				})
+				// spawn lock is inside here. how can we cleanest extend it?
+				const spawnLockPath = path.resolve(
+					ctx.iceDirPath,
+					"pocketic-server",
+					"spawn.lock",
+				)
+				// spawn fresh
+				releaseSpawnLock = await acquireSpawnLock(spawnLockPath)
+				await monitor.start()
+				this.monitor = monitor
+				this.host = monitor.host
+				this.port = monitor.port
+			}
 
-			const baseUrl = `http://${monitor.host}:${monitor.port}`
+			const baseUrl = `http://${this.host}:${this.port}`
 
 			const stateRoot = path.resolve(
 				path.join(this.ctx.iceDirPath, "replica-state"),
@@ -125,6 +147,9 @@ export class PICReplica implements ReplicaServiceClass {
 			const baseRequest: CreateInstanceRequest = {
 				stateDir: effectiveStateDir,
 				initialTime: { AutoProgress: { artificialDelayMs: 0 } },
+				// icpConfig: {
+				//     betaFeatures: IcpConfigFlag.Enabled,
+				// },
 				...(incomplete ? { incompleteState: true } : {}),
 			}
 
@@ -138,6 +163,10 @@ export class PICReplica implements ReplicaServiceClass {
 			)
 			// @ts-ignore
 			this.pic = new PocketIc(this.client)
+			// release spawn lock here
+			if (!this.manual && releaseSpawnLock) {
+				await releaseSpawnLock()
+			}
 			return
 		} catch (err) {
 			this.ctx = undefined
@@ -149,17 +178,7 @@ export class PICReplica implements ReplicaServiceClass {
 	async stop(
 		args: { scope: "background" | "foreground" } = { scope: "foreground" },
 	): Promise<void> {
-		// TODO: ? tell monitor to remove leases?
-		// TODO: bg leases are not cleaned currently
-		// shutdown? or take parameter for bg?
-		// what does the API look like?
 		await this.monitor?.stop({ scope: args.scope }) //???
-		// TODO: only for bg mode?
-		// if (args.scope === "background") {
-		// 	// await this.monitor?.cleanMonitorState()
-		// 	await this.monitor?.stop({ scope: "background" })
-		// 	console.log("######################## monitor state cleaned")
-		// }
 	}
 
 	// ---------------- operations ----------------
@@ -377,6 +396,46 @@ export class PICReplica implements ReplicaServiceClass {
 		const targetSubnetId = undefined as string | undefined
 
 		const MAX_SIZE = 3_670_016
+		// const canister_install_mode = IDL.Variant({
+		//     'reinstall' : IDL.Null,
+		//     'upgrade' : IDL.Opt(
+		//       IDL.Record({
+		//         'wasm_memory_persistence' : IDL.Opt(
+		//           IDL.Variant({ 'keep' : IDL.Null, 'replace' : IDL.Null })
+		//         ),
+		//         'skip_pre_upgrade' : IDL.Opt(IDL.Bool),
+		//       })
+		//     ),
+		//     'install' : IDL.Null,
+		//   });
+		// const modePayload = {
+		// 	[mode]:
+		// 		mode === "upgrade"
+		// 			? [
+		// 					{
+		// 						wasm_memory_persistence: [{ keep: null }],
+		// 						skip_pre_upgrade: [],
+		// 					},
+		// 				]
+		// 			: null,
+		// }
+		let modePayload: InstallCodeChunkedRequest["mode"] = { install: null }
+		if (mode === "upgrade") {
+			modePayload = {
+				upgrade: [
+					{
+						wasm_memory_persistence: [{ keep: null }],
+						skip_pre_upgrade: [],
+					},
+				],
+			}
+		}
+		if (mode === "reinstall") {
+			modePayload = {
+				reinstall: null,
+			}
+		}
+		// satisfies InstallCodeChunkedRequest["mode"]
 
 		if (wasm.length > MAX_SIZE) {
 			const chunkSize = 1_048_576
@@ -402,7 +461,7 @@ export class PICReplica implements ReplicaServiceClass {
 				canister_id: Principal.fromText(canisterId),
 				target_canister: Principal.fromText(canisterId),
 				sender_canister_version: Opt<bigint>(),
-				mode: { [mode]: null } as any,
+				mode: modePayload,
 				chunk_hashes_list: chunkHashes,
 				store_canister: Opt<Principal>(),
 				wasm_module_hash: wasmModuleHash,
@@ -435,12 +494,13 @@ export class PICReplica implements ReplicaServiceClass {
 			const payload = encodeInstallCodeRequest({
 				arg: encodedArgs,
 				canister_id: Principal.fromText(canisterId),
-				mode:
-					mode === "reinstall"
-						? { reinstall: null }
-						: mode === "upgrade"
-							? { upgrade: null }
-							: { install: null },
+				mode: modePayload,
+				// mode:
+				// 	mode === "reinstall"
+				// 		? { reinstall: null }
+				// 		: mode === "upgrade"
+				// 			? { upgrade: null }
+				// 			: { install: null },
 				wasm_module: new Uint8Array(wasm),
 			})
 			await this.client!.updateCall({

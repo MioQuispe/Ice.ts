@@ -166,7 +166,7 @@ const deepEqual = (a: unknown, b: unknown): boolean =>
 
 /* -------------------------- Spawn lock (spawn.lock) -------------------------- */
 
-const acquireSpawnLock = async (
+export const acquireSpawnLock = async (
 	lockPath: string,
 ): Promise<() => Promise<void>> => {
 	await ensureDir(path.dirname(lockPath))
@@ -414,7 +414,6 @@ export class Monitor {
 			await ensureDir(dir)
 			const p = path.join(dir, `${randomUUID()}.json`)
 			await writeFileAtomic(p, JSON.stringify(lease, null, 2))
-			console.log("lease created", lease, "path", p)
 			if (args.mode === "foreground") {
 				this.fgLeases.push(p)
 			} else {
@@ -437,11 +436,6 @@ export class Monitor {
 			"pocketic-server",
 			"monitor.json",
 		)
-		const spawnLockPath = path.resolve(
-			this.iceDirPath,
-			"pocketic-server",
-			"spawn.lock",
-		)
 		if (await this.readMonitorState()) {
 			try {
 				await waitUntil(
@@ -450,11 +444,8 @@ export class Monitor {
 					100,
 				)
 			} catch (e) {
-				console.error("error waiting until pocket-ic is dead", e)
 			}
 		}
-		// spawn fresh
-		const releaseLock = await acquireSpawnLock(spawnLockPath)
 		try {
 			const args = buildMonitorArgs({
 				background: this.mode === "background",
@@ -467,12 +458,10 @@ export class Monitor {
 			this.proc = spawnMonitor(args, this.mode === "background")
 			if (this.mode === "background") {
 				try {
-					// TODO: not working??
-					// this.proc.stdin?.end()
+					this.proc.removeAllListeners()
+					this.proc.stdio?.forEach((s) => s?.destroy())
 					this.proc.unref()
-				} catch (e) {
-					console.error("error unrefing monitor process", e)
-				}
+				} catch (e) {}
 			}
 			await this.onMonitorReady()
 			const stdErrPromise =
@@ -481,7 +470,7 @@ export class Monitor {
 					: new Promise<never>((_resolve, reject) => {})
 			await Promise.race([stdErrPromise, this.onMonitorReady()])
 		} finally {
-			await releaseLock()
+			// await releaseLock()
 		}
 		const monitor = await this.readMonitorState()
 		if (!monitor) {
@@ -538,7 +527,6 @@ export class Monitor {
 
 	/** Initialize or attach to the PocketIC monitor. Single return; deduped lease creation. */
 	async start(): Promise<void> {
-		console.log("starting pic-process")
 		const desiredConfig = await this.computeNormalizedConfig()
 		const rootDir = path.resolve(this.iceDirPath, "pocketic-server")
 		const leasesDirPath = path.join(rootDir, "leases")
@@ -549,7 +537,6 @@ export class Monitor {
 
 		// Adopt existing state or drop stale
 		let existingMonitor = await this.readMonitorState()
-		console.log("existingMonitor", existingMonitor)
 		const existingLeasesFiles = (
 			await fs.readdir(leasesDirPath).catch(() => [])
 		).filter((l) => l.endsWith(".json"))
@@ -586,9 +573,6 @@ export class Monitor {
 		)
 		const mustRestart = this.policy === "restart" && mismatch
 		// Guard: FG may not restart BG-managed server
-		console.log("mustRestart", mustRestart)
-		console.log("existingMode", existingMode)
-		console.log("mismatch", mismatch)
 		if (
 			existingMonitor &&
 			mustRestart &&
@@ -609,7 +593,6 @@ export class Monitor {
 					existingMonitor.startedAt ?? -1,
 				)
 			: 0
-		console.log("fgAliveLeases", fgAliveLeases)
 		if (existingMonitor && mustRestart && fgAliveLeases > 0) {
 			throw new ReplicaStartError({
 				reason: "PortInUseError",
@@ -617,7 +600,6 @@ export class Monitor {
 			})
 		}
 		const occupied = await portListening(this.host, this.port)
-		console.log("occupied", occupied)
 
 		if (!existingMonitor && occupied && this.policy === "restart") {
 			throw new ReplicaStartError({
@@ -627,49 +609,16 @@ export class Monitor {
 			})
 		}
 
-		// if (existingMonitor && mustRestart) {
-		// 	// Clean BG leases for this gen, release while respawning, then spawn fresh
-		// 	await this.cleanLeases()
-		// 	// TODO: clean up state!!
-		// 	// TODO: ??
-		// 	// await this.writeMonitorState({} as PocketIcState, desiredConfig)
-		// 	await this.cleanMonitorState()
-		// }
-
 		let freshSpawn = false
 		if (mustRestart || !occupied) {
-			// TODO: gives timeout?? why??
-			// because state hasnt been cleaned?
-			// await this.cleanLeases({ scope: "background" })
-			// console.log("cleaned leases")
-			// await this.cleanMonitorState()
 			await this.stop({ scope: "background" })
-			console.log("stopped monitor")
-			// wait until pocket-ic is dead
-
-			// TODO: this fails??
-			// try {
-			// 	await waitUntil(
-			// 		async () => !(await this.readMonitorState()),
-			// 		400,
-			// 		100,
-			// 	)
-			// } catch (e) {
-			// 	console.error("error waiting until pocket-ic is dead", e)
-			// }
-			console.log("pocket-ic is dead")
-			console.log("created foreground lease")
 			await this.spawn(desiredConfig)
 			freshSpawn = true
-			console.log("spawned new monitor")
-			// await this.createLease({ mode: "foreground" })
-			// if (this.mode === "background") {
-			// 	// TODO: creates an extra one on fresh spawns....
-			// 	await this.createLease({ mode: "background" })
-			// }
 		}
+        console.log("creating foreground lease")
 		await this.createLease({ mode: "foreground" })
 		if ((mustRestart || !occupied) && this.mode === "background") {
+            console.log("creating background lease")
 			await this.createLease({ mode: "background" })
 		}
 		if (
@@ -677,6 +626,7 @@ export class Monitor {
 			existingMode !== "background" &&
 			!freshSpawn
 		) {
+            console.log("creating background lease 2")
 			await this.createLease({ mode: "background" })
 		}
 	}
@@ -697,44 +647,17 @@ export class Monitor {
 	}: {
 		scope: "foreground" | "background"
 	}): Promise<void> {
-		console.log("stopping monitor with scope..........", scope)
-		// const monitorState = await this.readMonitorState()
-		// console.log("at stop monitor state", monitorState)
 		await this.cleanLeases({ scope })
 		// To prevent monitor from cleaning up new leases after restart
 		if (scope === "background") {
-			// console.log("got monitor state", monitorState)
 			try {
 				this.proc?.kill("SIGTERM")
 			} catch (e) {
-				console.error("this.proc error killing monitor process", e)
+				console.error(e)
 			}
-			// if (this.proc) {
-			// 	try {
-			// 		this.proc.kill("SIGTERM")
-			// 	} catch (e) {
-			// 		console.error("this.proc error killing monitor process", e)
-			// 	}
-			// } else if (monitorState?.monitorPid) {
-			// 	try {
-			// 		process.kill(monitorState.monitorPid, "SIGTERM")
-			// 	} catch (e) {
-			// 		console.error(
-			// 			"monitorState.monitorPid error killing monitor process",
-			// 			e,
-			// 		)
-			// 	}
-			// 	console.log("killing monitor process SIGTERM.........")
-			// } else {
-			// 	console.error("monitor process pid not found")
-			// }
 		}
 	}
 
-	// async shutdown(): Promise<void> {
-	//     // Just foreground?
-	// 	await this.cleanLeases()
-	// }
 	public async cleanLeases(
 		args: { scope: "foreground" | "background" } = { scope: "foreground" },
 	) {
@@ -743,25 +666,14 @@ export class Monitor {
 			"pocketic-server",
 			"leases",
 		)
-		console.log("cleaning leases", args.scope)
 		const files = await fs.readdir(leasesDirPath).catch(() => [])
-		// const allBgLeases = files.filter(
-		// 	async (f) =>
-		// 		f.endsWith(".json") &&
-		// 		(await readJsonFile<LeaseFile>(path.join(leasesDirPath, f)))
-		// 			?.mode === "background",
-		// )
-		// const files = this.fgLeases.concat(allBgLeases)
-		console.log("lease files", files)
 		for (const lease of files) {
 			const leasePath = path.join(leasesDirPath, lease)
-			// const leasePath = lease
 			const leaseData = await readJsonFile<LeaseFile>(leasePath)
 			if (leaseData?.mode === "foreground") {
 				if (!this.fgLeases.includes(leasePath)) {
 					continue
 				}
-				console.log("cleaning foreground lease", lease, leaseData)
 				await fs.unlink(leasePath).catch((e) => {
 					console.error("error cleaning foreground lease", e)
 				})
@@ -770,25 +682,10 @@ export class Monitor {
 				leaseData?.mode === "background" &&
 				args.scope === "background"
 			) {
-				console.log("cleaning background lease", lease, leaseData)
 				await fs.unlink(leasePath).catch((e) => {
 					console.error("error cleaning background lease", e)
 				})
 			}
 		}
-
-		// const files = await fs.readdir(leasesDirPath).catch(() => [])
-		// for (const file of files) {
-		// 	await fs.unlink(path.join(leasesDirPath, file)).catch(() => {})
-		// }
 	}
-
-	// public async cleanMonitorState() {
-	// 	const stateFilePath = path.resolve(
-	// 		this.iceDirPath,
-	// 		"pocketic-server",
-	// 		"monitor.json",
-	// 	)
-	// 	await fs.unlink(stateFilePath).catch(() => {})
-	// }
 }

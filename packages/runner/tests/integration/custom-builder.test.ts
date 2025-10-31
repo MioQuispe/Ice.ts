@@ -22,7 +22,7 @@ import { CanisterIdsService } from "../../src/services/canisterIds.js"
 import { DefaultConfig } from "../../src/services/defaultConfig.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { Moc } from "../../src/services/moc.js"
-import { DefaultReplica, Replica } from "../../src/services/replica.js"
+import { Replica } from "../../src/services/replica.js"
 import { TaskRegistry } from "../../src/services/taskRegistry.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
 import { makeTaskLayer, TaskRuntime } from "../../src/services/taskRuntime.js"
@@ -110,6 +110,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -166,6 +168,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -262,6 +266,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -352,6 +358,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -410,6 +418,8 @@ describe("custom builder", () => {
 						network: "local",
 						logLevel: "debug",
 						background: false,
+						policy: "reuse",
+						origin: "cli",
 					} as const
 					const config = {} satisfies Partial<ICEConfig>
 					const ICEConfigLayer = ICEConfigService.Test(
@@ -500,6 +510,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -595,6 +607,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -662,6 +676,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -709,6 +725,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -766,6 +784,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -826,6 +846,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -865,6 +887,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -904,6 +928,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -959,6 +985,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -998,6 +1026,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -1061,6 +1091,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -1108,6 +1140,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -1156,6 +1190,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(
@@ -1234,6 +1270,8 @@ describe("custom builder", () => {
 						network: "local",
 						logLevel: "debug",
 						background: false,
+						policy: "reuse",
+						origin: "cli",
 					} as const
 					const config = {} satisfies Partial<ICEConfig>
 					const ICEConfigLayer = ICEConfigService.Test(
@@ -1338,6 +1376,8 @@ describe("custom builder", () => {
 					network: "local",
 					logLevel: "debug",
 					background: false,
+					policy: "reuse",
+					origin: "cli",
 				} as const
 				const config = {} satisfies Partial<ICEConfig>
 				const ICEConfigLayer = ICEConfigService.Test(

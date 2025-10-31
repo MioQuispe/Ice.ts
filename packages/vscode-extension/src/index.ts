@@ -201,7 +201,7 @@ export const { activate, deactivate } = defineExtension(
         userIsEditing = false;
         clearDecorations();
 
-        runBackgroundCommand(`npx ice run ${taskName}`, cwd, (err, errorMessage) => {
+        runBackgroundCommand(`npx ice --origin=extension run ${taskName}`, cwd, (err, errorMessage) => {
           if (err) {
             // if error => show codeLens with "✗"
             taskStatusMap.set(taskName, "error");

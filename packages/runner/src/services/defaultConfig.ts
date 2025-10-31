@@ -1,8 +1,10 @@
 import { Context, Effect, Layer } from "effect"
 import { Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
-import { DefaultReplica, ReplicaServiceClass } from "./replica.js"
+import { Replica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
+import { PICReplica } from "./pic/pic.js"
+import { IcpConfigFlag } from "@dfinity/pic"
 
 // const DfxReplicaService = DfxReplica.pipe(
 // 	Layer.provide(NodeContext.layer),
@@ -36,7 +38,17 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 	static readonly Live = Layer.effect(
 		DefaultConfig,
 		Effect.gen(function* () {
-			const defaultReplica = yield* DefaultReplica
+			// const defaultReplica = new PICReplica({
+			// 	host: "0.0.0.0",
+			// 	port: 8081,
+			// 	ttlSeconds: 9_999_999_999,
+            //     picConfig: {
+            //         icpConfig: {
+            //             betaFeatures: IcpConfigFlag.Enabled,
+            //         },
+            //     },
+			// })
+            const defaultReplica = yield* Replica
 			const defaultUser = yield* Effect.tryPromise({
 				try: () => Ids.fromDfx("default"),
 				catch: () => new TaskRuntimeError({ message: "Failed to get default user" }),

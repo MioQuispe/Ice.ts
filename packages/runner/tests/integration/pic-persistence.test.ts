@@ -7,7 +7,7 @@ import { Principal } from "@icp-sdk/core/principal"
 import { makeTestEnvEffect } from "./setup.js"
 import fs from "node:fs"
 import { customCanister } from "../../src/builders/index.js"
-import { DefaultReplica } from "../../src/services/replica.js"
+import { Replica } from "../../src/services/replica.js"
 
 import { idlFactory as exampleIdlFactory } from "../fixtures/canister/example.did.js"
 import type { _SERVICE as ExampleService } from "../fixtures/canister/example.did.ts"
@@ -25,6 +25,8 @@ const globalArgs = {
 	network: "local",
 	logLevel: "info",
 	background: false,
+	policy: "reuse",
+	origin: "cli",
 } as const
 
 const canisterKey = "canister"
@@ -49,7 +51,7 @@ describe("PocketIC persistence", () => {
 		} catch {}
 
 		// Run A: deploy, set state, verify, shutdown
-		const { runtime: runtimeA } = makeTestEnvEffect(iceDirName)
+		const { runtime: runtimeA } = makeTestEnvEffect(iceDirName, globalArgs)
 
 		const { canisterId: canisterIdA } = await runtimeA.runPromise(
 			Effect.gen(function* () {
@@ -67,22 +69,22 @@ describe("PocketIC persistence", () => {
 					taskTree,
 					config,
 				)
-				const { runtime, taskLayer } = yield* makeTaskLayer(
-					globalArgs,
-				).pipe(
-					Effect.provide(ICEConfig),
-					Effect.provide(DeploymentsLayer),
-				)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime: runtime,
-					taskLayer: taskLayer,
-				})
+				// const { runtime, taskLayer } = yield* makeTaskLayer(
+				// 	globalArgs,
+				// ).pipe(
+				// 	Effect.provide(ICEConfig),
+				// 	Effect.provide(DeploymentsLayer),
+				// )
+				// const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+				// 	runtime: runtime,
+				// 	taskLayer: taskLayer,
+				// })
 				const { canisterId } = yield* runTask(can.children.deploy).pipe(
 					Effect.provide(ICEConfig),
 					Effect.provide(DeploymentsLayer),
-					Effect.provide(ChildTaskRuntimeLayer),
+					// Effect.provide(ChildTaskRuntimeLayer),
 				)
-				const replica = yield* DefaultReplica
+				const replica = yield* Replica
 				const identity = Ed25519KeyIdentity.generate()
 				console.log("creating actor")
 				const actor = yield* Effect.tryPromise({
@@ -146,7 +148,7 @@ describe("PocketIC persistence", () => {
 		const { runtime: runtimeB } = makeTestEnvEffect(iceDirName)
 		await runtimeB.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* DefaultReplica
+				const replica = yield* Replica
 				const identity = Ed25519KeyIdentity.generate()
 				// Wait until canister becomes visible after instance restore
 				for (let i = 0; i < 50; i++) {
@@ -217,27 +219,27 @@ describe("PocketIC persistence", () => {
 					taskTree,
 					config,
 				)
-				const { runtime, taskLayer } = yield* makeTaskLayer(
-					globalArgs,
-				).pipe(
-					Effect.provide(ICEConfig),
-					Effect.provide(DeploymentsLayer),
-				)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime: runtime,
-					taskLayer: taskLayer,
-				})
+				// const { runtime, taskLayer } = yield* makeTaskLayer(
+				// 	globalArgs,
+				// ).pipe(
+				// 	Effect.provide(ICEConfig),
+				// 	Effect.provide(DeploymentsLayer),
+				// )
+				// const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+				// 	runtime: runtime,
+				// 	taskLayer: taskLayer,
+				// })
 				yield* runTask(can.children.deploy).pipe(
 					Effect.provide(ICEConfig),
 					Effect.provide(DeploymentsLayer),
-					Effect.provide(ChildTaskRuntimeLayer),
+					// Effect.provide(ChildTaskRuntimeLayer),
 				)
 			}).pipe(Effect.scoped),
 		)
 		// read topology
 		const snapshotA = await runtimeA.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* DefaultReplica
+				const replica = yield* Replica
 				const topo = yield* Effect.tryPromise({
 					try: () => replica.getTopology(),
 					catch: (e) => e as Error,
@@ -253,7 +255,7 @@ describe("PocketIC persistence", () => {
 		const { runtime: runtimeB } = makeTestEnvEffect(iceDirName)
 		const snapshotB = await runtimeB.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* DefaultReplica
+				const replica = yield* Replica
 				const topo = yield* Effect.tryPromise({
 					try: () => replica.getTopology(),
 					catch: (e) => e as Error,

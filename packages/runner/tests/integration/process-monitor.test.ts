@@ -8,18 +8,16 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest"
 import { setTimeout as sleep } from "node:timers/promises"
 import { tmpdir } from "node:os"
 import { spawn } from "node:child_process"
-import { Effect, Exit, Fiber, Layer, Scope } from "effect"
+import { Effect, Exit, Fiber, Layer, ManagedRuntime, Scope } from "effect"
 import { FileSystem, Path } from "@effect/platform"
 import { KeyValueStore } from "@effect/platform"
-import { makeTaskLayer } from "../../src/services/taskRuntime.js"
-import { TaskRuntime } from "../../src/services/taskRuntime.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { task } from "../../src/builders/task.js"
 import { PICReplica as PocketICReplica } from "../../src/services/pic/pic.js"
 import { runTask } from "../../src/tasks/run.js"
 import { pocketIcPath } from "@ice.ts/pocket-ic"
 import { IcpConfigFlag } from "@dfinity/pic"
-import { DefaultReplica, Replica } from "../../src/services/replica.js"
+import { Replica } from "../../src/services/replica.js"
 import { TaskTree } from "../../src/types/types.js"
 import { NodeContext } from "@effect/platform-node"
 import { makeTestEnvEffect } from "./setup.js"
@@ -80,7 +78,7 @@ const FIXTURES_DIR = path.join(
 )
 const SCENARIOS_CSV_PATH = path.join(
 	FIXTURES_DIR,
-	"process_monitor_scenarios_latest.csv",
+	"process_monitor_scenarios.csv",
 )
 
 const DEFAULT_BIND = "0.0.0.0"
@@ -179,6 +177,7 @@ const getLeases = (iceDir: string) =>
 		const fs = yield* FileSystem.FileSystem
 		const path = yield* Path.Path
 		const leasesDirPath = yield* leasesDir(iceDir)
+		console.log("leasesDirPath", leasesDirPath)
 		const entries = yield* fs.readDirectory(leasesDirPath).pipe(
 			Effect.catchAll((e) => {
 				console.log(`[countFgLeases] Failed to read directory: ${e}`)
@@ -261,7 +260,13 @@ const snapshot = (iceDir: string, bind: string, port: number) =>
 
 		const occupied = yield* portOccupied(bind, port)
 
-		if (st?.managed && occupied) {
+		console.log("st", st)
+		// TODO: occupied check not working???
+		console.log("occupied", occupied)
+		console.log("bind", bind)
+		console.log("port", port)
+		if (st?.managed) {
+			console.log("checking leases")
 			const startedAt = st.startedAt!
 			const { fgLeases, bgLeases } = yield* getLeases(iceDir)
 			let mode: "foreground" | "background" | undefined
@@ -362,15 +367,26 @@ const launchManualPocketIc = (opts: {
 	cwd: string
 }): Effect.Effect<number> =>
 	Effect.sync(() => {
-		const args = ["-i", opts.bind, "-p", String(opts.port)]
+		const args = [
+			"-i",
+			opts.bind,
+			"-p",
+			String(opts.port),
+			// "--ttl",
+			// "99999999999",
+		]
+		// TODO: ?? not working
 		const proc = spawn(pocketIcPath, args, {
 			cwd: opts.cwd,
 			detached: true,
 			stdio: "ignore",
 		})
-		try {
-			proc.unref()
-		} catch {}
+		// try {
+		proc.unref()
+		// } catch (e) {
+		// 	console.error("error spawning manual pocketic", e)
+		// 	throw e
+		// }
 		return proc.pid!
 	})
 
@@ -398,7 +414,8 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 		background: row.run_mode === "bg",
 		logLevel: "error" as const,
 		policy,
-	}
+		origin: "cli",
+	} as const
 
 	const prepareGlobalArgs = {
 		network: "local" as const,
@@ -406,7 +423,8 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 		background: row.existing_server === "managed_bg",
 		logLevel: "error" as const,
 		policy: "restart" as const,
-	}
+		origin: "cli" as const,
+	} as const
 
 	return { prepareGlobalArgs, globalArgs }
 }
@@ -416,6 +434,7 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 describe("process orchestration — scenarios (public APIs only)", () => {
 	// const scenarios = [loadScenarios()[10 - 1]]
 	const scenarios = loadScenarios()
+	// .slice(12 - 1, 15 - 1)
 
 	beforeAll(async () => {
 		await fsp.mkdir(TEST_TMP_ROOT, { recursive: true })
@@ -447,6 +466,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			const picReplica = new PocketICReplica({
 				host: DEFAULT_BIND,
 				port,
+				manual: row.existing_server === "manual",
 				picConfig: {
 					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
 				},
@@ -454,13 +474,20 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			const mismatchReplica = new PocketICReplica({
 				host: DEFAULT_BIND,
 				port,
+				manual: row.existing_server === "manual",
 				picConfig: {
 					icpConfig: { betaFeatures: IcpConfigFlag.Disabled },
 				},
 			})
 
+			// TODO: if
 			const prepareIceConfig = {
+				// if (
+				//     row.existing_server === "managed_fg" ||
+				//     row.existing_server === "managed_bg"
+				// ) {
 				networks: { local: { replica: picReplica } },
+				// else manual replica, leave these empty or just define port?
 			}
 			const hold_task = task("hold_lease")
 				.run(async () => {
@@ -484,13 +511,21 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				taskTree,
 				prepareIceConfig,
 			)
-			const { runtime: prepareRuntime } = makeTestEnvEffect(
+			const { layer: prepareLayer } = makeTestEnvEffect(
 				iceDir,
 				prepareGlobalArgs,
 				idx,
 			)
 
 			const runPrepare = Effect.gen(function* () {
+				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KVStorageImpl,
+				)
+				const DeploymentsLayer = DeploymentsService.Live.pipe(
+					Layer.provide(KVStorageLayer),
+				)
 				let manualPid: number | undefined
 				if (row.existing_server === "manual") {
 					manualPid = yield* launchManualPocketIc({
@@ -500,65 +535,50 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					})
 				}
 
-				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-				const KVStorageLayer = Layer.succeed(
-					KeyValueStore.KeyValueStore,
-					KVStorageImpl,
-				)
-				const DeploymentsLayer = DeploymentsService.Live.pipe(
-					Layer.provide(KVStorageLayer),
-				)
-				const prepareIceConfigImpl = yield* ICEConfigService
-				const PrepareICEConfigLayer = Layer.succeed(
-					ICEConfigService,
-					prepareIceConfigImpl,
-				)
-				const { taskLayer, runtime: taskRuntime } =
-					yield* makeTaskLayer(prepareGlobalArgs).pipe(
-						Effect.provide(PrepareICEConfigLayer),
-						Effect.provide(DeploymentsLayer),
-					)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime: taskRuntime,
-					taskLayer,
-				})
-
-				// TODO: get from IceConfig
 				const { config } = yield* ICEConfigService
 				const replica = config?.networks?.["local"]?.replica!
 
-				// Start only if precondition demands a managed server
-				if (
-					row.existing_server === "managed_fg" ||
-					row.existing_server === "managed_bg"
-				) {
-					yield* Effect.tryPromise({
-						try: async () => {
-							await replica.start(prepareGlobalArgs)
-						},
-						catch: (e) => {
-							if (e instanceof ReplicaStartError) {
-								return new ReplicaStartError({
-									reason: e.reason,
-									message: e.message,
-								})
-							}
-							return e as Error
-						},
-					})
-					yield* Effect.sleep(STABILIZE_MS)
-				}
+				// TODO: move this logic to ICEConfigService?
+				// const { config } = yield* ICEConfigService
+				// const replica = config?.networks?.["local"]?.replica!
+
+				// // Start only if precondition demands a managed server
+				// if (
+				// 	row.existing_server === "managed_fg" ||
+				// 	row.existing_server === "managed_bg"
+				// ) {
+				// console.log("starting prepare replica...............", replica)
+				// yield* Effect.tryPromise({
+				// 	try: async () => {
+				// 		await replica.start(prepareGlobalArgs)
+				// 	},
+				// 	catch: (e) => {
+				// 		console.error("error starting prepare replica", e)
+				// 		if (e instanceof ReplicaStartError) {
+				// 			return new ReplicaStartError({
+				// 				reason: e.reason,
+				// 				message: e.message,
+				// 			})
+				// 		}
+				// 		return e as Error
+				// 	},
+				// })
+				// yield* Effect.sleep(STABILIZE_MS)
+				// }
 
 				let preHoldFiber:
 					| Fiber.RuntimeFiber<unknown, unknown>
 					| undefined
 				preHoldFiber = yield* runTask(hold_task).pipe(
-					Effect.provide(taskLayer),
-					Effect.provide(ChildTaskRuntimeLayer),
+					// Effect.provide(taskLayer),
+					// Effect.provide(ChildTaskRuntimeLayer),
+					// Effect.provide(PrepareICEConfigLayer),
+					Effect.provide(DeploymentsLayer),
 					Effect.forkIn(testScope),
 				)
 				if (row.ephemeral_leases_before === "0") {
 					yield* Effect.sleep(1000)
+					console.log("stopping foreground replica...............")
 					yield* Effect.tryPromise({
 						try: () => replica.stop({ scope: "foreground" }),
 						catch: (error) => {
@@ -573,6 +593,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					row.existing_server === "managed_bg"
 				) {
 					yield* Effect.sleep(1000)
+					console.log("stopping background replica...............")
 					yield* Effect.tryPromise({
 						try: () => replica.stop({ scope: "background" }),
 						catch: (error) => {
@@ -582,13 +603,18 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					})
 					yield* Effect.sleep(1000)
 				}
-				return { manualPid, preHoldFiber }
+				return { preHoldFiber, manualPid }
 			})
 
-			const { manualPid, preHoldFiber } = yield* Effect.tryPromise({
+			// if (row.existing_server !== "none") {
+			const prepareRuntime = ManagedRuntime.make(
+				Layer.mergeAll(prepareLayer, PrepareICEConfigLayer),
+			)
+			const { preHoldFiber, manualPid } = yield* Effect.tryPromise({
 				try: () =>
 					prepareRuntime.runPromise(
-						runPrepare.pipe(Effect.provide(PrepareICEConfigLayer)),
+						runPrepare,
+						// .pipe(Effect.provide(PrepareICEConfigLayer)),
 					),
 				catch: (error) => {
 					return error
@@ -601,6 +627,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				yield* Scope.close(testScope, Exit.void)
 				yield* prepareRuntime.disposeEffect
 			}
+			// }
 
 			// Check if port is still listening
 			const before = yield* snapshot(iceDir, DEFAULT_BIND, port).pipe(
@@ -611,16 +638,36 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				JSON.stringify(before, null, 2),
 			)
 
-			const { runtime: mainRuntime } = makeTestEnvEffect(
+			const { layer: mainLayer } = makeTestEnvEffect(
 				iceDir,
 				globalArgs,
 				idx,
 			)
 
+			const mainScope = yield* Scope.make()
+			const mainPicReplica = new PocketICReplica({
+				host: DEFAULT_BIND,
+				port,
+				manual: false,
+				picConfig: {
+					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
+				},
+			})
+			const mainMismatchReplica = new PocketICReplica({
+				host: DEFAULT_BIND,
+				port,
+				manual: false,
+				picConfig: {
+					icpConfig: { betaFeatures: IcpConfigFlag.Disabled },
+				},
+			})
+
 			const mainIceConfig = {
 				networks: {
 					local: {
-						replica: useMismatch ? mismatchReplica : picReplica,
+						replica: useMismatch
+							? mainMismatchReplica
+							: mainPicReplica,
 					},
 				},
 			}
@@ -640,56 +687,34 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					const DeploymentsLayer = DeploymentsService.Live.pipe(
 						Layer.provide(KVStorageLayer),
 					)
-					const iceConfigImpl = yield* ICEConfigService
-					const MainICEConfigLayer = Layer.succeed(
-						ICEConfigService,
-						iceConfigImpl,
-					)
-					const { taskLayer, runtime: taskRuntime } =
-						yield* makeTaskLayer(globalArgs).pipe(
-							Effect.provide(MainICEConfigLayer),
-							Effect.provide(DeploymentsLayer),
-						)
-					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-						runtime: taskRuntime,
-						taskLayer,
-					})
 
 					const { config } = yield* ICEConfigService
 					const replica = config?.networks?.["local"]?.replica!
 
-					// Start/attach per main scenario
-					yield* Effect.tryPromise({
-						try: async () => {
-							await replica.start(globalArgs)
-						},
-						catch: (e) => {
-							if (e instanceof ReplicaStartError) {
-								return new ReplicaStartError({
-									reason: e.reason,
-									message: e.message,
-								})
-							}
-							return e as Error
-						},
-					})
-
 					const mainHoldFiber = yield* runTask(hold_task).pipe(
-						Effect.provide(taskLayer),
-						Effect.provide(ChildTaskRuntimeLayer),
-						Effect.forkIn(testScope),
+						// Effect.provide(taskLayer),
+						// Effect.provide(ChildTaskRuntimeLayer),
+						// Effect.provide(MainICEConfigLayer),
+						Effect.provide(DeploymentsLayer),
+						Effect.forkIn(mainScope),
 					)
+
+					// IMMEDIATELY check if it failed during startup
+					// Give it a moment to initialize
+					yield* Effect.sleep(1000)
+					const fiberStatus = yield* Fiber.status(mainHoldFiber)
+
+					// If it's already done (failed), join it to get the error
+					if (fiberStatus._tag === "Done") {
+						const result = yield* Fiber.join(mainHoldFiber)
+						// This will re-throw any errors from the fiber
+					}
 
 					const fgStop =
 						row.ephemeral_leases_after === "0" &&
 						row.ephemeral_leases_before !== "0"
 
-					// const bgStop =
-					// 	row.bg_leases_after === "0" &&
-					// 	row.bg_leases_before !== "0"
-
 					if (fgStop) {
-						// TODO: clean just leases
 						console.log("fgStop called on main replica")
 						yield* Effect.tryPromise({
 							try: () => replica.stop({ scope: "foreground" }),
@@ -705,11 +730,11 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					return { mainHoldFiber }
 				})
 
+			const mainRuntime = ManagedRuntime.make(
+				Layer.mergeAll(mainLayer, MainICEConfigLayer),
+			)
 			const mainResult = yield* Effect.tryPromise({
-				try: () =>
-					mainRuntime.runPromiseExit(
-						runMain().pipe(Effect.provide(MainICEConfigLayer)),
-					),
+				try: () => mainRuntime.runPromiseExit(runMain()),
 				catch: (error) => {
 					return error
 				},
@@ -730,9 +755,9 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 
 			// Give forked task time to create lease
 			if (mainHoldFiber) {
-				yield* Effect.sleep(STABILIZE_MS)
-
+				yield* Effect.sleep(1000)
 				const mainFiberStatus = yield* Fiber.status(mainHoldFiber)
+				console.log("mainFiberStatus", mainFiberStatus)
 				yield* Effect.sleep(500)
 			}
 
@@ -789,6 +814,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 
 			// Close the test scope (will interrupt any remaining fibers)
 			yield* Scope.close(testScope, Exit.void)
+			yield* Scope.close(mainScope, Exit.void)
 		})
 		await Effect.runPromise(testEff)
 	})

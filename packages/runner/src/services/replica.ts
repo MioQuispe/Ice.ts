@@ -300,21 +300,21 @@ export class Replica extends Context.Tag("Replica")<
 	ReplicaServiceClass
 >() {}
 
-export class DefaultReplica extends Context.Tag("DefaultReplica")<
-	DefaultReplica,
-	ReplicaServiceClass
->() {}
+// export class DefaultReplica extends Context.Tag("DefaultReplica")<
+// 	DefaultReplica,
+// 	ReplicaServiceClass
+// >() {}
 
 export function layerFromAsyncReplica(
 	replica: ReplicaServiceClass,
 	ctx: ICEConfigContext,
 ) {
 	return Layer.scoped(
-		DefaultReplica,
+		Replica,
 		Effect.acquireRelease(
 			Effect.tryPromise({
 				try: async () => {
-					await replica.start(ctx)
+					// await replica.start(ctx)
 					return replica
 				},
 				catch: (e) =>
@@ -347,4 +347,4 @@ export function layerFromAsyncReplica(
 //   const layer = Layer.succeed(DefaultReplica, svc)
 //
 export const layerFromStartedReplica = (replica: ReplicaServiceClass) =>
-	Layer.succeed(DefaultReplica, replica)
+	Layer.succeed(Replica, replica)

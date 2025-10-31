@@ -34,9 +34,11 @@ import { DefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
 import {
 	AgentError,
-	DefaultReplica,
 	layerFromAsyncReplica,
+	layerFromStartedReplica,
+	Replica,
 	ReplicaError,
+	ReplicaStartError,
 } from "./replica.js"
 import type { ICEConfig, ICEConfigContext } from "../types/types.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
@@ -56,6 +58,7 @@ import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
 import { PICReplica } from "./pic/pic.js"
 import { GlobalArgs } from "../cli/index.js"
+import { IcpConfigFlag } from "@dfinity/pic"
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -85,7 +88,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| NodeContext.NodeContext
 			| TaskRegistry
 			| KeyValueStore.KeyValueStore
-			| DefaultReplica
+			| Replica
 			| DefaultConfig
 			| Moc
 			| CanisterIdsService
@@ -107,7 +110,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| NodeContext.NodeContext
 			| TaskRegistry
 			| KeyValueStore.KeyValueStore
-			| DefaultReplica
+			| Replica
 			| DefaultConfig
 			| Moc
 			| CanisterIdsService
@@ -140,23 +143,14 @@ export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 		)
 		// TODO: dont pass down to child tasks
 		const ICEConfig = yield* ICEConfigService
+		const { config } = yield* ICEConfigService
+		const currentNetwork = globalArgs.network ?? "local"
+		const configReplica = config?.networks?.[currentNetwork]?.replica
 		const ICEConfigLayer = Layer.succeed(ICEConfigService, ICEConfig)
 		const iceDir = yield* IceDir
 		const IceDirLayer = Layer.succeed(IceDir, iceDir)
 		// TODO: make it work for tests too
 		const telemetryConfig = yield* TelemetryConfig
-		// const defaultReplica = yield* DefaultReplica
-		// const DefaultReplicaService = Layer.succeed(DefaultReplica, defaultReplica)
-		// const DefaultReplicaService = Layer.scoped(
-		// 	DefaultReplica,
-		// 	picReplicaImpl({
-		// 		runInBackground: false,
-		// 		ip: "0.0.0.0",
-		// 		port: 8081,
-		// 		ttlSeconds: 9_999_999_999,
-		// 	}),
-		// ).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
-
 		// const telemetryConfigLayer = Layer.succeed(
 		// 	TelemetryConfig,
 		// 	telemetryConfig,
@@ -191,28 +185,53 @@ export const makeTaskLayer = (globalArgs: GlobalArgs) =>
 			iceDirPath: iceDir.path,
 		}
 
-		// Reuse an already-provided DefaultReplica if available in the current Effect environment
-		const existingDefaultReplica =
-			yield* Effect.serviceOption(DefaultReplica)
+		const defaultReplica = yield* Replica
+		const selectedReplica = configReplica ?? defaultReplica
+		// TODO: use Layer to start / stop
+		yield* Effect.tryPromise({
+			try: async () => {
+		        console.log("starting selected replica...............", ctx)
+				await selectedReplica.start(ctx)
+			},
+			catch: (e) => {
+				if (e instanceof ReplicaStartError) {
+					return new ReplicaStartError({
+						reason: e.reason,
+						message: e.message,
+					})
+				}
+				return e as Error
+			},
+		})
 
-		const DefaultReplicaService = Option.isNone(existingDefaultReplica)
-			? layerFromAsyncReplica(
-					new PICReplica({
-						host: "0.0.0.0",
-						port: 8081,
-						ttlSeconds: 9_999_999_999,
-					}),
-					ctx,
-				)
-			: Layer.succeed(DefaultReplica, existingDefaultReplica.value)
+		console.log("which replica?", configReplica ? "config" : "default")
+		console.log("selectedReplica", selectedReplica)
+		const ReplicaService = configReplica
+			? Layer.succeed(Replica, configReplica)
+			: // TODO: we dont wanna start both??
+				Layer.succeed(Replica, defaultReplica)
+		// : layerFromAsyncReplica(
+		// 		new PICReplica({
+		// 			host: "0.0.0.0",
+		// 			port: 8081,
+		// 			ttlSeconds: 9_999_999_999,
+		// 			picConfig: {
+		// 				icpConfig: {
+		// 					betaFeatures: IcpConfigFlag.Enabled,
+		// 				},
+		// 			},
+		// 		}),
+		// 		ctx,
+		// 	)
+		// : Layer.succeed(DefaultReplica, existingDefaultReplica.value)
 
 		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
 		const taskLayer = Layer.mergeAll(
 			telemetryLayer,
 			NodeContext.layer,
 			TaskRegistryLayer,
-			DefaultReplicaService,
-			DefaultConfig.Live.pipe(Layer.provide(DefaultReplicaService)),
+			ReplicaService,
+			DefaultConfig.Live.pipe(Layer.provide(ReplicaService)),
 			Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 			CanisterIdsLayer,
 			// DevTools.layerWebSocket().pipe(

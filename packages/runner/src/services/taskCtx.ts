@@ -20,7 +20,7 @@ import {
 import type { ICEUser, Task, TaskTree } from "../types/types.js"
 import { DefaultConfig, InitializedDefaultConfig } from "./defaultConfig.js"
 import { ICEConfigService } from "./iceConfig.js"
-import { TaskRuntime } from "./taskRuntime.js"
+import { makeTaskLayer, TaskRuntime } from "./taskRuntime.js"
 import { runTask } from "../tasks/run.js"
 import { IceDir } from "./iceDir.js"
 import { Deployment, DeploymentsService } from "./deployments.js"
@@ -117,6 +117,7 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	readonly prompts: {
 		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
 	}
+	readonly origin: "extension" | "cli"
 }
 
 export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
@@ -176,11 +177,27 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 
 	// TODO: telemetry
 	// Pass down the same runtime to the child task
-	const { runtime, taskLayer } = yield* TaskRuntime
+	const maybeTaskRuntime = yield* Effect.serviceOption(TaskRuntime)
+	const { runtime, taskLayer } = Option.isSome(maybeTaskRuntime)
+		? maybeTaskRuntime.value
+		: yield* makeTaskLayer(globalArgs)
+	// const { runtime, taskLayer } = yield* TaskRuntime
+
 	const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
 		runtime,
 		taskLayer,
 	})
+	// const { runtime, taskLayer } = yield* makeTaskLayer(
+	// 	globalArgs,
+	// ).pipe(
+	// 	Effect.provide(ICEConfig),
+	// 	Effect.provide(DeploymentsLayer),
+	// )
+	// const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+	// 	runtime: runtime,
+	// 	taskLayer: taskLayer,
+	// })
+
 	const Deployments = yield* DeploymentsService
 	const CanisterIds = yield* CanisterIdsService
 	const Prompts = yield* PromptsService
@@ -200,7 +217,7 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 					Effect.annotateLogs("taskPath", taskPath),
 					Effect.withParentSpan(parentSpan),
 					Effect.withConcurrency("unbounded"),
-                    Effect.scoped,
+					Effect.scoped,
 				),
 			)
 			return result
@@ -247,10 +264,13 @@ export const makeTaskCtx = Effect.fn("taskCtx_make")(function* (
 		},
 		prompts: {
 			confirm: async (confirmOptions) => {
-				const result = await runtime.runPromise(Prompts.confirm(confirmOptions))
+				const result = await runtime.runPromise(
+					Prompts.confirm(confirmOptions),
+				)
 				return result
 			},
 		},
+		origin: globalArgs.origin ?? "cli",
 	} satisfies TaskCtxShape
 })
 // static Test = {}
