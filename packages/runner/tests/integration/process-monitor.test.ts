@@ -610,6 +610,27 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			const prepareRuntime = ManagedRuntime.make(
 				Layer.mergeAll(prepareLayer, PrepareICEConfigLayer),
 			)
+            // TODO: build it here?
+            // TaskRuntimeLayer.pipe(
+            //     Layer.provide(NodeContext.layer),
+            //     Layer.provide(KVStorageLayer),
+            //     Layer.provide(ICEConfigLayer),
+            //     Layer.provide(telemetryLayer),
+            //     Layer.provide(telemetryConfigLayer),
+            //     Layer.provide(ReplicaService),
+            //     Layer.provide(
+            //         DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+            //     ),
+            //     Layer.provide(CanisterIdsLayer),
+            //     Layer.provide(configLayer),
+            //     Layer.provide(InFlightLayer),
+            //     Layer.provide(IceDirLayer),
+            //     Layer.provide(DeploymentsLayer),
+            //     Layer.provide(PromptsService.Live),
+            //     Layer.provide(
+            //         TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
+            //     ),
+            // )
 			const { preHoldFiber, manualPid } = yield* Effect.tryPromise({
 				try: () =>
 					prepareRuntime.runPromise(
@@ -728,7 +749,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					}
 
 					return { mainHoldFiber }
-				})
+				}).pipe(Effect.scoped)
 
 			const mainRuntime = ManagedRuntime.make(
 				Layer.mergeAll(mainLayer, MainICEConfigLayer),

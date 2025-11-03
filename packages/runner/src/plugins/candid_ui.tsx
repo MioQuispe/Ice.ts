@@ -6,7 +6,7 @@ import {
   Text
 } from "ink"
 import React from "react"
-import { loadCanisterId } from "../builders/custom.js"
+import { loadCanisterId } from "../builders/lib.js"
 import { Tags } from "../builders/lib.js"
 import { TaskCtx } from "../tasks/lib.js"
 import type {

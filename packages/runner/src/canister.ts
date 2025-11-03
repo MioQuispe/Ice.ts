@@ -5,7 +5,7 @@ import * as didc from "@ice.ts/didc_js"
 import { Data, Effect } from "effect"
 import { Moc } from "./services/moc.js"
 import type * as ActorTypes from "./types/actor.js"
-import { type TaskCtxShape } from "./services/taskCtx.js"
+import { type TaskCtxShape } from "./services/taskRuntime.js"
 
 export class DeploymentError extends Data.TaggedError("DeploymentError")<{
 	message: string

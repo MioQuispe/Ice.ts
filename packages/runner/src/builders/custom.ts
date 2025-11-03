@@ -44,7 +44,7 @@ import {
 } from "./lib.js"
 // TODO: move to lib.ts
 import { generateDIDJS } from "../canister.js"
-import { type TaskCtxShape } from "../services/taskCtx.js"
+import { type TaskCtxShape } from "../services/taskRuntime.js"
 import { type } from "arktype"
 
 export type CustomCanisterScope<

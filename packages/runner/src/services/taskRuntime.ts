@@ -12,7 +12,7 @@ import {
 	Config,
 	Option,
 } from "effect"
-import type { Task } from "../types/types.js"
+import type { ICEUser, Task } from "../types/types.js"
 import { TaskParamsToArgs, TaskSuccess } from "../tasks/lib.js"
 // import { executeTasks } from "../tasks/execute"
 import { ProgressUpdate } from "../tasks/lib.js"
@@ -29,15 +29,14 @@ import type { Scope, TaskTree } from "../types/types.js"
 import { TaskRegistry } from "./taskRegistry.js"
 export { Opt } from "../types/types.js"
 import { layerFileSystem, layerMemory } from "@effect/platform/KeyValueStore"
-import { CanisterIdsService } from "./canisterIds.js"
-import { DefaultConfig } from "./defaultConfig.js"
+import { CanisterIds, CanisterIdsService } from "./canisterIds.js"
+import { DefaultConfig, InitializedDefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
 import {
 	AgentError,
-	layerFromAsyncReplica,
-	layerFromStartedReplica,
 	Replica,
 	ReplicaError,
+	ReplicaServiceClass,
 	ReplicaStartError,
 } from "./replica.js"
 import type { ICEConfig, ICEConfigContext } from "../types/types.js"
@@ -51,7 +50,7 @@ import { runTask, runTasks } from "../tasks/run.js"
 import { OtelTracer } from "@effect/opentelemetry/Tracer"
 import { Resource } from "@effect/opentelemetry/Resource"
 import { PlatformError } from "@effect/platform/Error"
-import { DeploymentsService } from "./deployments.js"
+import { Deployment, DeploymentsService } from "./deployments.js"
 // import { DfxReplica } from "./dfx.js"
 import { configLayer } from "./config.js"
 import { ClackLoggingLive } from "./logger.js"
@@ -59,6 +58,102 @@ import { PromptsService } from "./prompts.js"
 import { PICReplica } from "./pic/pic.js"
 import { GlobalArgs } from "../cli/index.js"
 import { IcpConfigFlag } from "@dfinity/pic"
+import { SignIdentity } from "@dfinity/agent"
+import { ConfirmOptions } from "@clack/prompts"
+
+export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
+	readonly taskTree: TaskTree
+	readonly users: {
+		[name: string]: {
+			identity: SignIdentity
+			// agent: HttpAgent
+			principal: string
+			accountId: string
+			// TODO: neurons?
+		}
+	}
+	readonly roles: {
+		deployer: ICEUser
+		minter: ICEUser
+		controller: ICEUser
+		treasury: ICEUser
+		[name: string]: {
+			identity: SignIdentity
+			principal: string
+			accountId: string
+		}
+	}
+
+	readonly runTask: {
+		<T extends Task>(task: T): Promise<TaskSuccess<T>>
+		<T extends Task>(
+			task: T,
+			args: TaskParamsToArgs<T>,
+		): Promise<TaskSuccess<T>>
+	}
+
+	readonly currentNetwork: string
+	readonly replica: ReplicaServiceClass
+	readonly networks: {
+		[key: string]: {
+			replica: ReplicaServiceClass
+		}
+	}
+	readonly args: A
+	readonly taskPath: string
+	readonly appDir: string
+	readonly iceDir: string
+	readonly depResults: Record<
+		string,
+		{
+			cacheKey?: string
+			result: unknown
+		}
+	>
+	readonly deployments: {
+		// readonly canisterIds: CanisterIds
+		/**
+		 * Retrieves the current in-memory canister IDs.
+		 */
+		get: (
+			canisterName: string,
+			network: string,
+		) => Promise<Deployment | undefined>
+		/**
+		 * Updates the canister ID for a specific canister and network.
+		 */
+		set: (params: {
+			canisterName: string
+			network: string
+			deployment: Deployment
+		}) => Promise<void>
+	}
+	readonly canisterIds: {
+		// readonly canisterIds: CanisterIds
+		/**
+		 * Retrieves the current in-memory canister IDs.
+		 */
+		getCanisterIds: () => Promise<CanisterIds>
+		/**
+		 * Updates the canister ID for a specific canister and network.
+		 */
+		setCanisterId: (params: {
+			canisterName: string
+			network: string
+			canisterId: string
+		}) => Promise<void>
+		/**
+		 * Removes the canister ID for the given canister name.
+		 */
+		removeCanisterId: (canisterName: string) => Promise<void>
+	}
+	readonly prompts: {
+		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
+	}
+	readonly origin: "extension" | "cli"
+}
+
+export type BaseTaskCtx = Omit<TaskCtxShape, "taskPath" | "depResults" | "args">
 
 type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
 
@@ -82,6 +177,7 @@ const logLevelMap = {
 export class TaskRuntime extends Context.Tag("TaskRuntime")<
 	TaskRuntime,
 	{
+		replica: ReplicaServiceClass
 		runtime: ManagedRuntime.ManagedRuntime<
 			| OtelTracer
 			| Resource
@@ -126,185 +222,241 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| TaskRuntimeError
 			| MocError
 		>
+		taskCtx: BaseTaskCtx
 	}
->() {}
-
-// TODO: Layer memoize instead?
-export const makeTaskLayer = (globalArgs: GlobalArgs) =>
-	Effect.gen(function* () {
-		const appDir = yield* Config.string("APP_DIR")
-		// const iceDir = yield* Config.string("ICE_DIR_NAME")
-		const configMap = new Map([
-			["APP_DIR", appDir],
-			// ["ICE_DIR_NAME", iceDir],
-		])
-		const configLayer = Layer.setConfigProvider(
-			ConfigProvider.fromMap(configMap),
-		)
-		// TODO: dont pass down to child tasks
-		const ICEConfig = yield* ICEConfigService
-		const { config } = yield* ICEConfigService
-		const currentNetwork = globalArgs.network ?? "local"
-		const configReplica = config?.networks?.[currentNetwork]?.replica
-		const ICEConfigLayer = Layer.succeed(ICEConfigService, ICEConfig)
-		const iceDir = yield* IceDir
-		const IceDirLayer = Layer.succeed(IceDir, iceDir)
-		// TODO: make it work for tests too
-		const telemetryConfig = yield* TelemetryConfig
-		// const telemetryConfigLayer = Layer.succeed(
-		// 	TelemetryConfig,
-		// 	telemetryConfig,
-		// )
-		const telemetryLayer = makeTelemetryLayer(telemetryConfig)
-		// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
-
-		// const telemetryLayer = yield* getTelemetryLayer()
-		const telemetryConfigLayer = Layer.succeed(
-			TelemetryConfig,
-			telemetryConfig,
-		)
-		const KV = yield* KeyValueStore.KeyValueStore
-		const KVStorageLayer = Layer.succeed(KeyValueStore.KeyValueStore, KV)
-		const InFlightService = yield* InFlight
-		const InFlightLayer = Layer.succeed(InFlight, InFlightService)
-
-		const CanisterIds = yield* CanisterIdsService
-		const CanisterIdsLayer = Layer.succeed(CanisterIdsService, CanisterIds)
-		const Deployments = yield* DeploymentsService
-		const DeploymentsLayer = Layer.succeed(DeploymentsService, Deployments)
-		const Prompts = yield* PromptsService
-		const PromptsLayer = Layer.succeed(PromptsService, Prompts)
-
-		const TaskRegistryService = yield* TaskRegistry
-		const TaskRegistryLayer = Layer.succeed(
-			TaskRegistry,
-			TaskRegistryService,
-		)
-		const ctx = {
-			...globalArgs,
-			iceDirPath: iceDir.path,
-		}
-
-		const defaultReplica = yield* Replica
-		const selectedReplica = configReplica ?? defaultReplica
-		// TODO: use Layer to start / stop
-		yield* Effect.tryPromise({
-			try: async () => {
-		        console.log("starting selected replica...............", ctx)
-				await selectedReplica.start(ctx)
-			},
-			catch: (e) => {
-				if (e instanceof ReplicaStartError) {
-					return new ReplicaStartError({
-						reason: e.reason,
-						message: e.message,
-					})
+>() {
+	static Live = (progressCb: (update: ProgressUpdate<unknown>) => void) =>
+		Layer.effect(
+			TaskRuntime,
+			Effect.gen(function* () {
+				const parentSpan = yield* Effect.currentSpan
+				const defaultConfig = yield* DefaultConfig
+				const appDir = yield* Config.string("APP_DIR")
+				const { path: iceDirPath } = yield* IceDir
+				const { config, globalArgs, taskTree } = yield* ICEConfigService
+				const currentNetwork = globalArgs.network ?? "local"
+				const currentNetworkConfig =
+					config?.networks?.[currentNetwork] ??
+					defaultConfig.networks[currentNetwork]
+				const currentReplica = currentNetworkConfig?.replica
+				if (!currentReplica) {
+					return yield* Effect.fail(
+						new TaskRuntimeError({
+							message: `No replica found for network: ${currentNetwork}`,
+						}),
+					)
 				}
-				return e as Error
-			},
-		})
+				const currentUsers = config?.users ?? {}
+				const networks = config?.networks ?? defaultConfig.networks
+				// TODO: merge with defaultConfig.roles
+				const initializedRoles: Record<string, ICEUser> = {}
+				for (const [name, user] of Object.entries(
+					config?.roles ?? {},
+				)) {
+					if (!currentUsers[user]) {
+						return yield* Effect.fail(
+							new TaskRuntimeError({
+								message: `User ${user} not found in current users`,
+							}),
+						)
+					}
+					initializedRoles[name] = currentUsers[user]
+				}
+				const resolvedRoles: {
+					[key: string]: ICEUser
+				} & InitializedDefaultConfig["roles"] = {
+					...defaultConfig.roles,
+					...initializedRoles,
+				}
+				const iceConfigService = yield* ICEConfigService
+				const configReplica =
+					config?.networks?.[currentNetwork]?.replica
+				const ICEConfigLayer = Layer.succeed(
+					ICEConfigService,
+					iceConfigService,
+				)
+				const iceDir = yield* IceDir
+				const IceDirLayer = Layer.succeed(IceDir, iceDir)
+				const telemetryConfig = yield* TelemetryConfig
+				const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+				const telemetryConfigLayer = Layer.succeed(
+					TelemetryConfig,
+					telemetryConfig,
+				)
+				const KV = yield* KeyValueStore.KeyValueStore
+				const KVStorageLayer = Layer.succeed(
+					KeyValueStore.KeyValueStore,
+					KV,
+				)
+				const InFlightService = yield* InFlight
+				const InFlightLayer = Layer.succeed(InFlight, InFlightService)
 
-		console.log("which replica?", configReplica ? "config" : "default")
-		console.log("selectedReplica", selectedReplica)
-		const ReplicaService = configReplica
-			? Layer.succeed(Replica, configReplica)
-			: // TODO: we dont wanna start both??
-				Layer.succeed(Replica, defaultReplica)
-		// : layerFromAsyncReplica(
-		// 		new PICReplica({
-		// 			host: "0.0.0.0",
-		// 			port: 8081,
-		// 			ttlSeconds: 9_999_999_999,
-		// 			picConfig: {
-		// 				icpConfig: {
-		// 					betaFeatures: IcpConfigFlag.Enabled,
-		// 				},
-		// 			},
-		// 		}),
-		// 		ctx,
-		// 	)
-		// : Layer.succeed(DefaultReplica, existingDefaultReplica.value)
+				const CanisterIds = yield* CanisterIdsService
+				const CanisterIdsLayer = Layer.succeed(
+					CanisterIdsService,
+					CanisterIds,
+				)
 
-		// ICEConfigService | DefaultConfig | IceDir | TaskRunner | TaskRegistry | InFlight
-		const taskLayer = Layer.mergeAll(
-			telemetryLayer,
-			NodeContext.layer,
-			TaskRegistryLayer,
-			ReplicaService,
-			DefaultConfig.Live.pipe(Layer.provide(ReplicaService)),
-			Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-			CanisterIdsLayer,
-			// DevTools.layerWebSocket().pipe(
-			// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
-			// ),
-			ICEConfigLayer,
-			telemetryConfigLayer,
-			ClackLoggingLive, // single-writer clack logger
-			Logger.minimumLogLevel(logLevelMap[ICEConfig.globalArgs.logLevel]),
-			InFlightLayer,
-			IceDirLayer,
-			KVStorageLayer,
-			configLayer,
-			NodeContext.layer,
-			DeploymentsLayer,
-			PromptsLayer,
+				const Deployments = yield* DeploymentsService
+				const DeploymentsLayer = Layer.succeed(
+					DeploymentsService,
+					Deployments,
+				)
+				const Prompts = yield* PromptsService
+				const PromptsLayer = Layer.succeed(PromptsService, Prompts)
+
+				const TaskRegistryService = yield* TaskRegistry
+				const TaskRegistryLayer = Layer.succeed(
+					TaskRegistry,
+					TaskRegistryService,
+				)
+				const ctx = {
+					...globalArgs,
+					iceDirPath: iceDirPath,
+				}
+
+				const defaultReplica = yield* Replica
+				const replica = configReplica ?? defaultReplica
+
+				// TODO: use Layer to start / stop
+				yield* Effect.tryPromise({
+					try: async () => {
+						console.log(
+							"starting selected replica...............",
+							ctx,
+						)
+						await replica.start(ctx)
+					},
+					catch: (e) => {
+						if (e instanceof ReplicaStartError) {
+							return new ReplicaStartError({
+								reason: e.reason,
+								message: e.message,
+							})
+						}
+						return e as Error
+					},
+				})
+
+				const ReplicaService = Layer.succeed(Replica, replica)
+
+				const taskLayer = Layer.mergeAll(
+					telemetryLayer,
+					NodeContext.layer,
+					TaskRegistryLayer,
+					ReplicaService,
+					DefaultConfig.Live.pipe(Layer.provide(ReplicaService)),
+					Moc.Live.pipe(Layer.provide(NodeContext.layer)),
+					CanisterIdsLayer,
+					// DevTools.layerWebSocket().pipe(
+					// 	Layer.provide(NodeSocket.layerWebSocketConstructor),
+					// ),
+					ICEConfigLayer,
+					telemetryConfigLayer,
+					ClackLoggingLive,
+					Logger.minimumLogLevel(
+						logLevelMap[iceConfigService.globalArgs.logLevel],
+					),
+					InFlightLayer,
+					IceDirLayer,
+					KVStorageLayer,
+					configLayer,
+					NodeContext.layer,
+					DeploymentsLayer,
+					PromptsLayer,
+					// TODO: feed in another TaskCtx?
+					// TaskCtxService.Live(progressCb).pipe(
+					// 	Layer.provide(NodeContext.layer),
+					// ),
+				)
+				const taskRuntime = ManagedRuntime.make(taskLayer)
+
+				const taskCtx = {
+					...defaultConfig,
+					// TODO: add caching options?
+					// TODO: wrap with proxy?
+					runTask: async <T extends Task>(
+						task: T,
+						args?: TaskParamsToArgs<T>,
+					): Promise<TaskSuccess<T>> => {
+						const result = await taskRuntime.runPromise(
+							runTask(task, args, progressCb).pipe(
+								Effect.provide(ChildTaskRuntimeLayer),
+								Effect.withParentSpan(parentSpan),
+								Effect.withConcurrency("unbounded"),
+								Effect.scoped,
+							),
+						)
+						return result
+					},
+					replica,
+					taskTree,
+					currentNetwork,
+					networks,
+					users: {
+						...defaultConfig.users,
+						...currentUsers,
+					},
+					roles: resolvedRoles,
+					appDir,
+					iceDir: iceDirPath,
+					deployments: {
+						get: async (canisterName, network) => {
+							const result = await taskRuntime.runPromise(
+								Deployments.get(canisterName, network),
+							)
+							return Option.isSome(result)
+								? result.value
+								: undefined
+						},
+						set: async (params) => {
+							await taskRuntime.runPromise(
+								Deployments.set(params),
+							)
+						},
+					},
+					canisterIds: {
+						getCanisterIds: async () => {
+							const result = await taskRuntime.runPromise(
+								CanisterIds.getCanisterIds(),
+							)
+							return result
+						},
+						setCanisterId: async (params) => {
+							await taskRuntime.runPromise(
+								CanisterIds.setCanisterId(params),
+							)
+						},
+						removeCanisterId: async (canisterName) => {
+							await taskRuntime.runPromise(
+								CanisterIds.removeCanisterId(canisterName),
+							)
+						},
+					},
+					prompts: {
+						confirm: async (confirmOptions) => {
+							const result = await taskRuntime.runPromise(
+								Prompts.confirm(confirmOptions),
+							)
+							return result
+						},
+					},
+					origin: globalArgs.origin ?? "cli",
+				} satisfies BaseTaskCtx
+
+				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
+					runtime: taskRuntime,
+					taskLayer,
+					replica,
+					taskCtx,
+				})
+
+				return {
+					taskCtx,
+					runtime: taskRuntime,
+					taskLayer,
+					replica,
+				}
+			}).pipe(Effect.withSpan("TaskRuntime.Live")),
 		)
-		const taskRuntime = ManagedRuntime.make(taskLayer)
-		// const ChildTaskRunner = Layer.succeed(TaskRuntime, {
-		// 	runtime: taskRuntime,
-		// 	taskLayer,
-		// })
-
-		// const fullTaskLayer = Layer.mergeAll(taskLayer, ChildTaskRunner)
-
-		// const ChildTaskRunner = Layer.succeed(TaskRunner, {
-		// 	runtime: taskRuntime,
-		// })
-		// runTasks: (
-		// 	tasks: Array<Task & { args: TaskParamsToArgs<Task> }>,
-		// 	progressCb: (
-		// 		update: ProgressUpdate<unknown>,
-		// 	) => void = () => {},
-		// ) =>
-		// 	taskRuntime.runPromise(
-		// 		runTasks(tasks, progressCb).pipe(
-		// 			Effect.provide(ChildTaskRunner),
-		// 			Effect.annotateLogs("caller", "taskCtx.runTask"),
-		// 			// Effect.annotateLogs("taskPath", taskPath),
-		// 		),
-		// 	),
-
-		return {
-			runtime: taskRuntime,
-			taskLayer,
-
-			// runTask: <T extends Task>(
-			// 	task: T,
-			// 	args?: TaskParamsToArgs<T>,
-			// 	progressCb: (
-			// 		update: ProgressUpdate<unknown>,
-			// 	) => void = () => {},
-			// ) =>
-			// 	taskRuntime.runPromise(
-			// 		runTask(task, args, progressCb)
-			//         // .pipe(
-			// 		// 	Effect.provide(ChildTaskRunner),
-			// 		// 	Effect.annotateLogs("caller", "taskCtx.runTask"),
-			// 		// 	Effect.annotateLogs("taskPath", taskPath),
-			// 		// ),
-			// 	),
-			// runTasks: (
-			// 	tasks: Array<Task & { args: TaskParamsToArgs<Task> }>,
-			// 	progressCb: (
-			// 		update: ProgressUpdate<unknown>,
-			// 	) => void = () => {},
-			// ) =>
-			// 	taskRuntime.runPromise(
-			// 		runTasks(tasks, progressCb).pipe(
-			// 			Effect.provide(ChildTaskRunner),
-			// 			Effect.annotateLogs("caller", "taskCtx.runTask"),
-			// 			// Effect.annotateLogs("taskPath", taskPath),
-			// 		),
-			// 	),
-		}
-	})
+}

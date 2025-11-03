@@ -28,7 +28,7 @@ import {
 	baseLayer,
 	type BuilderLayer,
 } from "./lib.js"
-import { type TaskCtxShape } from "../services/taskCtx.js"
+import { type TaskCtxShape } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
 import {
 	hashJson,

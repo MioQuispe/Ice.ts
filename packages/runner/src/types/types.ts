@@ -21,7 +21,7 @@ import { TaskCancelled, TaskError } from "../builders/lib.js"
 import { PlatformError } from "@effect/platform/Error"
 import { DeploymentError } from "../canister.js"
 import { Schema as S } from "effect"
-import { type TaskCtxShape } from "../services/taskCtx.js"
+import { type TaskCtxShape } from "../services/taskRuntime.js"
 import { LogLevel } from "effect/LogLevel"
 
 export type CanisterActor = {

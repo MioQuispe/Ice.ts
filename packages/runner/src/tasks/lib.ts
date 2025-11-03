@@ -33,7 +33,7 @@ import type {
 	TaskTree,
 	TaskTreeNode,
 } from "../types/types.js"
-import { makeTaskCtx, type TaskCtxShape } from "../services/taskCtx.js"
+import { BaseTaskCtx, type TaskCtxShape, TaskRuntime } from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { hashJson, TaskCancelled, isTaskCancelled } from "../builders/lib.js"
 import { FiberFailure } from "effect/Runtime"
@@ -57,11 +57,12 @@ export type ParamsToArgs<
 // so any param with a default is treated as present and non-undefined.
 type HasDefault<P> = P extends { default: any } ? true : false
 
-type ResolvedParamOutput<P> = HasDefault<P> extends true
-	? NonNullable<ParamOutput<P>>
-	: P extends { isOptional: false }
-		? ParamOutput<P>
-		: ParamOutput<P> | undefined
+type ResolvedParamOutput<P> =
+	HasDefault<P> extends true
+		? NonNullable<ParamOutput<P>>
+		: P extends { isOptional: false }
+			? ParamOutput<P>
+			: ParamOutput<P> | undefined
 
 type ResolvedRequiredKeys<P> = {
 	[K in keyof P]: P[K] extends { isOptional: false }
@@ -77,7 +78,9 @@ export type ResolvedParamsToArgs<
 	Params extends Record<string, NamedParam | PositionalParam>,
 > = [keyof Params] extends [never]
 	? Record<string, never>
-	: { [K in ResolvedRequiredKeys<Params>]: ResolvedParamOutput<Params[K]> } & {
+	: {
+			[K in ResolvedRequiredKeys<Params>]: ResolvedParamOutput<Params[K]>
+		} & {
 			[K in ResolvedOptionalKeys<Params>]?: ResolvedParamOutput<Params[K]>
 		}
 
@@ -88,9 +91,7 @@ type ParamOutput<P> = P extends TaskParam
 
 // required vs optional (your rules)
 type RequiredKeys<P> = {
-	[K in keyof P]: P[K] extends { isOptional: false }
-		? K
-		: never
+	[K in keyof P]: P[K] extends { isOptional: false } ? K : never
 }[keyof P]
 
 type OptionalKeys<P> = Exclude<keyof P, RequiredKeys<P>>
@@ -595,8 +596,6 @@ export const completedTaskCount = Metric.counter("completed_task_count", {
 	// labelNames: ["task_name"],
 }).pipe(Metric.withConstantInput(1))
 
-// TODO: 1 task per time. its used like that anyway
-// rename to executeTask
 export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 	tasks: (Task & { args: Record<string, unknown> })[],
 	progressCb: (update: ProgressUpdate<unknown>) => void = () => {},
@@ -621,6 +620,8 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 		// unknown
 		deferredMap.set(task.id, deferred)
 	}
+    const { taskCtx: baseTaskCtx } = yield* TaskRuntime
+
 	const taskEffects = EffectArray.map(tasks, (task) =>
 		Effect.fn("task_execute_effect")(function* () {
 			yield* Effect.logDebug("starting task effect")
@@ -684,13 +685,12 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			yield* Effect.annotateCurrentSpan({
 				args: argsMap,
 			})
-			const taskCtx = yield* makeTaskCtx(
+			const taskCtx = {
+				...baseTaskCtx,
+				depResults: dependencyResults,
+				args: argsMap,
 				taskPath,
-				task,
-				argsMap,
-				dependencyResults,
-				progressCb,
-			)
+			}
 			yield* Effect.logDebug("made task ctx")
 
 			const maybeCachedTask = isCachedTask(task)
@@ -722,7 +722,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								taskPath,
 							} satisfies TaskExecResult<TaskCancelled>
 						}
-						// TODO: fucking shit inference
+						// TODO: inference broken
 						const input = maybeInput as Record<string, unknown>
 
 						yield* Effect.annotateCurrentSpan({
@@ -754,8 +754,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 											}),
 										catch: (error) => {
 											return new TaskRuntimeError({
-												message:
-													`Error revalidating cached task ${taskPath}`,
+												message: `Error revalidating cached task ${taskPath}`,
 												error,
 											})
 										},
@@ -812,8 +811,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 										),
 									catch: (error) => {
 										return new TaskRuntimeError({
-											message:
-												`Error decoding cached task ${taskPath}`,
+											message: `Error decoding cached task ${taskPath}`,
 											error,
 										})
 									},
@@ -838,8 +836,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								// get rid of this and just throw?
 								return yield* Effect.fail(
 									new TaskRuntimeError({
-										message:
-											`Cache hit, but failed to read cache for task ${taskPath}`,
+										message: `Cache hit, but failed to read cache for task ${taskPath}`,
 									}),
 								)
 							}

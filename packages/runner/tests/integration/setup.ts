@@ -20,7 +20,7 @@ import { DefaultConfig } from "../../src/services/defaultConfig.js"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { Moc } from "../../src/services/moc.js"
 import { PICReplica } from "../../src/services/pic/pic.js"
-import { layerFromAsyncReplica } from "../../src/services/replica.js"
+import { layerFromAsyncReplica, Replica } from "../../src/services/replica.js"
 import { TaskRegistry } from "../../src/services/taskRegistry.js"
 import { CachedTask, ICEConfig, Task, TaskTree } from "../../src/types/types.js"
 import { NodeSdk as OpenTelemetryNodeSdk } from "@effect/opentelemetry"
@@ -49,6 +49,7 @@ import { DeploymentsService } from "../../src/services/deployments.js"
 import { BuilderLayer } from "../../src/builders/lib.js"
 import { PromptsService } from "../../src/services/prompts.js"
 import { logLevelMap } from "../../src/cli/index.js"
+import { TaskRuntime } from "../../src/services/taskRuntime.js"
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
 export const makeTestEnvEffect = (
@@ -79,20 +80,13 @@ export const makeTestEnvEffect = (
 		Layer.provide(configLayer),
 	)
 
-	const ReplicaService = layerFromAsyncReplica(
+	const ReplicaService = Layer.succeed(Replica, (
 		new PICReplica({
 			host: "0.0.0.0",
 			port: 8081 + idx,
 			ttlSeconds: 9_999_999_999,
-		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
-	)
+		})
+	))
 	// TODO: fix for other tests
 	// const DefaultReplicaService = Layer.mock(DefaultReplica, {
 	//     start: async () => {},

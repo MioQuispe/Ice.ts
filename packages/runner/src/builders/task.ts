@@ -1,7 +1,7 @@
 import { StandardSchemaV1 } from "@standard-schema/spec"
 import { match, type } from "arktype"
 import { Effect, Record } from "effect"
-import { type TaskCtxShape } from "../services/taskCtx.js"
+import { type TaskCtxShape } from "../services/taskRuntime.js"
 import type { ActorSubclass } from "../types/actor.js"
 import type {
 	InputNamedParam,

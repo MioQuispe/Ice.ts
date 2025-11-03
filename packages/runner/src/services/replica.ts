@@ -292,7 +292,7 @@ export type ReplicaServiceClass = {
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
 	start: (ctx: ICEConfigContext) => Promise<void>
-	stop: (args?: { scope: "background" | "foreground" }) => Promise<void>
+	stop: (args?: { scope: "background" | "foreground", ctx?: ICEConfigContext }) => Promise<void>
 }
 
 export class Replica extends Context.Tag("Replica")<
@@ -317,17 +317,26 @@ export function layerFromAsyncReplica(
 					// await replica.start(ctx)
 					return replica
 				},
-				catch: (e) =>
-					new ReplicaError({
-						message: `replica.start failed: ${String(e)}`,
-					}),
+				catch: (e) => {
+					if (e instanceof ReplicaStartError) {
+						return new ReplicaStartError({
+							reason: e.reason,
+							message: e.message,
+						})
+					}
+					return e as Error
+				},
+				// new ReplicaError({
+				// 	message: `replica.start failed: ${String(e)}`,
+				// }),
 			}),
 			// On scope release, stop the *original* replica (not the wrapped one),
 			// so we always hit the class' real shutdown logic.
 			() =>
 				Effect.tryPromise({
 					try: async () => {
-						await replica.stop({ scope: "foreground" })
+                        console.log("at layerFromAsyncReplica.stop")
+						// await replica.stop({ scope: "foreground" })
 					},
 					catch: (e) => {
 						return new ReplicaError({

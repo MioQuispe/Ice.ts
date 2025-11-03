@@ -47,7 +47,7 @@ import { proxyActor } from "../utils/extension.js"
 import { ExtractArgsFromTaskParams } from "./task.js"
 import { CustomCanisterConfig, deployParams } from "./custom.js"
 import { Moc, MocError } from "../services/moc.js"
-import { type TaskCtxShape } from "../services/taskCtx.js"
+import { type TaskCtxShape } from "../services/taskRuntime.js"
 import { configLayer } from "../services/config.js"
 import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
@@ -73,7 +73,7 @@ export const baseLayer = Layer.mergeAll(
 	ClackLoggingLive,
 	// Logger.pretty,
 	// TODO: get logLevel
-	Logger.minimumLogLevel(LogLevel.Debug),
+	Logger.minimumLogLevel(LogLevel.Info),
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
 export type BuilderLayer = typeof baseLayer

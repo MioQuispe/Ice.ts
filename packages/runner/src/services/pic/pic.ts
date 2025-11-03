@@ -40,7 +40,12 @@ import {
 	SubnetStateType,
 } from "./pocket-ic-client-types.js"
 import { ActorSubclass } from "../../types/actor.js"
-import { acquireSpawnLock, Monitor } from "./pic-process.js"
+import {
+	acquireSpawnLock,
+	Monitor,
+	PocketIcState,
+	readJsonFile,
+} from "./pic-process.js"
 import type { ICEConfigContext } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
@@ -94,8 +99,8 @@ export class PICReplica implements ReplicaServiceClass {
 		this.ctx = ctx
 
 		try {
-            let releaseSpawnLock
-            console.log("this.manual", this.manual)
+			let releaseSpawnLock
+			console.log("this.manual", this.manual)
 			if (!this.manual) {
 				const monitor = new Monitor({
 					background: ctx.background,
@@ -176,9 +181,44 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async stop(
-		args: { scope: "background" | "foreground" } = { scope: "foreground" },
+		args: { 
+            scope: "background" | "foreground",
+            ctx?: ICEConfigContext
+        } = { scope: "foreground" },
 	): Promise<void> {
-		await this.monitor?.stop({ scope: args.scope }) //???
+        console.log("at replica.stop")
+		if (this.monitor) {
+            console.log("stopping existing this.monitor")
+			await this.monitor.stop({ scope: args.scope }) //???
+		} else {
+            console.log("stopping existing monitor from ctx", args.ctx, this.ctx)
+			await this.stopExistingMonitor(args.ctx ?? this.ctx)
+            console.log("existing monitor stopped")
+		}
+	}
+
+	private async stopExistingMonitor(ctx?: ICEConfigContext): Promise<void> {
+		if (!ctx) {
+			return
+		}
+		const stateFilePath = path.resolve(
+			ctx.iceDirPath,
+			"pocketic-server",
+			"monitor.json",
+		)
+		const state = await readJsonFile<PocketIcState>(stateFilePath)
+		if (state) {
+			// TODO: dont make it start new ones, only ever reuse!!!
+			const monitor = new Monitor({
+				background: ctx.background,
+				policy: "reuse",
+				iceDirPath: ctx.iceDirPath,
+				host: state.bind!,
+				port: state.port!,
+				isDev: ctx.network !== "ic",
+			})
+			await monitor.stop({ scope: "background" })
+		}
 	}
 
 	// ---------------- operations ----------------

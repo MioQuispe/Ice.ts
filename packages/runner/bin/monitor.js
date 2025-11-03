@@ -237,8 +237,8 @@ async function main() {
 
 	// TODO: this causes issue
 	// for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+	// for (const signal of ["SIGTERM"]) {
 	// 	process.on(signal, async () => {
-	// 		console.log("signal received, starting graceful stop")
 	// 		await gracefulStop(child.pid)
 	// 		await cleanupState(stateFile)
 	// 		process.exit(0)

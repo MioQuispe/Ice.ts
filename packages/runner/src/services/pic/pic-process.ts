@@ -79,7 +79,7 @@ const ensureDir = async (p: string) => {
 	await fs.mkdir(p, { recursive: true }).catch(() => {})
 }
 
-const readJsonFile = async <T>(p: string): Promise<T | undefined> => {
+export const readJsonFile = async <T>(p: string): Promise<T | undefined> => {
 	try {
 		const txt = await fs.readFile(p, "utf8")
 		return JSON.parse(txt) as T
@@ -443,8 +443,7 @@ export class Monitor {
 					400,
 					100,
 				)
-			} catch (e) {
-			}
+			} catch (e) {}
 		}
 		try {
 			const args = buildMonitorArgs({
@@ -615,10 +614,10 @@ export class Monitor {
 			await this.spawn(desiredConfig)
 			freshSpawn = true
 		}
-        console.log("creating foreground lease")
+		console.log("creating foreground lease")
 		await this.createLease({ mode: "foreground" })
 		if ((mustRestart || !occupied) && this.mode === "background") {
-            console.log("creating background lease")
+			console.log("creating background lease")
 			await this.createLease({ mode: "background" })
 		}
 		if (
@@ -626,7 +625,7 @@ export class Monitor {
 			existingMode !== "background" &&
 			!freshSpawn
 		) {
-            console.log("creating background lease 2")
+			console.log("creating background lease 2")
 			await this.createLease({ mode: "background" })
 		}
 	}
@@ -651,7 +650,17 @@ export class Monitor {
 		// To prevent monitor from cleaning up new leases after restart
 		if (scope === "background") {
 			try {
-				this.proc?.kill("SIGTERM")
+				if (this.proc) {
+					this.proc.kill("SIGTERM")
+				} else {
+					// maybe not? just clean leases and let it shut down?
+					// const state = await this.readMonitorState()
+                    // console.log("monitor stop state", state)
+					// if (state?.monitorPid) {
+                    //     console.log("monitor stop killing pid", state.monitorPid)
+					// 	process.kill(state.monitorPid, "SIGTERM")
+					// }
+				}
 			} catch (e) {
 				console.error(e)
 			}

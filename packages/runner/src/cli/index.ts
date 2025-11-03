@@ -68,7 +68,6 @@ import {
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
 import type { Scope, TaskTree } from "../types/types.js"
 export { Opt } from "../types/types.js"
-import { makeTaskLayer, TaskRuntime } from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { IceDir } from "../services/iceDir.js"
 import { runTask, runTasks } from "../tasks/run.js"
@@ -80,6 +79,7 @@ import {
 import { DeploymentsService } from "../services/deployments.js"
 import { PromptsService } from "../services/prompts.js"
 import { ClackLoggingLive } from "../services/logger.js"
+import { TaskRuntime } from "../services/taskRuntime.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -245,10 +245,9 @@ export const makeCliRuntime = ({
 			policy: globalArgs.policy,
 		},
 	)
-	const DefaultConfigLayer = DefaultConfig.Live
-		.pipe(
-            Layer.provide(ReplicaService)
-        )
+	const DefaultConfigLayer = DefaultConfig.Live.pipe(
+		Layer.provide(ReplicaService),
+	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
 	const DeploymentsLayer = DeploymentsService.Live.pipe(
@@ -259,13 +258,13 @@ export const makeCliRuntime = ({
 		Layer.provide(NodeContext.layer),
 		Layer.provide(IceDirLayer),
 	)
+	const TaskRuntimeLayer = TaskRuntime.Live(() => {})
 	const cliLayer = Layer.mergeAll(
 		TaskRegistry.Live.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
 		PromptsService.Live,
-		// TaskRegistryLayer,
 		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
@@ -280,12 +279,27 @@ export const makeCliRuntime = ({
 		telemetryLayer,
 		telemetryConfigLayer,
 		ReplicaService,
-		DefaultConfigLayer.pipe(
-            Layer.provide(ReplicaService)
-        ),
-		// 	DevTools.layerWebSocket().pipe(
-		//      Layer.provide(NodeSocket.layerWebSocketConstructor),
-		// ),
+		DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+		TaskRuntimeLayer.pipe(
+			Layer.provide(NodeContext.layer),
+			Layer.provide(KVStorageLayer),
+			Layer.provide(ICEConfigLayer),
+			Layer.provide(telemetryLayer),
+			Layer.provide(telemetryConfigLayer),
+			Layer.provide(ReplicaService),
+			Layer.provide(
+				DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+			),
+			Layer.provide(CanisterIdsLayer),
+			Layer.provide(configLayer),
+			Layer.provide(InFlightLayer),
+			Layer.provide(IceDirLayer),
+			Layer.provide(DeploymentsLayer),
+			Layer.provide(PromptsService.Live),
+			Layer.provide(
+				TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
+			),
+		),
 	)
 	return ManagedRuntime.make(cliLayer)
 }
@@ -403,14 +417,25 @@ const runCommand = defineCommand({
 				yield* runTaskByPath(args.taskPath, cliTaskArgs)
 				// .pipe(Effect.provide(ChildTaskRuntimeLayer))
 				// TODO: clean up. use Replica
-				const replica = yield* Replica
-				yield* Effect.tryPromise({
-					try: () => replica.stop({ scope: "foreground" }),
-					catch: (e) =>
-						new ReplicaError({
-							message: String(e),
-						}),
-				})
+				// not working.... need taskCtx.....
+				// const {config} = yield* ICEConfigService
+				// const replica = config?.networks?.["local"]?.replica!
+				// const replica = yield* Replica
+
+                const replica = yield* Replica
+                yield* Effect.tryPromise({
+                    try: () => replica.stop({ scope: "foreground" }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
+				// TODO: fix
+				// yield* Effect.tryPromise({
+				// 	try: () => replica.stop({ scope: "foreground" }),
+				// 	catch: (e) =>
+				// 		new ReplicaError({
+				// 			message: String(e),
+				// 		}),
+				// })
+
 				// 			}),
 				// 		),
 				// 	catch: (error) => {
@@ -437,6 +462,60 @@ const runCommand = defineCommand({
 				yield* s.stop(
 					`Finished task: ${color.green(color.underline(args.taskPath))}`,
 				)
+			}),
+		)
+	},
+})
+
+const stopCommand = defineCommand({
+	meta: {
+		name: "stop",
+		description: "Stop the ICE replica",
+	},
+	args: {
+		// TODO: fix. these get overridden by later args
+		...globalArgs,
+	},
+	run: async ({ args, rawArgs }) => {
+		const globalArgs = getGlobalArgs("stop")
+		const taskArgs = rawArgs.slice(1)
+		const parsedArgs = mri(taskArgs)
+		const namedArgs = Object.fromEntries(
+			Object.entries(parsedArgs).filter(([name]) => name !== "_"),
+		)
+		const positionalArgs = parsedArgs._
+		const cliTaskArgs = {
+			positionalArgs,
+			namedArgs,
+		}
+		const telemetryExporter = new OTLPTraceExporter()
+		await makeCliRuntime({
+			globalArgs,
+			telemetryExporter,
+		}).runPromise(
+			Effect.gen(function* () {
+				const Prompts = yield* PromptsService
+				const s = yield* Prompts.Spinner()
+				yield* s.start("Stopping replica...")
+				const replica = yield* Replica
+				const iceDir = yield* IceDir
+				console.log("replica", replica)
+				// TODO: replica stop needs to work without starting it
+				yield* Effect.tryPromise({
+					try: () =>
+						replica.stop({
+							scope: "background",
+							ctx: {
+								...globalArgs,
+								iceDirPath: iceDir.path,
+							},
+						}),
+					catch: (e) =>
+						new ReplicaError({
+							message: String(e),
+						}),
+				})
+				yield* s.stop("Replica stopped")
 			}),
 		)
 	},
@@ -533,9 +612,8 @@ const deployRun = async ({
 			}
 		}).pipe(Effect.annotateLogs("caller", "deployRun"))
 
-		// TODO: clean up. use Replica
+		// TODO: add finalizer to layer / service?
 		const replica = yield* Replica
-		yield* Effect.logDebug("Stopping replica")
 		yield* Effect.tryPromise({
 			try: () => replica.stop({ scope: "foreground" }),
 			catch: (e) => new ReplicaError({ message: String(e) }),
@@ -642,28 +720,7 @@ const deployRun = async ({
 	await makeCliRuntime({
 		globalArgs,
 		telemetryExporter,
-	}).runPromise(
-		Effect.gen(function* () {
-			const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-			const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-				runtime,
-				taskLayer,
-			})
-			yield* Effect.tryPromise({
-				try: () =>
-					runtime.runPromise(
-						program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-					),
-				catch: (error) => {
-					return new TaskRuntimeError({
-						message: String(error),
-						error,
-					})
-				},
-			})
-			yield* Effect.logDebug("####### Got to end of program #######")
-		}),
-	)
+	}).runPromise(program)
 	console.log("####### Got to end of makeCliRuntime #######")
 }
 
@@ -717,27 +774,7 @@ const canistersCreateCommand = defineCommand({
 				policy,
 				origin,
 			},
-		}).runPromise(
-			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
-				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
-				})
-			}),
-		)
+		}).runPromise(program)
 	},
 })
 
@@ -790,27 +827,7 @@ const canistersBuildCommand = defineCommand({
 				policy,
 				origin,
 			},
-		}).runPromise(
-			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
-				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
-				})
-			}),
-		)
+		}).runPromise(program)
 	},
 })
 
@@ -866,27 +883,7 @@ const canistersBindingsCommand = defineCommand({
 				policy,
 				origin,
 			},
-		}).runPromise(
-			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
-				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
-				})
-			}),
-		)
+		}).runPromise(program)
 	},
 })
 
@@ -941,27 +938,7 @@ const canistersInstallCommand = defineCommand({
 				background,
 				origin,
 			},
-		}).runPromise(
-			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
-				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
-				})
-			}),
-		)
+		}).runPromise(program)
 	},
 })
 
@@ -1043,27 +1020,7 @@ const canistersStopCommand = defineCommand({
 				policy,
 				origin,
 			},
-		}).runPromise(
-			Effect.gen(function* () {
-				const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-					runtime,
-					taskLayer,
-				})
-				yield* Effect.tryPromise({
-					try: () =>
-						runtime.runPromise(
-							program.pipe(Effect.provide(ChildTaskRuntimeLayer)),
-						),
-					catch: (error) => {
-						return new TaskRuntimeError({
-							message: String(error),
-							error,
-						})
-					},
-				})
-			}),
-		)
+		}).runPromise(program)
 	},
 })
 
@@ -1176,30 +1133,7 @@ ${color.underline(right.canisterName)}
 					background,
 					origin,
 				},
-			}).runPromise(
-				Effect.gen(function* () {
-					const { runtime, taskLayer } =
-						yield* makeTaskLayer(globalArgs)
-					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-						runtime,
-						taskLayer,
-					})
-					yield* Effect.tryPromise({
-						try: () =>
-							runtime.runPromise(
-								program.pipe(
-									Effect.provide(ChildTaskRuntimeLayer),
-								),
-							),
-						catch: (error) => {
-							return new TaskRuntimeError({
-								message: String(error),
-								error,
-							})
-						},
-					})
-				}),
-			)
+			}).runPromise(program)
 		}
 	},
 })
@@ -1406,30 +1340,7 @@ const canisterCommand = defineCommand({
 					background,
 					origin,
 				},
-			}).runPromise(
-				Effect.gen(function* () {
-					const { runtime, taskLayer } =
-						yield* makeTaskLayer(globalArgs)
-					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-						runtime,
-						taskLayer,
-					})
-					yield* Effect.tryPromise({
-						try: () =>
-							runtime.runPromise(
-								program.pipe(
-									Effect.provide(ChildTaskRuntimeLayer),
-								),
-							),
-						catch: (error) => {
-							return new TaskRuntimeError({
-								message: String(error),
-								error,
-							})
-						},
-					})
-				}),
-			)
+			}).runPromise(program)
 		}
 	},
 	subCommands: {
@@ -1515,30 +1426,7 @@ const taskCommand = defineCommand({
 					background,
 					origin,
 				},
-			}).runPromise(
-				Effect.gen(function* () {
-					const { runtime, taskLayer } =
-						yield* makeTaskLayer(globalArgs)
-					const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-						runtime,
-						taskLayer,
-					})
-					yield* Effect.tryPromise({
-						try: () =>
-							runtime.runPromise(
-								program.pipe(
-									Effect.provide(ChildTaskRuntimeLayer),
-								),
-							),
-						catch: (error) => {
-							return new TaskRuntimeError({
-								message: String(error),
-								error,
-							})
-						},
-					})
-				}),
-			)
+			}).runPromise(program)
 		}
 	},
 	subCommands: {},
@@ -1599,6 +1487,7 @@ const main = defineCommand({
 	},
 	subCommands: {
 		run: runCommand,
+		stop: stopCommand,
 		// ls: listCommand,
 		task: taskCommand,
 		canister: canisterCommand,
