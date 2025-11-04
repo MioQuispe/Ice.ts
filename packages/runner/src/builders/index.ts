@@ -33,7 +33,7 @@ export type {
     DependenciesOf,
     DependencyReturnValues,
 } from "./lib.js"
-export { type TaskCtxShape } from "../services/taskRuntime.js"
+export { type TaskCtx as TaskCtxShape } from "../services/taskRuntime.js"
 export {
     installParams,
     Tags,

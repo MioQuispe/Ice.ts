@@ -614,10 +614,8 @@ export class Monitor {
 			await this.spawn(desiredConfig)
 			freshSpawn = true
 		}
-		console.log("creating foreground lease")
 		await this.createLease({ mode: "foreground" })
 		if ((mustRestart || !occupied) && this.mode === "background") {
-			console.log("creating background lease")
 			await this.createLease({ mode: "background" })
 		}
 		if (
@@ -625,7 +623,6 @@ export class Monitor {
 			existingMode !== "background" &&
 			!freshSpawn
 		) {
-			console.log("creating background lease 2")
 			await this.createLease({ mode: "background" })
 		}
 	}

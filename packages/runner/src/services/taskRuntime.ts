@@ -21,7 +21,7 @@ import { ICEConfigService } from "./iceConfig.js"
 import { NodeContext } from "@effect/platform-node"
 import { type } from "arktype"
 import { Logger, Tracer } from "effect"
-import fs from "node:fs"
+import fs, { realpathSync } from "node:fs"
 import { NodeSdk as OpenTelemetryNodeSdk } from "@effect/opentelemetry"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
@@ -52,16 +52,12 @@ import { Resource } from "@effect/opentelemetry/Resource"
 import { PlatformError } from "@effect/platform/Error"
 import { Deployment, DeploymentsService } from "./deployments.js"
 // import { DfxReplica } from "./dfx.js"
-import { configLayer } from "./config.js"
 import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
-import { PICReplica } from "./pic/pic.js"
-import { GlobalArgs } from "../cli/index.js"
-import { IcpConfigFlag } from "@dfinity/pic"
 import { SignIdentity } from "@dfinity/agent"
 import { ConfirmOptions } from "@clack/prompts"
 
-export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
+export interface TaskCtx<A extends Record<string, unknown> = {}> {
 	readonly taskTree: TaskTree
 	readonly users: {
 		[name: string]: {
@@ -153,20 +149,7 @@ export interface TaskCtxShape<A extends Record<string, unknown> = {}> {
 	readonly origin: "extension" | "cli"
 }
 
-export type BaseTaskCtx = Omit<TaskCtxShape, "taskPath" | "depResults" | "args">
-
-type TaskReturnValue<T extends Task> = ReturnType<T["effect"]>
-
-type Job = {
-	task: Task
-	args: Record<string, unknown>
-	reply: Deferred.Deferred<unknown, unknown>
-}
-
-class TaskRunnerError extends Data.TaggedError("TaskRunnerError")<{
-	message?: string
-	error?: unknown
-}> {}
+export type BaseTaskCtx = Omit<TaskCtx, "taskPath" | "depResults" | "args">
 
 const logLevelMap = {
 	debug: LogLevel.Debug,
@@ -231,7 +214,10 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			Effect.gen(function* () {
 				const parentSpan = yield* Effect.currentSpan
 				const defaultConfig = yield* DefaultConfig
-				const appDir = yield* Config.string("APP_DIR")
+				const appDir = yield* Effect.try({
+					try: () => realpathSync(process.cwd()),
+					catch: (e) => new TaskRuntimeError({ message: String(e) }),
+				})
 				const { path: iceDirPath } = yield* IceDir
 				const { config, globalArgs, taskTree } = yield* ICEConfigService
 				const currentNetwork = globalArgs.network ?? "local"
@@ -318,25 +304,21 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const defaultReplica = yield* Replica
 				const replica = configReplica ?? defaultReplica
 
-				// TODO: use Layer to start / stop
-				yield* Effect.tryPromise({
-					try: async () => {
-						console.log(
-							"starting selected replica...............",
-							ctx,
-						)
-						await replica.start(ctx)
-					},
-					catch: (e) => {
-						if (e instanceof ReplicaStartError) {
-							return new ReplicaStartError({
-								reason: e.reason,
-								message: e.message,
-							})
-						}
-						return e as Error
-					},
-				})
+				// TODO: manual??
+				// yield* Effect.tryPromise({
+				// 	try: async () => {
+				// 		await replica.start(ctx)
+				// 	},
+				// 	catch: (e) => {
+				// 		if (e instanceof ReplicaStartError) {
+				// 			return new ReplicaStartError({
+				// 				reason: e.reason,
+				// 				message: e.message,
+				// 			})
+				// 		}
+				// 		return e as Error
+				// 	},
+				// })
 
 				const ReplicaService = Layer.succeed(Replica, replica)
 
@@ -360,7 +342,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					InFlightLayer,
 					IceDirLayer,
 					KVStorageLayer,
-					configLayer,
 					NodeContext.layer,
 					DeploymentsLayer,
 					PromptsLayer,

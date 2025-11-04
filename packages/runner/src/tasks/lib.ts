@@ -33,7 +33,7 @@ import type {
 	TaskTree,
 	TaskTreeNode,
 } from "../types/types.js"
-import { BaseTaskCtx, type TaskCtxShape, TaskRuntime } from "../services/taskRuntime.js"
+import { BaseTaskCtx, type TaskCtx, TaskRuntime } from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { hashJson, TaskCancelled, isTaskCancelled } from "../builders/lib.js"
 import { FiberFailure } from "effect/Runtime"
@@ -474,7 +474,7 @@ export const isCachedTask = match
 
 export const logDetailedError = (
 	error: unknown,
-	taskCtx: TaskCtxShape,
+	taskCtx: TaskCtx,
 	operation: string,
 ) =>
 	Effect.gen(function* () {
@@ -986,7 +986,7 @@ type TaskFullName = string
 // TODO: figure out if multiple tasks are needed
 
 export const getNodeByPath = (
-	taskCtx: TaskCtxShape,
+	taskCtx: TaskCtx,
 	taskPathString: TaskFullName,
 ) =>
 	Effect.gen(function* () {

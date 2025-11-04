@@ -1,7 +1,7 @@
 import { StandardSchemaV1 } from "@standard-schema/spec"
 import { match, type } from "arktype"
 import { Effect, Record } from "effect"
-import { type TaskCtxShape } from "../services/taskRuntime.js"
+import { type TaskCtx } from "../services/taskRuntime.js"
 import type { ActorSubclass } from "../types/actor.js"
 import type {
 	InputNamedParam,
@@ -276,7 +276,7 @@ class TaskBuilder<
 	run<Output>(
 		fn: (env: {
 			args: ExtractArgsFromTaskParams<TP>
-			ctx: TaskCtxShape<ExtractArgsFromTaskParams<TP>>
+			ctx: TaskCtx<ExtractArgsFromTaskParams<TP>>
 			deps: ExtractScopeSuccesses<T["dependencies"]> &
 				ExtractScopeSuccesses<T["dependsOn"]>
 		}) => Promise<Output> | Output,
@@ -293,7 +293,7 @@ class TaskBuilder<
 						)
 						const maybePromise = fn({
 							args: taskCtx.args as ExtractArgsFromTaskParams<TP>,
-							ctx: taskCtx as TaskCtxShape<
+							ctx: taskCtx as TaskCtx<
 								ExtractArgsFromTaskParams<TP>
 							>,
 							deps: deps as ExtractScopeSuccesses<

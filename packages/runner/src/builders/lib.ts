@@ -47,8 +47,7 @@ import { proxyActor } from "../utils/extension.js"
 import { ExtractArgsFromTaskParams } from "./task.js"
 import { CustomCanisterConfig, deployParams } from "./custom.js"
 import { Moc, MocError } from "../services/moc.js"
-import { type TaskCtxShape } from "../services/taskRuntime.js"
-import { configLayer } from "../services/config.js"
+import { type TaskCtx } from "../services/taskRuntime.js"
 import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
@@ -60,14 +59,9 @@ import { ClackLoggingLive } from "../services/logger.js"
 
 // Schema.TaggedError
 
-const IceDirLayer = IceDir.Live({ iceDirName: ".ice" }).pipe(
-	Layer.provide(NodeContext.layer),
-	Layer.provide(configLayer),
-)
 export const baseLayer = Layer.mergeAll(
 	NodeContext.layer,
 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-	configLayer,
 	// TODO: ??
 	// telemetryLayer,
 	ClackLoggingLive,
@@ -103,7 +97,7 @@ export const isTaskCancelled = Match.type<unknown>().pipe(
 	Match.orElse(() => false as const),
 )
 
-export const loadCanisterId = (taskCtx: TaskCtxShape, taskPath: string) =>
+export const loadCanisterId = (taskCtx: TaskCtx, taskPath: string) =>
 	Effect.gen(function* () {
 		const { currentNetwork } = taskCtx
 		const canisterName = taskPath.split(":").slice(0, -1).join(":")
@@ -143,8 +137,8 @@ export const makeConfigTask = <
 >(
 	builderLayer: BuilderLayer,
 	configOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<Config>)
-		| ((args: { ctx: TaskCtxShape }) => Config)
+		| ((args: { ctx: TaskCtx }) => Promise<Config>)
+		| ((args: { ctx: TaskCtx }) => Config)
 		| Config,
 ) => {
 	const runtime = ManagedRuntime.make(builderLayer)
@@ -162,7 +156,7 @@ export const makeConfigTask = <
 				Effect.fn("task_effect")(function* () {
 					if (typeof configOrFn === "function") {
 						const configFn = configOrFn as (args: {
-							ctx: TaskCtxShape
+							ctx: TaskCtx
 						}) => Promise<Config> | Config
 						const configResult = configFn({ ctx: taskCtx })
 						if (configResult instanceof Promise) {
@@ -1396,7 +1390,7 @@ export const makeCanisterStatusTask = (
 }
 
 export const resolveMode = (
-	taskCtx: TaskCtxShape,
+	taskCtx: TaskCtx,
 	configCanisterId: string | undefined,
 ) => {
 	return Effect.gen(function* () {
@@ -1701,7 +1695,7 @@ export const makeInstallArgsTask = <
 	builderLayer: BuilderLayer,
 	installArgs: {
 		fn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => Promise<I> | I
 		customEncode:
@@ -1713,7 +1707,7 @@ export const makeInstallArgsTask = <
 	},
 	upgradeArgs: {
 		fn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => Promise<U> | U
 		customEncode:

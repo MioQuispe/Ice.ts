@@ -3,12 +3,9 @@ import { Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
 import { Replica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
-import { PICReplica } from "./pic/pic.js"
-import { IcpConfigFlag } from "@dfinity/pic"
 
 // const DfxReplicaService = DfxReplica.pipe(
 // 	Layer.provide(NodeContext.layer),
-// 	Layer.provide(configLayer),
 // )
 
 

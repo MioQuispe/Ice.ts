@@ -1,5 +1,7 @@
 import { Context, Effect, Layer, Config } from "effect"
 import { Path, FileSystem } from "@effect/platform"
+import { TaskRuntimeError } from "../tasks/lib.js"
+import { realpathSync } from "node:fs"
 
 export class IceDir extends Context.Tag("IceDir")<
 	IceDir,
@@ -13,8 +15,11 @@ export class IceDir extends Context.Tag("IceDir")<
 		Layer.scoped(
 			IceDir,
 			Effect.gen(function* () {
-				const appDir = yield* Config.string("APP_DIR")
-				// const iceDirName = yield* Config.string("ICE_DIR_NAME")
+                // TODO: FIX
+                const appDir = yield* Effect.try({
+                    try: () => realpathSync(process.cwd()),
+                    catch: (e) => new TaskRuntimeError({ message: String(e) }),
+                })
 				const path = yield* Path.Path
 				const fs = yield* FileSystem.FileSystem
 
@@ -33,7 +38,10 @@ export class IceDir extends Context.Tag("IceDir")<
 		Layer.scoped(
 			IceDir,
 			Effect.gen(function* () {
-				const appDir = yield* Config.string("APP_DIR")
+                const appDir = yield* Effect.try({
+                    try: () => realpathSync(process.cwd()),
+                    catch: (e) => new TaskRuntimeError({ message: String(e) }),
+                })
 				// const iceDirName = yield* Config.string("ICE_DIR_NAME")
 				const path = yield* Path.Path
 				const fs = yield* FileSystem.FileSystem

@@ -192,7 +192,7 @@ async function main() {
 		detached: true,
 		stdio:
 			// background ? "ignore" :
-			[/* stdin */ "ignore", /* stdout */ "inherit", /* stderr */ "pipe"],
+			[/* stdin */ "ignore", /* stdout */ "ignore", /* stderr */ "pipe"],
 		env: {
 			...process.env,
 			RUST_BACKTRACE: "full",

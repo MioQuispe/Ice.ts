@@ -44,7 +44,7 @@ import {
 } from "./lib.js"
 // TODO: move to lib.ts
 import { generateDIDJS } from "../canister.js"
-import { type TaskCtxShape } from "../services/taskRuntime.js"
+import { type TaskCtx } from "../services/taskRuntime.js"
 import { type } from "arktype"
 
 export type CustomCanisterScope<
@@ -587,7 +587,7 @@ type ArgsFields<
 	P extends Record<string, Task>,
 > = {
 	fn: (args: {
-		ctx: TaskCtxShape
+		ctx: TaskCtx
 		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 	}) => I | Promise<I>
 	customEncode:
@@ -624,8 +624,8 @@ export class CustomCanisterBuilder<
 	create(
 		canisterConfigOrFn:
 			| Config
-			| ((args: { ctx: TaskCtxShape; deps: P }) => Config)
-			| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<Config>),
+			| ((args: { ctx: TaskCtx; deps: P }) => Config)
+			| ((args: { ctx: TaskCtx; deps: P }) => Promise<Config>),
 	): CustomCanisterBuilder<
 		I,
 		U,
@@ -659,8 +659,8 @@ export class CustomCanisterBuilder<
 	build(
 		canisterConfigOrFn:
 			| Config
-			| ((args: { ctx: TaskCtxShape; deps: P }) => Config)
-			| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<Config>),
+			| ((args: { ctx: TaskCtx; deps: P }) => Config)
+			| ((args: { ctx: TaskCtx; deps: P }) => Promise<Config>),
 	): CustomCanisterBuilder<
 		I,
 		U,
@@ -691,7 +691,7 @@ export class CustomCanisterBuilder<
 
 	installArgs(
 		installArgsFn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
 		{
@@ -754,7 +754,7 @@ export class CustomCanisterBuilder<
 
 	upgradeArgs(
 		upgradeArgsFn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
 		{
@@ -917,8 +917,8 @@ export const makeCustomCanister = <
 >(
 	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape }) => CustomCanisterConfig)
+		| ((args: { ctx: TaskCtx }) => Promise<CustomCanisterConfig>)
+		| ((args: { ctx: TaskCtx }) => CustomCanisterConfig)
 		| CustomCanisterConfig,
 ): CustomCanisterBuilder<
 	I,
@@ -985,8 +985,8 @@ export const makeCustomCanister = <
 // TODO: warn about context if not provided
 export const customCanister = <_SERVICE = unknown, I = unknown, U = unknown>(
 	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape }) => CustomCanisterConfig)
+		| ((args: { ctx: TaskCtx }) => Promise<CustomCanisterConfig>)
+		| ((args: { ctx: TaskCtx }) => CustomCanisterConfig)
 		| CustomCanisterConfig,
 ): CustomCanisterBuilder<
 	I,

@@ -5,7 +5,7 @@ import * as didc from "@ice.ts/didc_js"
 import { Data, Effect } from "effect"
 import { Moc } from "./services/moc.js"
 import type * as ActorTypes from "./types/actor.js"
-import { type TaskCtxShape } from "./services/taskRuntime.js"
+import { type TaskCtx } from "./services/taskRuntime.js"
 
 export class DeploymentError extends Data.TaggedError("DeploymentError")<{
 	message: string
@@ -49,7 +49,7 @@ export const compileMotokoCanister = (
 
 // TODO: types for DIDJS
 export const generateDIDJS = (
-	taskCtx: TaskCtxShape,
+	taskCtx: TaskCtx,
 	canisterName: string,
 	didPath: string,
 ) =>

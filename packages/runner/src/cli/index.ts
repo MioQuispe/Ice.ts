@@ -71,7 +71,6 @@ export { Opt } from "../types/types.js"
 import { InFlight } from "../services/inFlight.js"
 import { IceDir } from "../services/iceDir.js"
 import { runTask, runTasks } from "../tasks/run.js"
-import { configLayer } from "../services/config.js"
 import {
 	makeTelemetryLayer,
 	TelemetryConfig,
@@ -198,7 +197,6 @@ export const makeCliRuntime = ({
 
 	const IceDirLayer = IceDir.Live({ iceDirName }).pipe(
 		Layer.provide(NodeContext.layer),
-		Layer.provide(configLayer),
 	)
 
 	const ICEConfigLayer = ICEConfigService.Live({
@@ -272,14 +270,13 @@ export const makeCliRuntime = ({
 		ClackLoggingLive,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		CanisterIdsLayer,
-		configLayer,
 		KVStorageLayer,
 		NodeContext.layer,
 		ICEConfigLayer,
 		telemetryLayer,
 		telemetryConfigLayer,
-		ReplicaService,
-		DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+		// ReplicaService,
+		// DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
 		TaskRuntimeLayer.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
@@ -291,7 +288,6 @@ export const makeCliRuntime = ({
 				DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
 			),
 			Layer.provide(CanisterIdsLayer),
-			Layer.provide(configLayer),
 			Layer.provide(InFlightLayer),
 			Layer.provide(IceDirLayer),
 			Layer.provide(DeploymentsLayer),
@@ -405,47 +401,24 @@ const runCommand = defineCommand({
 				yield* s.start(
 					`Running task... ${color.green(color.underline(args.taskPath))}`,
 				)
-				// const { runtime, taskLayer } = yield* makeTaskLayer(globalArgs)
-				// const ChildTaskRuntimeLayer = Layer.succeed(TaskRuntime, {
-				// 	runtime,
-				// 	taskLayer,
-				// })
-				// yield* Effect.tryPromise({
-				// 	try: () =>
-				// 		runtime.runPromise(
-				// 			Effect.gen(function* () {
+				const { replica } = yield* TaskRuntime
+				const iceDir = yield* IceDir
+				// TODO: use finalizer??
+				yield* Effect.tryPromise({
+					try: () =>
+						replica.start({
+							...globalArgs,
+							iceDirPath: iceDir.path,
+						}),
+					catch: (e) => new ReplicaError({ message: String(e) }),
+				})
 				yield* runTaskByPath(args.taskPath, cliTaskArgs)
-				// .pipe(Effect.provide(ChildTaskRuntimeLayer))
-				// TODO: clean up. use Replica
-				// not working.... need taskCtx.....
-				// const {config} = yield* ICEConfigService
-				// const replica = config?.networks?.["local"]?.replica!
-				// const replica = yield* Replica
-
-                const replica = yield* Replica
-                yield* Effect.tryPromise({
-                    try: () => replica.stop({ scope: "foreground" }),
-                    catch: (e) => new ReplicaError({ message: String(e) }),
-                })
+				// TODO: use finalizer??
+				yield* Effect.tryPromise({
+					try: () => replica.stop({ scope: "foreground" }),
+					catch: (e) => new ReplicaError({ message: String(e) }),
+				})
 				// TODO: fix
-				// yield* Effect.tryPromise({
-				// 	try: () => replica.stop({ scope: "foreground" }),
-				// 	catch: (e) =>
-				// 		new ReplicaError({
-				// 			message: String(e),
-				// 		}),
-				// })
-
-				// 			}),
-				// 		),
-				// 	catch: (error) => {
-				// 		return new TaskRuntimeError({
-				// 			message: String(error),
-				// 			error,
-				// 		})
-				// 	},
-				// })
-
 				// yield* runTaskByPath(args.taskPath, cliTaskArgs).pipe(
 				// 	Effect.provide(ChildTaskRuntimeLayer),
 				// 	Effect.tap((result) =>
@@ -497,9 +470,8 @@ const stopCommand = defineCommand({
 				const Prompts = yield* PromptsService
 				const s = yield* Prompts.Spinner()
 				yield* s.start("Stopping replica...")
-				const replica = yield* Replica
+				const { runtime, replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
-				console.log("replica", replica)
 				// TODO: replica stop needs to work without starting it
 				yield* Effect.tryPromise({
 					try: () =>
@@ -593,6 +565,17 @@ const deployRun = async ({
 			...task,
 			args: argsMap,
 		}))
+		const { replica } = yield* TaskRuntime
+		const iceDir = yield* IceDir
+		// TODO: use finalizer??
+		yield* Effect.tryPromise({
+			try: () =>
+				replica.start({
+					...globalArgs,
+					iceDirPath: iceDir.path,
+				}),
+			catch: (e) => new ReplicaError({ message: String(e) }),
+		})
 
 		// TODO: FIX. call spinners from inside task/lib.ts ?
 		yield* runTasks(tasksWithArgs, (update) => {
@@ -612,8 +595,7 @@ const deployRun = async ({
 			}
 		}).pipe(Effect.annotateLogs("caller", "deployRun"))
 
-		// TODO: add finalizer to layer / service?
-		const replica = yield* Replica
+		// TODO: use finalizer??
 		yield* Effect.tryPromise({
 			try: () => replica.stop({ scope: "foreground" }),
 			catch: (e) => new ReplicaError({ message: String(e) }),
@@ -721,7 +703,6 @@ const deployRun = async ({
 		globalArgs,
 		telemetryExporter,
 	}).runPromise(program)
-	console.log("####### Got to end of makeCliRuntime #######")
 }
 
 const canistersCreateCommand = defineCommand({
@@ -754,6 +735,17 @@ const canistersCreateCommand = defineCommand({
 				...node,
 				args: {},
 			}))
+            const { replica } = yield* TaskRuntime
+            const iceDir = yield* IceDir
+            // TODO: use finalizer??
+            yield* Effect.tryPromise({
+                try: () =>
+                    replica.start({
+                        ...globalArgs,
+                        iceDirPath: iceDir.path,
+                    }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 			yield* runTasks(tasks, (update) => {
 				if (update.status === "starting") {
 					s.message(`Running ${update.taskPath}`)
@@ -763,6 +755,10 @@ const canistersCreateCommand = defineCommand({
 				}
 			}).pipe(Effect.annotateLogs("caller", "canistersCreateCommand"))
 			yield* s.stop("Finished creating all canisters")
+            yield* Effect.tryPromise({
+                try: () => replica.stop({ scope: "foreground" }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 		})
 
 		// TODO: mode
@@ -808,6 +804,17 @@ const canistersBuildCommand = defineCommand({
 				...node,
 				args: {},
 			}))
+            const { replica } = yield* TaskRuntime
+            const iceDir = yield* IceDir
+            // TODO: use finalizer??
+            yield* Effect.tryPromise({
+                try: () =>
+                    replica.start({
+                        ...globalArgs,
+                        iceDirPath: iceDir.path,
+                    }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 			yield* runTasks(tasks, (update) => {
 				if (update.status === "starting") {
 					s.message(`Running ${update.taskPath}`)
@@ -817,6 +824,10 @@ const canistersBuildCommand = defineCommand({
 				}
 			}).pipe(Effect.annotateLogs("caller", "canistersBuildCommand"))
 			yield* s.stop("Finished building all canisters")
+            yield* Effect.tryPromise({
+                try: () => replica.stop({ scope: "foreground" }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 		})
 
 		await makeCliRuntime({
@@ -917,6 +928,17 @@ const canistersInstallCommand = defineCommand({
 				...node,
 				args: {},
 			}))
+            const { replica } = yield* TaskRuntime
+            const iceDir = yield* IceDir
+            // TODO: use finalizer??
+            yield* Effect.tryPromise({
+                try: () =>
+                    replica.start({
+                        ...globalArgs,
+                        iceDirPath: iceDir.path,
+                    }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 			yield* runTasks(tasks, (update) => {
 				if (update.status === "starting") {
 					s.message(`Running ${update.taskPath}`)
@@ -927,6 +949,10 @@ const canistersInstallCommand = defineCommand({
 			}).pipe(Effect.annotateLogs("caller", "canistersInstallCommand"))
 
 			yield* s.stop("Finished installing all canisters")
+            yield* Effect.tryPromise({
+                try: () => replica.stop({ scope: "foreground" }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 		})
 
 		// TODO: mode
@@ -972,6 +998,17 @@ const canistersStopCommand = defineCommand({
 				...node,
 				args: {},
 			}))
+            const { replica } = yield* TaskRuntime
+            const iceDir = yield* IceDir
+            // TODO: use finalizer??
+            yield* Effect.tryPromise({
+                try: () =>
+                    replica.start({
+                        ...globalArgs,
+                        iceDirPath: iceDir.path,
+                    }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 			runTasks(tasks, (update) => {
 				if (update.status === "starting") {
 					s.message(`Running ${update.taskPath}`)
@@ -1010,6 +1047,10 @@ const canistersStopCommand = defineCommand({
 			// 			}
 
 			yield* s.stop("Finished stopping all canisters")
+            yield* Effect.tryPromise({
+                try: () => replica.stop({ scope: "foreground" }),
+                catch: (e) => new ReplicaError({ message: String(e) }),
+            })
 		})
 
 		await makeCliRuntime({
@@ -1047,7 +1088,17 @@ const canistersStatusCommand = defineCommand({
 				const canisterIdsService = yield* CanisterIdsService
 				const canisterIdsMap =
 					yield* canisterIdsService.getCanisterIds()
-				const replica = yield* Replica
+				const { replica } = yield* TaskRuntime
+                const iceDir = yield* IceDir
+                // TODO: use finalizer??
+                yield* Effect.tryPromise({
+                    try: () =>
+                        replica.start({
+                            ...globalArgs,
+                            iceDirPath: iceDir.path,
+                        }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 				const identity = Ed25519KeyIdentity.generate()
 				const canisterStatusesEffects = Object.keys(canisterIdsMap).map(
 					(canisterName) =>
@@ -1123,6 +1174,10 @@ ${color.underline(right.canisterName)}
 				// 						.join("\n")
 
 				yield* Effect.logInfo(statusLog)
+                yield* Effect.tryPromise({
+                    try: () => replica.stop({ scope: "foreground" }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 			})
 
 			await makeCliRuntime({
@@ -1313,6 +1368,17 @@ const canisterCommand = defineCommand({
 				}
 				const Prompts = yield* PromptsService
 				const s = yield* Prompts.Spinner()
+                const { replica } = yield* TaskRuntime
+                const iceDir = yield* IceDir
+                // TODO: use finalizer??
+                yield* Effect.tryPromise({
+                    try: () =>
+                        replica.start({
+                            ...globalArgs,
+                            iceDirPath: iceDir.path,
+                        }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 				yield* s.start(`Running ${canister}:${action}`)
 				const result = yield* runTaskByPath(
 					`${canister.trimStart().trimEnd()}:${action.trimStart().trimEnd()}`,
@@ -1330,6 +1396,10 @@ const canisterCommand = defineCommand({
 					Effect.annotateLogs("caller", "canistersCanisterCommand"),
 				)
 				yield* s.stop(`Completed ${canister}:${action}`)
+                yield* Effect.tryPromise({
+                    try: () => replica.stop({ scope: "foreground" }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 			})
 
 			await makeCliRuntime({
@@ -1401,6 +1471,17 @@ const taskCommand = defineCommand({
 				}
 				const Prompts = yield* PromptsService
 				const s = yield* Prompts.Spinner()
+                const { replica } = yield* TaskRuntime
+                const iceDir = yield* IceDir
+                // TODO: use finalizer??
+                yield* Effect.tryPromise({
+                    try: () =>
+                        replica.start({
+                            ...globalArgs,
+                            iceDirPath: iceDir.path,
+                        }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 				yield* s.start(`Running ${task}`)
 				const result = yield* runTaskByPath(
 					`${task.trimStart().trimEnd()}`,
@@ -1416,6 +1497,10 @@ const taskCommand = defineCommand({
 					},
 				).pipe(Effect.annotateLogs("caller", "canistersTaskCommand"))
 				yield* s.stop(`Completed ${task}`)
+                yield* Effect.tryPromise({
+                    try: () => replica.stop({ scope: "foreground" }),
+                    catch: (e) => new ReplicaError({ message: String(e) }),
+                })
 			})
 
 			await makeCliRuntime({

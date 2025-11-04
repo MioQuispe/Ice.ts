@@ -300,11 +300,7 @@ export class Replica extends Context.Tag("Replica")<
 	ReplicaServiceClass
 >() {}
 
-// export class DefaultReplica extends Context.Tag("DefaultReplica")<
-// 	DefaultReplica,
-// 	ReplicaServiceClass
-// >() {}
-
+// TODO: unnecessary??
 export function layerFromAsyncReplica(
 	replica: ReplicaServiceClass,
 	ctx: ICEConfigContext,
@@ -335,7 +331,6 @@ export function layerFromAsyncReplica(
 			() =>
 				Effect.tryPromise({
 					try: async () => {
-                        console.log("at layerFromAsyncReplica.stop")
 						// await replica.stop({ scope: "foreground" })
 					},
 					catch: (e) => {

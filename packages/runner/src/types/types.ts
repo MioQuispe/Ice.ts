@@ -21,7 +21,7 @@ import { TaskCancelled, TaskError } from "../builders/lib.js"
 import { PlatformError } from "@effect/platform/Error"
 import { DeploymentError } from "../canister.js"
 import { Schema as S } from "effect"
-import { type TaskCtxShape } from "../services/taskRuntime.js"
+import { type TaskCtx } from "../services/taskRuntime.js"
 import { LogLevel } from "effect/LogLevel"
 
 export type CanisterActor = {
@@ -108,7 +108,7 @@ export interface Task<
 > {
 	_tag: "task"
 	readonly id: symbol // assigned by the builder
-	effect: (ctx: TaskCtxShape) => Promise<A | TaskCancelled>
+	effect: (ctx: TaskCtx) => Promise<A | TaskCancelled>
 	description: string
 	tags: Array<string | symbol>
 	dependsOn: D
@@ -147,21 +147,21 @@ export type CachedTask<
 	E = unknown,
 	R = unknown,
 > = Task<A, D, P> & {
-	input: (taskCtx: TaskCtxShape) => Promise<Input | TaskCancelled> // optional input
+	input: (taskCtx: TaskCtx) => Promise<Input | TaskCancelled> // optional input
 	computeCacheKey: (input: Input) => string
 	revalidate?: (
-		taskCtx: TaskCtxShape,
+		taskCtx: TaskCtx,
 		args: { input: Input },
 	) => Promise<boolean>
 	// TODO: rename to codec and create adapters for zod etc.
 	encodingFormat: "string" | "uint8array"
 	encode: (
-		taskCtx: TaskCtxShape,
+		taskCtx: TaskCtx,
 		value: A,
 		input: Input,
 	) => Promise<string | Uint8Array<ArrayBufferLike>>
 	decode: (
-		taskCtx: TaskCtxShape,
+		taskCtx: TaskCtx,
 		value: string | Uint8Array<ArrayBufferLike>,
 		input: Input,
 	) => Promise<A>

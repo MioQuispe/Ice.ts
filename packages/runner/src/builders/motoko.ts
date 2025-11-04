@@ -28,7 +28,7 @@ import {
 	baseLayer,
 	type BuilderLayer,
 } from "./lib.js"
-import { type TaskCtxShape } from "../services/taskRuntime.js"
+import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
 import {
 	hashJson,
@@ -171,8 +171,8 @@ export type MotokoDeployTaskArgs = ResolvedParamsToArgs<
 export const makeMotokoDeployTask = <_SERVICE>(
 	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtxShape }) => Promise<MotokoCanisterConfig>)
-		| ((args: { ctx: TaskCtxShape }) => MotokoCanisterConfig)
+		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>)
+		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
 		| MotokoCanisterConfig,
 ): MotokoDeployTask<_SERVICE> => {
 	const builderRuntime = ManagedRuntime.make(builderLayer)
@@ -642,7 +642,7 @@ type ArgsFields<
 	P extends Record<string, Task>,
 > = {
 	fn: (args: {
-		ctx: TaskCtxShape
+		ctx: TaskCtx
 		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 	}) => I | Promise<I>
 	customEncode:
@@ -677,8 +677,8 @@ export class MotokoCanisterBuilder<
 	create(
 		canisterConfigOrFn:
 			| Config
-			| ((args: { ctx: TaskCtxShape }) => Config)
-			| ((args: { ctx: TaskCtxShape }) => Promise<Config>),
+			| ((args: { ctx: TaskCtx }) => Config)
+			| ((args: { ctx: TaskCtx }) => Promise<Config>),
 	): MotokoCanisterBuilder<
 		I,
 		U,
@@ -731,7 +731,7 @@ export class MotokoCanisterBuilder<
 
 	installArgs(
 		installArgsFn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
 		{
@@ -784,7 +784,7 @@ export class MotokoCanisterBuilder<
 
 	upgradeArgs(
 		upgradeArgsFn: (args: {
-			ctx: TaskCtxShape
+			ctx: TaskCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
 		{
@@ -938,8 +938,8 @@ export const makeMotokoCanister = <
 	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| MotokoCanisterConfig
-		| ((args: { ctx: TaskCtxShape }) => MotokoCanisterConfig)
-		| ((args: { ctx: TaskCtxShape }) => Promise<MotokoCanisterConfig>),
+		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
+		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>),
 ) => {
 	const initialScope = {
 		_tag: "scope",
@@ -1004,8 +1004,8 @@ export const motokoCanister = <
 >(
 	canisterConfigOrFn:
 		| MotokoCanisterConfig
-		| ((args: { ctx: TaskCtxShape }) => MotokoCanisterConfig)
-		| ((args: { ctx: TaskCtxShape }) => Promise<MotokoCanisterConfig>),
+		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
+		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>),
 ) => {
 	return makeMotokoCanister<_SERVICE, I, U>(
 		baseLayer as BuilderLayer,

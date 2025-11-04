@@ -8,7 +8,7 @@ import { describe, it, beforeAll, afterAll, expect } from "vitest"
 import { setTimeout as sleep } from "node:timers/promises"
 import { tmpdir } from "node:os"
 import { spawn } from "node:child_process"
-import { Effect, Exit, Fiber, Layer, ManagedRuntime, Scope } from "effect"
+import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime, Scope } from "effect"
 import { FileSystem, Path } from "@effect/platform"
 import { KeyValueStore } from "@effect/platform"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
@@ -24,6 +24,7 @@ import { makeTestEnvEffect } from "./setup.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
 import { ReplicaStartError } from "../../src/services/replica.js"
 import { LeaseFile, PocketIcState } from "../../src/services/pic/pic-process.js"
+import { TaskRuntime } from "../../src/services/taskRuntime.js"
 
 // ----------------------------- CSV / Types ----------------------------------------
 
@@ -412,7 +413,7 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 		network: "local" as const,
 		iceDirPath: iceDir,
 		background: row.run_mode === "bg",
-		logLevel: "error" as const,
+		logLevel: "debug" as const,
 		policy,
 		origin: "cli",
 	} as const
@@ -421,7 +422,7 @@ const makeGlobalArgs = (row: ScenarioRow, iceDir: string) => {
 		network: "local" as const,
 		iceDirPath: iceDir,
 		background: row.existing_server === "managed_bg",
-		logLevel: "error" as const,
+		logLevel: "debug" as const,
 		policy: "restart" as const,
 		origin: "cli" as const,
 	} as const
@@ -466,6 +467,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			const picReplica = new PocketICReplica({
 				host: DEFAULT_BIND,
 				port,
+				// TODO: ?? should be automatic??
 				manual: row.existing_server === "manual",
 				picConfig: {
 					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
@@ -480,14 +482,8 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				},
 			})
 
-			// TODO: if
 			const prepareIceConfig = {
-				// if (
-				//     row.existing_server === "managed_fg" ||
-				//     row.existing_server === "managed_bg"
-				// ) {
 				networks: { local: { replica: picReplica } },
-				// else manual replica, leave these empty or just define port?
 			}
 			const hold_task = task("hold_lease")
 				.run(async () => {
@@ -506,26 +502,19 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				hold: hold_task,
 			} satisfies TaskTree
 
-			const PrepareICEConfigLayer = ICEConfigService.Test(
+			// const PrepareICEConfigLayer = ICEConfigService.Test(
+			// 	prepareGlobalArgs,
+			// 	taskTree,
+			// 	prepareIceConfig,
+			// )
+			const { runtime: prepareRuntime } = makeTestEnvEffect(
+				idx,
 				prepareGlobalArgs,
 				taskTree,
 				prepareIceConfig,
 			)
-			const { layer: prepareLayer } = makeTestEnvEffect(
-				iceDir,
-				prepareGlobalArgs,
-				idx,
-			)
 
 			const runPrepare = Effect.gen(function* () {
-				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-				const KVStorageLayer = Layer.succeed(
-					KeyValueStore.KeyValueStore,
-					KVStorageImpl,
-				)
-				const DeploymentsLayer = DeploymentsService.Live.pipe(
-					Layer.provide(KVStorageLayer),
-				)
 				let manualPid: number | undefined
 				if (row.existing_server === "manual") {
 					manualPid = yield* launchManualPocketIc({
@@ -535,36 +524,34 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					})
 				}
 
-				const { config } = yield* ICEConfigService
-				const replica = config?.networks?.["local"]?.replica!
-
-				// TODO: move this logic to ICEConfigService?
-				// const { config } = yield* ICEConfigService
-				// const replica = config?.networks?.["local"]?.replica!
+				const { replica } = yield* TaskRuntime
 
 				// // Start only if precondition demands a managed server
-				// if (
-				// 	row.existing_server === "managed_fg" ||
-				// 	row.existing_server === "managed_bg"
-				// ) {
-				// console.log("starting prepare replica...............", replica)
-				// yield* Effect.tryPromise({
-				// 	try: async () => {
-				// 		await replica.start(prepareGlobalArgs)
-				// 	},
-				// 	catch: (e) => {
-				// 		console.error("error starting prepare replica", e)
-				// 		if (e instanceof ReplicaStartError) {
-				// 			return new ReplicaStartError({
-				// 				reason: e.reason,
-				// 				message: e.message,
-				// 			})
-				// 		}
-				// 		return e as Error
-				// 	},
-				// })
-				// yield* Effect.sleep(STABILIZE_MS)
-				// }
+				if (
+					row.existing_server === "managed_fg" ||
+					row.existing_server === "managed_bg"
+				) {
+					console.log(
+						"starting prepare replica...............",
+						replica,
+					)
+					yield* Effect.tryPromise({
+						try: async () => {
+							await replica.start(prepareGlobalArgs)
+						},
+						catch: (e) => {
+							console.error("error starting prepare replica", e)
+							if (e instanceof ReplicaStartError) {
+								return new ReplicaStartError({
+									reason: e.reason,
+									message: e.message,
+								})
+							}
+							return e as Error
+						},
+					})
+					yield* Effect.sleep(STABILIZE_MS)
+				}
 
 				let preHoldFiber:
 					| Fiber.RuntimeFiber<unknown, unknown>
@@ -573,7 +560,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					// Effect.provide(taskLayer),
 					// Effect.provide(ChildTaskRuntimeLayer),
 					// Effect.provide(PrepareICEConfigLayer),
-					Effect.provide(DeploymentsLayer),
+					// Effect.provide(DeploymentsLayer),
 					Effect.forkIn(testScope),
 				)
 				if (row.ephemeral_leases_before === "0") {
@@ -605,39 +592,21 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				}
 				return { preHoldFiber, manualPid }
 			})
+            // .pipe(
+			// 	Effect.catchAllCause((c) =>
+			// 		Effect.sync(() => console.error(Cause.pretty(c))),
+			// 	),
+			// )
 
 			// if (row.existing_server !== "none") {
-			const prepareRuntime = ManagedRuntime.make(
-				Layer.mergeAll(prepareLayer, PrepareICEConfigLayer),
-			)
-            // TODO: build it here?
-            // TaskRuntimeLayer.pipe(
-            //     Layer.provide(NodeContext.layer),
-            //     Layer.provide(KVStorageLayer),
-            //     Layer.provide(ICEConfigLayer),
-            //     Layer.provide(telemetryLayer),
-            //     Layer.provide(telemetryConfigLayer),
-            //     Layer.provide(ReplicaService),
-            //     Layer.provide(
-            //         DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
-            //     ),
-            //     Layer.provide(CanisterIdsLayer),
-            //     Layer.provide(configLayer),
-            //     Layer.provide(InFlightLayer),
-            //     Layer.provide(IceDirLayer),
-            //     Layer.provide(DeploymentsLayer),
-            //     Layer.provide(PromptsService.Live),
-            //     Layer.provide(
-            //         TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
-            //     ),
-            // )
+			// )
 			const { preHoldFiber, manualPid } = yield* Effect.tryPromise({
 				try: () =>
 					prepareRuntime.runPromise(
 						runPrepare,
-						// .pipe(Effect.provide(PrepareICEConfigLayer)),
 					),
 				catch: (error) => {
+					console.error(error)
 					return error
 				},
 			})
@@ -659,13 +628,6 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				JSON.stringify(before, null, 2),
 			)
 
-			const { layer: mainLayer } = makeTestEnvEffect(
-				iceDir,
-				globalArgs,
-				idx,
-			)
-
-			const mainScope = yield* Scope.make()
 			const mainPicReplica = new PocketICReplica({
 				host: DEFAULT_BIND,
 				port,
@@ -682,7 +644,6 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					icpConfig: { betaFeatures: IcpConfigFlag.Disabled },
 				},
 			})
-
 			const mainIceConfig = {
 				networks: {
 					local: {
@@ -692,31 +653,39 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					},
 				},
 			}
-			const MainICEConfigLayer = ICEConfigService.Test(
+			const { runtime: mainRuntime } = makeTestEnvEffect(
+				idx,
 				globalArgs,
 				taskTree,
 				mainIceConfig,
 			)
 
+			const mainScope = yield* Scope.make()
+
 			const runMain = () =>
 				Effect.gen(function* () {
-					const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-					const KVStorageLayer = Layer.succeed(
-						KeyValueStore.KeyValueStore,
-						KVStorageImpl,
-					)
-					const DeploymentsLayer = DeploymentsService.Live.pipe(
-						Layer.provide(KVStorageLayer),
-					)
+					const { replica } = yield* TaskRuntime
+					console.log("starting main replica...............", replica)
+					yield* Effect.tryPromise({
+						try: async () => {
+                            // TODO: doesnt have proper context?
+							await replica.start(globalArgs)
+						},
+						catch: (e) => {
+							console.error("error starting main replica", e)
+							if (e instanceof ReplicaStartError) {
+								return new ReplicaStartError({
+									reason: e.reason,
+									message: e.message,
+								})
+							}
+							return e as Error
+						},
+					})
+					yield* Effect.sleep(STABILIZE_MS)
 
-					const { config } = yield* ICEConfigService
-					const replica = config?.networks?.["local"]?.replica!
-
-					const mainHoldFiber = yield* runTask(hold_task).pipe(
-						// Effect.provide(taskLayer),
-						// Effect.provide(ChildTaskRuntimeLayer),
-						// Effect.provide(MainICEConfigLayer),
-						Effect.provide(DeploymentsLayer),
+					const mainHoldFiber = yield* runTask(hold_task)
+                    .pipe(
 						Effect.forkIn(mainScope),
 					)
 
@@ -751,12 +720,10 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					return { mainHoldFiber }
 				}).pipe(Effect.scoped)
 
-			const mainRuntime = ManagedRuntime.make(
-				Layer.mergeAll(mainLayer, MainICEConfigLayer),
-			)
 			const mainResult = yield* Effect.tryPromise({
 				try: () => mainRuntime.runPromiseExit(runMain()),
 				catch: (error) => {
+					console.error(error)
 					return error
 				},
 			})
@@ -833,6 +800,14 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				yield* killManualPocketIc(manualPid)
 			}
 
+            // TODO: clean up after tests
+            // yield* Effect.tryPromise({
+            //     try: () => replica.stop({ scope: "foreground" }),
+            //     catch: (error) => {
+            //         console.error("error stopping replica", error)
+            //         return error
+            //     },
+            // })
 			// Close the test scope (will interrupt any remaining fibers)
 			yield* Scope.close(testScope, Exit.void)
 			yield* Scope.close(mainScope, Exit.void)

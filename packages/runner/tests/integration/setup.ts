@@ -37,12 +37,11 @@ import {
 	SimpleSpanProcessor,
 	SpanExporter,
 } from "@opentelemetry/sdk-trace-base"
-// import { configLayer } from "../../src/services/config.js"
 import {
 	makeTelemetryLayer,
 	TelemetryConfig,
 } from "../../src/services/telemetryConfig.js"
-import fs from "node:fs"
+import fs, { realpathSync } from "node:fs"
 import { IceDir } from "../../src/services/iceDir.js"
 import { InFlight } from "../../src/services/inFlight.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
@@ -50,10 +49,12 @@ import { BuilderLayer } from "../../src/builders/lib.js"
 import { PromptsService } from "../../src/services/prompts.js"
 import { logLevelMap } from "../../src/cli/index.js"
 import { TaskRuntime } from "../../src/services/taskRuntime.js"
+import { ClackLoggingLive } from "../../src/services/logger.js"
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
 export const makeTestEnvEffect = (
-	iceDirName: string = ".ice_test",
+	idx: number = 0,
+	// iceDirName: string = ".ice_test",
 	globalArgs: {
 		network: string
 		logLevel: "debug" | "info" | "error"
@@ -67,37 +68,42 @@ export const makeTestEnvEffect = (
 		policy: "reuse",
 		origin: "cli",
 	} as const,
-	idx: number = 0,
+	taskTree: TaskTree = {},
+	iceConfig: Partial<ICEConfig> = {},
 ) => {
-	const configMap = new Map([["APP_DIR", fs.realpathSync(process.cwd())]])
+	const iceDirName = `.ice_test/${idx}`
 
-	const configLayer = Layer.setConfigProvider(
-		ConfigProvider.fromMap(configMap),
-	)
+	// const configMap = new Map([
+	// 	["APP_DIR", new URL(".", import.meta.url).pathname],
+	// 	// ["ICE_DIR_NAME", ".ice"],
+	// ])
 
 	const iceDirLayer = IceDir.Test({ iceDirName: iceDirName }).pipe(
 		Layer.provide(NodeContext.layer),
-		Layer.provide(configLayer),
 	)
 
-	const ReplicaService = Layer.succeed(Replica, (
+	// const ReplicaService = Layer.succeed(
+	// 	Replica,
+	// 	new PICReplica({
+	// 		host: "0.0.0.0",
+	// 		port: 8081 + idx,
+	// 		ttlSeconds: 9_999_999_999,
+	// 	}),
+	// )
+	const ReplicaService = layerFromAsyncReplica(
 		new PICReplica({
 			host: "0.0.0.0",
-			port: 8081 + idx,
+			port: 8081,
 			ttlSeconds: 9_999_999_999,
-		})
-	))
-	// TODO: fix for other tests
-	// const DefaultReplicaService = Layer.mock(DefaultReplica, {
-	//     start: async () => {},
-	//     stop: async () => {},
-	//     getTopology: async () => ({}),
-	//     getMgmt: async () => ({}),
-	//     getCanisterStatus: async () => ({}),
-	//     getCanisterInfo: async () => ({}),
-	//     createCanister: async () => ({}),
-	// } as any)
-
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
+	)
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
 	)
@@ -127,32 +133,65 @@ export const makeTestEnvEffect = (
 		Layer.provide(NodeContext.layer),
 	)
 
+	// TODO: build it here?
+	// const iceConfigLayer = ICEConfigService.Test(globalArgs, {}, {})
+	const iceConfigLayer = ICEConfigService.Test(
+		globalArgs,
+		taskTree,
+		iceConfig,
+	)
+	const canisterIdsLayer = CanisterIdsService.Test.pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(iceDirLayer),
+	)
+	const deploymentsLayer = DeploymentsService.Live.pipe(
+		Layer.provide(KVStorageLayer),
+	)
+	const taskRuntimeLayer = TaskRuntime.Live(() => {})
+
 	const testLayer = Layer.mergeAll(
-		// ICEConfigLayer,
-		DefaultConfigLayer,
-		// DeploymentsService.Live.pipe(Layer.provide(KVStorageLayer)),
+		// DefaultConfigLayer,
 		CanisterIdsService.Test.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(iceDirLayer),
 		),
-		configLayer,
-		telemetryConfigLayer,
-		telemetryLayer,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		Logger.pretty,
+		// Logger.pretty,
+		ClackLoggingLive,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		NodeContext.layer,
 		KVStorageLayer,
 		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
 		InFlightLayer,
 		iceDirLayer,
-		ReplicaService,
+		// ReplicaService,
 		PromptsLayer,
+		iceConfigLayer,
+		telemetryLayer,
+		telemetryConfigLayer,
+		taskRuntimeLayer.pipe(
+			Layer.provide(NodeContext.layer),
+			Layer.provide(KVStorageLayer),
+			Layer.provide(iceConfigLayer),
+			Layer.provide(telemetryLayer),
+			Layer.provide(telemetryConfigLayer),
+			Layer.provide(ReplicaService),
+			Layer.provide(
+				DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+			),
+			Layer.provide(canisterIdsLayer),
+			Layer.provide(InFlightLayer),
+			Layer.provide(iceDirLayer),
+			Layer.provide(deploymentsLayer),
+			Layer.provide(PromptsService.Live),
+			Layer.provide(
+				TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
+			),
+		),
 	)
 
 	const builderLayer = Layer.mergeAll(
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		configLayer,
 		Logger.pretty,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		NodeContext.layer,
@@ -182,7 +221,7 @@ export const makeTestEnvEffect = (
 
 	return {
 		runtime: ManagedRuntime.make(testLayer),
-        layer: testLayer,
+		layer: testLayer,
 		telemetryExporter,
 		customCanister: custom,
 		motokoCanister: motoko,

@@ -100,7 +100,6 @@ export class PICReplica implements ReplicaServiceClass {
 
 		try {
 			let releaseSpawnLock
-			console.log("this.manual", this.manual)
 			if (!this.manual) {
 				const monitor = new Monitor({
 					background: ctx.background,
@@ -186,14 +185,10 @@ export class PICReplica implements ReplicaServiceClass {
             ctx?: ICEConfigContext
         } = { scope: "foreground" },
 	): Promise<void> {
-        console.log("at replica.stop")
 		if (this.monitor) {
-            console.log("stopping existing this.monitor")
 			await this.monitor.stop({ scope: args.scope }) //???
 		} else {
-            console.log("stopping existing monitor from ctx", args.ctx, this.ctx)
 			await this.stopExistingMonitor(args.ctx ?? this.ctx)
-            console.log("existing monitor stopped")
 		}
 	}
 
