@@ -17,6 +17,7 @@ import {
 	encodeInstallCodeChunkedRequest,
 	encodeInstallCodeRequest,
 	InstallCodeChunkedRequest,
+	InstallCodeRequest,
 } from "../../canisters/pic_management/index.js"
 import {
 	AgentError,
@@ -180,10 +181,10 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async stop(
-		args: { 
-            scope: "background" | "foreground",
-            ctx?: ICEConfigContext
-        } = { scope: "foreground" },
+		args: {
+			scope: "background" | "foreground"
+			ctx?: ICEConfigContext
+		} = { scope: "foreground" },
 	): Promise<void> {
 		if (this.monitor) {
 			await this.monitor.stop({ scope: args.scope }) //???
@@ -431,31 +432,9 @@ export class PICReplica implements ReplicaServiceClass {
 		const targetSubnetId = undefined as string | undefined
 
 		const MAX_SIZE = 3_670_016
-		// const canister_install_mode = IDL.Variant({
-		//     'reinstall' : IDL.Null,
-		//     'upgrade' : IDL.Opt(
-		//       IDL.Record({
-		//         'wasm_memory_persistence' : IDL.Opt(
-		//           IDL.Variant({ 'keep' : IDL.Null, 'replace' : IDL.Null })
-		//         ),
-		//         'skip_pre_upgrade' : IDL.Opt(IDL.Bool),
-		//       })
-		//     ),
-		//     'install' : IDL.Null,
-		//   });
-		// const modePayload = {
-		// 	[mode]:
-		// 		mode === "upgrade"
-		// 			? [
-		// 					{
-		// 						wasm_memory_persistence: [{ keep: null }],
-		// 						skip_pre_upgrade: [],
-		// 					},
-		// 				]
-		// 			: null,
-		// }
-		let modePayload: InstallCodeChunkedRequest["mode"] = { install: null }
+		let modePayload: InstallCodeRequest["mode"] = { install: null }
 		if (mode === "upgrade") {
+			// TODO: check for Enhanced orthogonal persistence in wasm metadata?
 			modePayload = {
 				upgrade: [
 					{
@@ -467,6 +446,18 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 		if (mode === "reinstall") {
 			modePayload = {
+				reinstall: null,
+			}
+		}
+		let modePayloadNonEAP: InstallCodeRequest["mode"] = { install: null }
+		if (mode === "upgrade") {
+			// TODO: check for Enhanced orthogonal persistence in wasm metadata?
+			modePayloadNonEAP = {
+				upgrade: [],
+			}
+		}
+		if (mode === "reinstall") {
+			modePayloadNonEAP = {
 				reinstall: null,
 			}
 		}
@@ -518,9 +509,48 @@ export class PICReplica implements ReplicaServiceClass {
 			try {
 				await this.client!.updateCall(req)
 			} catch (error) {
-				throw new CanisterInstallError({
-					message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
-				})
+				const eapError =
+					"upgrade option requires that the new canister module supports enhanced orthogonal persistence"
+				if (String(error).includes(eapError)) {
+					try {
+						const payloadNonEAP = {
+							arg: encodedArgs,
+							canister_id: Principal.fromText(canisterId),
+							target_canister: Principal.fromText(canisterId),
+							sender_canister_version: Opt<bigint>(),
+							mode: modePayloadNonEAP,
+							chunk_hashes_list: chunkHashes,
+							store_canister: Opt<Principal>(),
+							wasm_module_hash: wasmModuleHash,
+						}
+						const encodedPayloadNonEAP =
+							encodeInstallCodeChunkedRequest(payloadNonEAP)
+						const reqNonEAP = {
+							canisterId: Principal.fromText("aaaaa-aa"),
+							sender: identity.getPrincipal(),
+							method: "install_chunked_code",
+							payload: encodedPayloadNonEAP,
+							effectivePrincipal: (targetSubnetId
+								? {
+										subnetId:
+											Principal.fromText(targetSubnetId),
+									}
+								: {
+										canisterId:
+											Principal.fromText(canisterId),
+									}) as EffectivePrincipal,
+						}
+						await this.client!.updateCall(reqNonEAP)
+					} catch (error) {
+						throw new CanisterInstallError({
+							message: `Failed to install code (non-EAP): ${error instanceof Error ? error.message : String(error)}`,
+						})
+					}
+				} else {
+					throw new CanisterInstallError({
+						message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
+					})
+				}
 			}
 			return
 		}
@@ -550,9 +580,43 @@ export class PICReplica implements ReplicaServiceClass {
 						}) as EffectivePrincipal,
 			})
 		} catch (error) {
-			throw new CanisterInstallError({
-				message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
-			})
+			const eapError =
+				"upgrade option requires that the new canister module supports enhanced orthogonal persistence"
+			if (String(error).includes(eapError)) {
+				try {
+					const payloadNonEAP = encodeInstallCodeRequest({
+						arg: encodedArgs,
+						canister_id: Principal.fromText(canisterId),
+						mode: modePayloadNonEAP,
+						// mode:
+						// 	mode === "reinstall"
+						// 		? { reinstall: null }
+						// 		: mode === "upgrade"
+						// 			? { upgrade: null }
+						// 			: { install: null },
+						wasm_module: new Uint8Array(wasm),
+					})
+					await this.client!.updateCall({
+						canisterId: Principal.fromText("aaaaa-aa"),
+						sender: identity.getPrincipal(),
+						method: "install_code",
+						payload: payloadNonEAP,
+						effectivePrincipal: (targetSubnetId
+							? { subnetId: Principal.fromText(targetSubnetId) }
+							: {
+									canisterId: Principal.fromText(canisterId),
+								}) as EffectivePrincipal,
+					})
+				} catch (error) {
+					throw new CanisterInstallError({
+						message: `Failed to install code (non-EAP): ${error instanceof Error ? error.message : String(error)}`,
+					})
+				}
+			} else {
+				throw new CanisterInstallError({
+					message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
+				})
+			}
 		}
 	}
 

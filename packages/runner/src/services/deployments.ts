@@ -36,6 +36,10 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 			network: string
 			deployment: Deployment
 		}) => Effect.Effect<void, PlatformError>
+		remove: (
+			canisterName: string,
+			network: string,
+		) => Effect.Effect<void, PlatformError>
 		serviceType: string
 	}
 >() {
@@ -80,6 +84,14 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 							network,
 							deployment,
 						})
+					}),
+				remove: (canisterName, network) =>
+					Effect.gen(function* () {
+						yield* kv.remove(`${canisterName}:${network}`)
+                        yield* Effect.logDebug("Deployment removed successfully", {
+                            canisterName,
+                            network,
+                        })
 					}),
 				serviceType: "Live",
 			}

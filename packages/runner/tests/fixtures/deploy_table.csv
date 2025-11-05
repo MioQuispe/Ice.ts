@@ -84,5 +84,5 @@ reinstall,FALSE,FALSE,FALSE,FALSE,TRUE,FALSE,install,reinstall,FALSE,ERROR!,cann
 auto,FALSE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,upgrade,OK,only upgrade cache present; module present
 auto,FALSE,TRUE,TRUE,TRUE,FALSE,TRUE,upgrade,upgrade,FALSE,OK,upgrade args changed; upgrade cache present; upgrade
 auto,TRUE,FALSE,TRUE,TRUE,FALSE,TRUE,upgrade,reinstall,FALSE,OK,install args changed; only upgrade cache present → reinstall
-auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; lastDeployment=install; use latest cache
+auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; lastDeployment=upgrade; use latest cache
 auto,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,upgrade,upgrade,upgrade,OK,both caches exist; lastDeployment=upgrade; use latest cache

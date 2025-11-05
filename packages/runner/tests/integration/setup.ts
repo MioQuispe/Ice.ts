@@ -1,7 +1,7 @@
 import { NodeContext } from "@effect/platform-node"
 import { FileSystem } from "@effect/platform"
 // import {} from "@effect/platform-browser"
-import { layerMemory } from "@effect/platform/KeyValueStore"
+import { layerMemory, layerFileSystem } from "@effect/platform/KeyValueStore"
 import {
 	Effect,
 	Layer,
@@ -50,6 +50,8 @@ import { PromptsService } from "../../src/services/prompts.js"
 import { logLevelMap } from "../../src/cli/index.js"
 import { TaskRuntime } from "../../src/services/taskRuntime.js"
 import { ClackLoggingLive } from "../../src/services/logger.js"
+import { IcpConfigFlag } from "@dfinity/pic"
+import path from "node:path"
 
 // TODO: this should use a separate pocket-ic / .ice instance for each test.
 export const makeTestEnvEffect = (
@@ -95,6 +97,9 @@ export const makeTestEnvEffect = (
 			host: "0.0.0.0",
 			port: 8081,
 			ttlSeconds: 9_999_999_999,
+			picConfig: {
+				icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
+			},
 		}),
 		{
 			iceDirPath: iceDirName,
@@ -126,7 +131,13 @@ export const makeTestEnvEffect = (
 	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
 	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
 	// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
-	const KVStorageLayer = layerMemory
+    // TODO: fix??/
+    // const appDir = fs.realpathSync(process.cwd())
+    // const cacheDirPath = path.join(appDir, iceDirName, "cache")
+	const KVStorageLayer = layerFileSystem(`${iceDirName}/cache`).pipe(
+		Layer.provide(NodeContext.layer),
+        Layer.provide(iceDirLayer),
+	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
 	const PromptsLayer = PromptsService.Live.pipe(
@@ -140,7 +151,7 @@ export const makeTestEnvEffect = (
 		taskTree,
 		iceConfig,
 	)
-	const canisterIdsLayer = CanisterIdsService.Test.pipe(
+	const canisterIdsLayer = CanisterIdsService.Live.pipe(
 		Layer.provide(NodeContext.layer),
 		Layer.provide(iceDirLayer),
 	)
@@ -151,17 +162,17 @@ export const makeTestEnvEffect = (
 
 	const testLayer = Layer.mergeAll(
 		// DefaultConfigLayer,
-		CanisterIdsService.Test.pipe(
-			Layer.provide(NodeContext.layer),
-			Layer.provide(iceDirLayer),
-		),
+		canisterIdsLayer,
 		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		// Logger.pretty,
 		ClackLoggingLive,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		NodeContext.layer,
 		KVStorageLayer,
-		TaskRegistry.Live.pipe(Layer.provide(KVStorageLayer)),
+		TaskRegistry.Live.pipe(
+			Layer.provide(NodeContext.layer),
+			Layer.provide(KVStorageLayer),
+		),
 		InFlightLayer,
 		iceDirLayer,
 		// ReplicaService,
@@ -169,6 +180,7 @@ export const makeTestEnvEffect = (
 		iceConfigLayer,
 		telemetryLayer,
 		telemetryConfigLayer,
+		deploymentsLayer,
 		taskRuntimeLayer.pipe(
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
