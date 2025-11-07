@@ -305,42 +305,7 @@ describe("deployments & caching decision table", () => {
 		// Execute main deploy with requested mode (internally runs install)
 		const runPrepare = () =>
 			Effect.gen(function* () {
-				// const ICEConfigScenario = ICEConfigService.Test(
-				// 	globalArgs,
-				// 	taskTree,
-				// 	config,
-				// )
-				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-				const KVStorageLayer = Layer.succeed(
-					KeyValueStore.KeyValueStore,
-					KVStorageImpl,
-				)
-				const DeploymentsLayer = DeploymentsService.Live.pipe(
-					Layer.provide(KVStorageLayer),
-				)
-
-				// const DeploymentsNoOpLayer = Layer.effect(
-				// 	DeploymentsService,
-				// 	Effect.succeed({
-				// 		get: (_canisterName: string, _network: string) =>
-				// 			Effect.succeed(Option.none()), // not used in seed
-				// 		set: (_: {
-				// 			canisterName: string
-				// 			network: string
-				// 			deployment: unknown
-				// 		}) => Effect.succeed(undefined),
-				// 		serviceType: "NoOp",
-				// 	}),
-				// )
-
-				// const manualPid = launchManualPocketIc({
-				// 	bind: "0.0.0.0",
-				// 	port: 8081 + idx,
-				// 	cwd: iceDirPath,
-				// })
-
 				const { replica } = yield* TaskRuntime
-
 				yield* Effect.tryPromise({
 					try: () => replica.start(globalArgs),
 					catch: (error) => {
@@ -348,53 +313,9 @@ describe("deployments & caching decision table", () => {
 					},
 				})
 
-				// const CanisterIdsImpl = yield* CanisterIdsService
-				// const CanisterIdsLayer = Layer.succeed(
-				// 	CanisterIdsService,
-				// 	CanisterIdsImpl,
-				// )
-
-				// const { taskLayer: taskLayerSeed, runtime: runtimeSeed } =
-				// 	yield* makeTaskLayer(globalArgs)
-				// 		// inject layer at call site
-				// 		.pipe(
-				// 			Effect.provide(ICEConfigSeed),
-				// 			Effect.provide(DeploymentsLayer),
-				// 			// Effect.provide(CanisterIdsLayer),
-				// 		)
-				// const ChildTaskRuntimeSeedLayer = Layer.succeed(
-				// 	TaskRuntime,
-				// 	{
-				// 		runtime: runtimeSeed,
-				// 		taskLayer: taskLayerSeed,
-				// 	},
-				// )
-
 				let seededCanisterId: string | undefined
 				if (s.canisterExists) {
 					if (s.modulePresent) {
-						// Deploy once to create canister, install module
-
-						// const {
-						// 	taskLayer: taskLayerSeedInstall,
-						// 	runtime: runtimeSeedInstall,
-						// } = yield* makeTaskLayer(globalArgs)
-						// 	// inject layer at call site
-						// 	.pipe(
-						// 		Effect.provide(ICEConfigSeed),
-						// 		Effect.provide(
-						// 			s.installArgsChanged ||
-						// 				s.installCacheExists
-						// 				? DeploymentsLayer
-						// 				: DeploymentsNoOpLayer,
-						// 		),
-						// 	)
-						// const ChildTaskRuntimeSeedInstallLayer =
-						// 	Layer.succeed(TaskRuntime, {
-						// 		runtime: runtimeSeedInstall,
-						// 		taskLayer: taskLayerSeedInstall,
-						// 	})
-
 						console.log("s.modulePresent running install")
 						const res = yield* runTask(
 							(s.installCacheExists
@@ -406,39 +327,9 @@ describe("deployments & caching decision table", () => {
 								forceReinstall: true,
 							},
 						)
-							.pipe
-							// TODO: verify it works
-							// TODO: might not work for taskRuntime?
-							// Effect.provide(
-							// 	s.installArgsChanged || s.installCacheExists
-							// 		? DeploymentsLayer
-							// 		: DeploymentsNoOpLayer,
-							// ),
-							()
-						// .pipe(
-						// 	Effect.provide(taskLayerSeedInstall),
-						// 	Effect.provide(
-						// 		ChildTaskRuntimeSeedInstallLayer,
-						// 	),
-						// )
 
 						seededCanisterId = res.canisterId
 						if (s.upgradeCacheExists) {
-							// const {
-							// 	taskLayer: taskLayerSeedUpgrade,
-							// 	runtime: runtimeSeedUpgrade,
-							// } = yield* makeTaskLayer(globalArgs)
-							// // inject layer at call site
-							// .pipe(
-							// 	Effect.provide(ICEConfigSeed),
-							// 	Effect.provide(DeploymentsLayer),
-							// )
-							// const ChildTaskRuntimeSeedUpgradeLayer =
-							// 	Layer.succeed(TaskRuntime, {
-							// 		runtime: runtimeSeedUpgrade,
-							// 		taskLayer: taskLayerSeedUpgrade,
-							// 	})
-
 							console.log("s.upgradeCacheExists running upgrade")
 							yield* runTask(
 								(s.upgradeCacheExists
@@ -450,31 +341,9 @@ describe("deployments & caching decision table", () => {
 									forceReinstall: true,
 								},
 							)
-							// .pipe(Effect.provide(DeploymentsLayer))
-
-							// .pipe(
-							// 	Effect.provide(taskLayerSeedUpgrade),
-							// 	Effect.provide(
-							// 		ChildTaskRuntimeSeedUpgradeLayer,
-							// 	),
-							// )
 						}
 
 						if (s.lastDeployment === "install") {
-							// const {
-							// 	taskLayer: taskLayerSeedLastDeployment,
-							// 	runtime: runtimeSeedLastDeployment,
-							// } = yield* makeTaskLayer(globalArgs)
-							// 	// inject layer at call site
-							// 	.pipe(
-							// 		Effect.provide(ICEConfigSeed),
-							// 		Effect.provide(DeploymentsLayer),
-							// 	)
-							// const ChildTaskRuntimeSeedLastDeploymentLayer =
-							// 	Layer.succeed(TaskRuntime, {
-							// 		runtime: runtimeSeedLastDeployment,
-							// 		taskLayer: taskLayerSeedLastDeployment,
-							// 	})
 							console.log(
 								"s.lastDeployment === 'install' running reinstall",
 							)
@@ -489,53 +358,13 @@ describe("deployments & caching decision table", () => {
 									forceReinstall: true,
 								},
 							)
-							// .pipe(Effect.provide(DeploymentsLayer))
-
-							// .pipe(
-							// 	Effect.provide(taskLayerSeedLastDeployment),
-							// 	Effect.provide(
-							// 		ChildTaskRuntimeSeedLastDeploymentLayer,
-							// 	),
-							// )
 						}
 
-						// if (s.lastDeployment) {
-						// 	const cacheExists =
-						// 		s.lastDeployment === "upgrade"
-						// 			? s.upgradeCacheExists
-						// 			: s.installCacheExists
-						// 	const {
-						// 		taskLayer: taskLayerSeedLastDeployment,
-						// 	} = yield* makeTaskLayer()
-						// 		// inject layer at call site
-						// 		.pipe(
-						// 			Effect.provide(ICEConfigSeed),
-						// 			Effect.provide(DeploymentsLayer),
-						// 		)
-						// 	yield* runTask(
-						// 		(cacheExists
-						// 			? seed_canister
-						// 			: stripCanisterCache(seed_canister)
-						// 		).children.deploy,
-						// 		{
-						// 			mode:
-						// 				s.lastDeployment === "upgrade"
-						// 					? "upgrade"
-						// 					: "reinstall",
-						// 		},
-						// 	).pipe(
-						// 		Effect.provide(taskLayerSeedLastDeployment),
-						// 	)
-						// }
 					} else {
 						// Only create canister; no module installed
 						const createResult = yield* runTask(
 							seed_canister.children.create,
 						)
-						// .pipe(
-						// 	Effect.provide(taskLayerSeed),
-						// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-						// )
 						if (!createResult) {
 							return yield* Effect.fail(
 								new Error("Failed to create seed canister"),
@@ -546,16 +375,8 @@ describe("deployments & caching decision table", () => {
 						const buildResult = yield* runTask(
 							seed_canister.children.build,
 						)
-						// .pipe(
-						// 	Effect.provide(taskLayerSeed),
-						// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-						// )
 
 						yield* runTask(seed_canister.children.bindings)
-						// .pipe(
-						// 	Effect.provide(taskLayerSeed),
-						// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-						// )
 					}
 				}
 				// If explicit cacheExists and we haven't deployed above, seed caches for args/build
@@ -567,12 +388,6 @@ describe("deployments & caching decision table", () => {
 						const createResult = yield* runTask(
 							seed_canister.children.create,
 						)
-						// .pipe(Effect.provide(DeploymentsLayer))
-
-						// .pipe(
-						// 	Effect.provide(taskLayerSeed),
-						// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-						// )
 						if (!createResult) {
 							return yield* Effect.fail(
 								new Error("Failed to create seed canister"),
@@ -581,23 +396,7 @@ describe("deployments & caching decision table", () => {
 						seededCanisterId = createResult
 					}
 					yield* runTask(seed_canister.children.build)
-					// .pipe(
-					// 	Effect.provide(DeploymentsLayer),
-					// )
-
-					// .pipe(
-					// 	Effect.provide(taskLayerSeed),
-					// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-					// )
 					yield* runTask(seed_canister.children.bindings)
-					// .pipe(
-					// 	Effect.provide(DeploymentsLayer),
-					// )
-
-					// .pipe(
-					// 	Effect.provide(taskLayerSeed),
-					// 	Effect.provide(ChildTaskRuntimeSeedLayer),
-					// )
 				}
 				// Ensure cacheExists=false means no last deployment info
 				// TODO: need to make sure not cached
@@ -627,14 +426,6 @@ describe("deployments & caching decision table", () => {
 						// TODO: mode upgrade
 					).length
 
-				// yield* Effect.tryPromise({
-				//     try: () => replica.stop({ scope: "foreground" }),
-				//     catch: (error) => {
-				//         return error
-				//     }
-
-				// })
-
 				const Deployments = yield* DeploymentsService
 				const maybeLastDep = yield* Deployments.get(
 					canisterKey,
@@ -663,14 +454,9 @@ describe("deployments & caching decision table", () => {
 				const lastDeployment = Option.isSome(maybeLastDep)
 					? maybeLastDep.value
 					: undefined
-				// const lastDeployment =
-				// 	s.lastDeployment !== undefined
-				// 		? Option.getOrThrow(maybeLastDep)
-				// 		: undefined
 
 				return {
 					lastDeployment,
-					// manualPid,
 					beforeInstallCacheHits,
 					beforeUpgradeCacheHits,
 					seededCanisterId,
@@ -678,44 +464,11 @@ describe("deployments & caching decision table", () => {
 			})
 
 		const {
-			// manualPid,
 			lastDeployment,
 			seededCanisterId,
 			beforeInstallCacheHits,
 			beforeUpgradeCacheHits,
 		} = await runtimeSeed.runPromise(runPrepare())
-
-		// // Support special value "latest" in CSV: interpret as last recorded deployment mode
-		// const {
-		// 	// resolvedMode,
-		// 	// lastDeployment,
-		// } = await runtimeSeed.runPromise(
-		// 	Effect.gen(function* () {
-		// 		const Deployments = yield* DeploymentsService
-		// 		const maybeLastDep = yield* Deployments.get(
-		// 			canisterKey,
-		// 			"local",
-		// 		)
-		// 		console.log("maybeLastDep", maybeLastDep)
-		// 		yield* Effect.logInfo("get last deployment", {
-		// 			lastDep: Option.isSome(maybeLastDep)
-		// 				? maybeLastDep.value
-		// 				: "none",
-		// 			Deployments: Deployments.serviceType,
-		// 		})
-		// 		console.log("s.lastDeployment", s.lastDeployment)
-		// 		const lastDep =
-		// 			s.lastDeployment !== undefined
-		// 				? Option.getOrThrow(maybeLastDep)
-		// 				: undefined
-		// 		// // TODO: wrong
-		// 		// const resolvedMode = lastDep.mode
-		// 		return {
-		// 			// resolvedMode,
-		// 			lastDeployment: lastDep,
-		// 		}
-		// 	}),
-		// )
 
 		console.log("lastDeployment", lastDeployment)
 		console.log("seededCanisterId", seededCanisterId)
@@ -724,24 +477,6 @@ describe("deployments & caching decision table", () => {
 
 		const runMain = () =>
 			Effect.gen(function* () {
-				// const {
-				// 	taskLayer: taskLayerScenario,
-				// 	runtime: runtimeScenario,
-				// } = yield* makeTaskLayer(globalArgs)
-				// 	// inject layer at call site
-				// 	.pipe(
-				// 		Effect.provide(ICEConfigScenario),
-				// 		Effect.provide(DeploymentsLayer),
-				// 		// Effect.provide(CanisterIdsLayer),
-				// 	)
-				// const ChildTaskRuntimeScenarioLayer = Layer.succeed(
-				// 	TaskRuntime,
-				// 	{
-				// 		runtime: runtimeScenario,
-				// 		taskLayer: taskLayerScenario,
-				// 	},
-				// )
-
 				const { replica } = yield* TaskRuntime
 				yield* Effect.tryPromise({
 					try: () => replica.start(globalArgs),
@@ -750,35 +485,9 @@ describe("deployments & caching decision table", () => {
 					},
 				})
 
-				// const KVStorageImpl = yield* KeyValueStore.KeyValueStore
-				// const KVStorageLayer = Layer.succeed(
-				// 	KeyValueStore.KeyValueStore,
-				// 	KVStorageImpl,
-				// )
-				// const DeploymentsLayer = DeploymentsService.Live.pipe(
-				// 	Layer.provide(KVStorageLayer),
-				// )
-
 				// Ensure artifacts exist for install
 				yield* runTask(scenario_canister.children.build)
-				// .pipe(
-				// 	Effect.provide(DeploymentsLayer),
-				// )
-
-				// .pipe(
-				// 	Effect.provide(taskLayerScenario),
-				// 	Effect.provide(ChildTaskRuntimeScenarioLayer),
-				// )
 				yield* runTask(scenario_canister.children.bindings)
-				// .pipe(
-				// 	Effect.provide(DeploymentsLayer),
-				// )
-
-				// .pipe(
-				// 	Effect.provide(taskLayerScenario),
-				// 	Effect.provide(ChildTaskRuntimeScenarioLayer),
-				// )
-
 				// If no canister id and mode requires existing, expect error later
 				const deployArgs = {
 					mode: s.mode as
@@ -797,12 +506,6 @@ describe("deployments & caching decision table", () => {
 					scenario_canister.children.deploy,
 					deployArgs,
 				)
-				// .pipe(Effect.provide(DeploymentsLayer))
-
-				// .pipe(
-				// 	Effect.provide(taskLayerScenario),
-				// 	Effect.provide(ChildTaskRuntimeScenarioLayer),
-				// )
 
 				yield* Effect.tryPromise({
 					try: () => replica.stop({ scope: "foreground" }),
@@ -813,10 +516,6 @@ describe("deployments & caching decision table", () => {
 
 				return {
 					result,
-					// resolvedMode,
-					// lastDeployment,
-					// beforeInstallCacheHits,
-					// beforeUpgradeCacheHits,
 				}
 			})
 
@@ -829,10 +528,6 @@ describe("deployments & caching decision table", () => {
 
 		const {
 			result,
-			// resolvedMode,
-			// lastDeployment,
-			// beforeInstallCacheHits,
-			// beforeUpgradeCacheHits,
 		} = await runtimeScenario.runPromise(runMain())
 
 		expect(result).toMatchObject({
@@ -860,9 +555,6 @@ describe("deployments & caching decision table", () => {
 			]
 
 		console.log("resolvedModeSpans", resolvedModeSpans)
-
-		// console.log("resolvedModeSpans", resolvedModeSpans)
-		// console.log("resolvedMode", resolvedMode)
 
 		if (s.resolvedMode === "latest") {
 			expect(lastDeployment?.mode).toBe(s.resolvedMode)
@@ -930,8 +622,6 @@ describe("deployments & caching decision table", () => {
 		} else {
 			expect(installHitsThisRun + upgradeHitsThisRun > 0).toBe(false)
 		}
-
-		// killManualPocketIc(manualPid)
 
 		await runtimeSeed.dispose()
 		await runtimeScenario.dispose()

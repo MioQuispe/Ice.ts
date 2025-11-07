@@ -29,6 +29,7 @@
     "@effect/platform-browser": "^0.70.0",
     "@effect/platform-node": "^0.96.0",
     "@ice.ts/didc_js": "*",
+    "@ice.ts/pocket-ic": "*",
     "@icp-sdk/core": "^4.0.4",
     "@inkjs/ui": "^2.0.0",
     "@noble/hashes": "^1.8.0",
@@ -61,11 +62,11 @@
     "ps-list": "^8.1.1",
     "sisteransi": "^1.0.5",
     "starkbank-ecdsa": "^1.1.5",
-    "tsx": "^4.20.4",
-    "@ice.ts/pocket-ic": "*"
+    "tsx": "^4.20.4"
   },
   "devDependencies": {
     "@ark/attest": "^0.48.2",
+    "@effect/language-service": "^0.24.2",
     "@effect/vitest": "^0.25.1",
     "@ice.ts/canisters": "*",
     "@types/express": "^5.0.3",

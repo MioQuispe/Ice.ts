@@ -516,7 +516,7 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 					// 		`${canisterName}.wasm.gz`,
 					// 	),
 					// )
-					const wasmOutputFilePath = path.join(
+					const outWasmPath = path.join(
 						iceDir,
 						"canisters",
 						canisterName,
@@ -529,13 +529,13 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 						`${canisterName}.did`,
 					)
 					// Ensure the directory exists
-					yield* fs.makeDirectory(path.dirname(wasmOutputFilePath), {
+					yield* fs.makeDirectory(path.dirname(outWasmPath), {
 						recursive: true,
 					})
 					yield* Effect.logDebug(
 						"Compiling Motoko canister with args",
 						{
-							wasmOutputFilePath,
+							wasmOutputFilePath: outWasmPath,
 							outCandidPath,
 						},
 						"with src",
@@ -544,17 +544,18 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 					yield* compileMotokoCanister(
 						path.resolve(appDir, canisterConfig.src),
 						canisterName,
-						wasmOutputFilePath,
+						outWasmPath,
+                        outCandidPath,
 					)
 					yield* Effect.logDebug(
 						"Motoko canister built successfully",
 						{
-							wasmPath: wasmOutputFilePath,
+							wasmPath: outWasmPath,
 							candidPath: outCandidPath,
 						},
 					)
 					return {
-						wasmPath: wasmOutputFilePath,
+						wasmPath: outWasmPath,
 						candidPath: outCandidPath,
 					}
 				})(),

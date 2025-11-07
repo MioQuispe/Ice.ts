@@ -20,7 +20,8 @@ export const Opt = <T>(value?: T): Opt<T> => {
 export const compileMotokoCanister = (
 	src: string,
 	canisterName: string,
-	wasmOutputFilePath: string,
+	outWasmPath: string,
+	outCandidPath: string,
 ) =>
 	Effect.gen(function* () {
 		const moc = yield* Moc
@@ -28,23 +29,26 @@ export const compileMotokoCanister = (
 		const path = yield* Path.Path
 		// Create output directories if they don't exist
 		yield* Effect.logDebug(
-			`Compiling from ${src}, with name ${canisterName} to ${wasmOutputFilePath}`,
+			`Compiling from ${src}, with name ${canisterName} to ${outWasmPath}`,
 		)
-		if (!(yield* fs.exists(path.dirname(wasmOutputFilePath)))) {
-			yield* fs.makeDirectory(path.dirname(wasmOutputFilePath), {
+		if (!(yield* fs.exists(path.dirname(outWasmPath)))) {
+			yield* fs.makeDirectory(path.dirname(outWasmPath), {
 				recursive: true,
 			})
 		}
 		// TODO: we need to make dirs if they don't exist
-		yield* moc.compile(src, wasmOutputFilePath)
+		yield* moc.compile(src, outWasmPath, outCandidPath)
 		yield* Effect.logDebug(
-			`Successfully compiled ${src} ${canisterName} outputFilePath: ${wasmOutputFilePath}`,
+			`Successfully compiled ${src} ${canisterName} outputFilePath: ${outWasmPath}`,
 		)
 		yield* Effect.logDebug(
 			"Contents of output directory:",
-			yield* fs.readDirectory(path.dirname(wasmOutputFilePath)),
+			yield* fs.readDirectory(path.dirname(outWasmPath)),
 		)
-		return wasmOutputFilePath
+		return {
+			outWasmPath,
+			outCandidPath,
+		}
 	})
 
 // TODO: types for DIDJS
