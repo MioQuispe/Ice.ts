@@ -18,12 +18,12 @@ export class PromptsService extends Context.Tag("PromptsService")<
 		) => Effect.Effect<boolean, TaskRuntimeError>
 		Spinner: () => Effect.Effect<
 			{
-				start: (msg?: string) => Effect.Effect<void, never>
+				start: (msg?: string) => void
 				stop: (
 					msg?: string,
 					code?: number,
-				) => Effect.Effect<void, never>
-				message: (msg?: string) => Effect.Effect<void, never>
+				) => void
+				message: (msg?: string) => void
 			},
 			never
 		>
@@ -39,11 +39,11 @@ export class PromptsService extends Context.Tag("PromptsService")<
 					Effect.gen(function* () {
 						return {
 							start: (msg?: string) =>
-								Effect.sync(() => uiSpinnerStart(msg)),
+								() => uiSpinnerStart(msg),
 							stop: (msg?: string, code?: number) =>
-								Effect.sync(() => uiSpinnerStop(msg, code)),
+								() => uiSpinnerStop(msg, code),
 							message: (msg?: string) =>
-								Effect.sync(() => uiSpinnerMessage(msg)),
+								() => uiSpinnerMessage(msg),
 						}
 					}),
 				confirm: (confirmOptions: ConfirmOptions) =>

@@ -669,6 +669,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					result: unknown
 				}
 			> = {}
+            yield* Effect.logDebug("resolving dependencies")
 			for (const [dependencyName, providedTask] of Object.entries(
 				task.dependencies as Record<string, Task>,
 			)) {

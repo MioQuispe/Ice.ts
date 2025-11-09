@@ -304,22 +304,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const defaultReplica = yield* Replica
 				const replica = configReplica ?? defaultReplica
 
-				// TODO: manual??
-				// yield* Effect.tryPromise({
-				// 	try: async () => {
-				// 		await replica.start(ctx)
-				// 	},
-				// 	catch: (e) => {
-				// 		if (e instanceof ReplicaStartError) {
-				// 			return new ReplicaStartError({
-				// 				reason: e.reason,
-				// 				message: e.message,
-				// 			})
-				// 		}
-				// 		return e as Error
-				// 	},
-				// })
-
 				const ReplicaService = Layer.succeed(Replica, replica)
 
 				const taskLayer = Layer.mergeAll(
@@ -345,10 +329,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					NodeContext.layer,
 					DeploymentsLayer,
 					PromptsLayer,
-					// TODO: feed in another TaskCtx?
-					// TaskCtxService.Live(progressCb).pipe(
-					// 	Layer.provide(NodeContext.layer),
-					// ),
 				)
 				const taskRuntime = ManagedRuntime.make(taskLayer)
 

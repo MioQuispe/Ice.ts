@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect"
+import { Context, Effect, Metric } from "effect"
 import type { Task } from "../types/types.js"
 import {
 	collectDependencies,
@@ -89,6 +89,7 @@ export const runTasks = Effect.fn("run_tasks")(function* <T extends Task>(
 	// 	taskPath: path,
 	// })
 	// yield* Effect.logDebug("Got task path:", path)
+    const taskStartTime = performance.now()
 	yield* Effect.logDebug("Collecting dependencies...")
 	const collectedTasks = collectDependencies(tasks)
 	yield* Effect.logDebug("Collected dependencies")
@@ -108,7 +109,8 @@ export const runTasks = Effect.fn("run_tasks")(function* <T extends Task>(
 	const results = yield* Effect.all(taskEffects, {
 		concurrency: "inherit",
 	})
-	yield* Effect.logDebug("Tasks executed")
+    const taskDuration = performance.now() - taskStartTime
+	yield* Effect.logDebug(`Tasks executed in ${taskDuration}ms`)
 	// const cancelledResults = results.filter((r) => isTaskCancelled(r.result))
 	const finishedResults = results.filter((r) => !isTaskCancelled(r.result))
 
