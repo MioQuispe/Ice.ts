@@ -81,6 +81,7 @@ import { ClackLoggingLive } from "../services/logger.js"
 import { TaskRuntime } from "../services/taskRuntime.js"
 import { NodeSdk } from "@effect/opentelemetry"
 import { ICReplica } from "../services/ic-replica.js"
+import { FileSystem } from "@effect/platform"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -230,37 +231,57 @@ export const makeCliRuntime = ({
 	// const TaskRegistryLayer = TaskRegistry.Live.pipe(
 	// 	Layer.provide(KVStorageLayer),
 	// )
+
+	const picReplicaLayer = layerFromAsyncReplica(
+		new PICReplica({
+			host: "0.0.0.0",
+			port: 8081,
+			ttlSeconds: 9_999_999_999,
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
+	)
+
+	// TODO: use staging & ic urls
+	const stagingReplicaLayer = layerFromAsyncReplica(
+		new ICReplica({
+			host: "0.0.0.0",
+			port: 8080,
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
+	)
+	const icReplicaLayer = layerFromAsyncReplica(
+		new ICReplica({
+			host: "0.0.0.0",
+			port: 8080,
+		}),
+		{
+			iceDirPath: iceDirName,
+			network: globalArgs.network,
+			logLevel: globalArgs.logLevel,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+		},
+	)
 	const replicas = {
-		local: layerFromAsyncReplica(
-			new PICReplica({
-				host: "0.0.0.0",
-				port: 8081,
-				ttlSeconds: 9_999_999_999,
-			}),
-			{
-				iceDirPath: iceDirName,
-				network: globalArgs.network,
-				logLevel: globalArgs.logLevel,
-				background: globalArgs.background,
-				policy: globalArgs.policy,
-			},
-		),
-		ic: layerFromAsyncReplica(
-			new ICReplica({
-				host: "0.0.0.0",
-				port: 8080,
-			}),
-			{
-				iceDirPath: iceDirName,
-				network: globalArgs.network,
-				logLevel: globalArgs.logLevel,
-				background: globalArgs.background,
-				policy: globalArgs.policy,
-			},
-		),
+		// local: picReplicaLayer,
+		local: picReplicaLayer,
+		staging: stagingReplicaLayer,
+		ic: icReplicaLayer,
 	}
 
-    // TODO: clean up
+	// TODO: clean up
 	//@ts-ignore
 	const ReplicaService = replicas[globalArgs.network] as typeof replicas.local
 
@@ -993,6 +1014,43 @@ const canistersInstallCommand = defineCommand({
 	},
 })
 
+const cleanCommand = defineCommand({
+	meta: {
+		name: "clean",
+		description: "Clean cache and state",
+	},
+	args: {
+		...globalArgs,
+	},
+	run: async ({ args }) => {
+		const globalArgs = getGlobalArgs("clean")
+		const { network, logLevel, background, policy, origin } = globalArgs
+
+		const program = Effect.gen(function* () {
+			const Prompts = yield* PromptsService
+			const s = yield* Prompts.Spinner()
+
+            // TODO: more granular clean options
+			s.start("Starting clean")
+			yield* Effect.logDebug("Running clean")
+			const iceDir = yield* IceDir
+			const fs = yield* FileSystem.FileSystem
+			yield* fs.remove(iceDir.path, { recursive: true })
+			s.stop("Cleaned cache and state")
+		})
+
+		await makeCliRuntime({
+			globalArgs: {
+				network,
+				logLevel,
+				background,
+				policy,
+				origin,
+			},
+		}).runPromise(program)
+	},
+})
+
 const canistersStopCommand = defineCommand({
 	meta: {
 		name: "stop",
@@ -1595,13 +1653,14 @@ const main = defineCommand({
 	},
 	subCommands: {
 		run: runCommand,
-		stop: stopCommand,
-		// ls: listCommand,
 		task: taskCommand,
 		canister: canisterCommand,
+		status: canistersStatusCommand,
+		stop: stopCommand,
+		clean: cleanCommand,
+		// ls: listCommand,
 		// init: initCommand,
 		// g: generateCommand,
-		status: canistersStatusCommand,
 		// ui: uiCommand,
 		// w: watchCommand,
 	},

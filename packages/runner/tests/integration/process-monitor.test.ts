@@ -13,7 +13,7 @@ import { FileSystem, Path } from "@effect/platform"
 import { KeyValueStore } from "@effect/platform"
 import { ICEConfigService } from "../../src/services/iceConfig.js"
 import { task } from "../../src/builders/task.js"
-import { PICReplica as PocketICReplica } from "../../src/services/pic/pic.js"
+import { PICReplica } from "../../src/services/pic/pic.js"
 import { runTask } from "../../src/tasks/run.js"
 import { pocketIcPath } from "@ice.ts/pocket-ic"
 import { IcpConfigFlag } from "@dfinity/pic"
@@ -464,7 +464,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			// Create a manual scope that lives for the entire test
 			const testScope = yield* Scope.make()
 
-			const picReplica = new PocketICReplica({
+			const picReplica = new PICReplica({
 				host: DEFAULT_BIND,
 				port,
 				// TODO: ?? should be automatic??
@@ -473,7 +473,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
 				},
 			})
-			const mismatchReplica = new PocketICReplica({
+			const mismatchReplica = new PICReplica({
 				host: DEFAULT_BIND,
 				port,
 				manual: row.existing_server === "manual",
@@ -628,7 +628,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				JSON.stringify(before, null, 2),
 			)
 
-			const mainPicReplica = new PocketICReplica({
+			const mainPicReplica = new PICReplica({
 				host: DEFAULT_BIND,
 				port,
 				manual: false,
@@ -636,7 +636,7 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 					icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
 				},
 			})
-			const mainMismatchReplica = new PocketICReplica({
+			const mainMismatchReplica = new PICReplica({
 				host: DEFAULT_BIND,
 				port,
 				manual: false,

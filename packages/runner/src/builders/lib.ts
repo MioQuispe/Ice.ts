@@ -2325,8 +2325,6 @@ export const makeInstallTask = <_SERVICE, I, U>(
 				argsDigest,
 			}
             const cacheKey = hashJson(keyInput)
-            console.log("install computeCacheKey input", input)
-			console.log("install cacheKey", cacheKey)
 			return cacheKey
 			// return `${input.canisterId}:${input.computedMode}:${argsDigest}`
 		},

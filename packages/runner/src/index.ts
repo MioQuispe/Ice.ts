@@ -7,12 +7,8 @@ export type { CanisterScopeSimple } from "./builders/lib.js"
 export type { CustomCanisterScope } from "./builders/custom.js"
 export * from "./ids.js"
 export type { InstallModes } from "./services/replica.js"
-import { PICReplica } from "./services/pic/pic.js"
-
-export const PocketICReplica = PICReplica
-// export const Replica = {
-// 	PocketIC: PICReplica,
-// }
+export { PICReplica } from "./services/pic/pic.js"
+export { ICReplica } from "./services/ic-replica.js"
 
 export const Ice = (
 	configOrFn:

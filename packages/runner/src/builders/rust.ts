@@ -395,6 +395,26 @@ const Uint8ArrayStreamToString = <E, R>(
 		runFold("", (a, b) => a + b),
 	)
 
+const getCargoPath = (cargoTomlOrDirPath: string) =>
+	Effect.gen(function* () {
+		// Read Cargo.toml to extract package name
+		const fs = yield* FileSystem.FileSystem
+		const path = yield* Path.Path
+		let cargoTomlPath = path.resolve(cargoTomlOrDirPath, "Cargo.toml")
+
+		const stat = yield* fs.stat(cargoTomlOrDirPath)
+		if (stat.type === "Directory") {
+			const entries = yield* fs.readDirectory(cargoTomlOrDirPath)
+			const cargoTomlEntry = entries.find((entry) =>
+				entry.endsWith("Cargo.toml"),
+			)
+			if (cargoTomlEntry) {
+				return path.join(cargoTomlOrDirPath, cargoTomlEntry)
+			}
+		}
+		return cargoTomlOrDirPath
+	})
+
 export const makeRustBuildTask = <C extends RustCanisterConfig>(
 	builderLayer: BuilderLayer,
 	configTask: ConfigTask<C>,
@@ -428,12 +448,13 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						canisterName,
 						canisterConfig,
 					})
-
-					// Read Cargo.toml to extract package name
-					const cargoTomlPath = path.resolve(
+					const cargoTomlOrDirPath = path.resolve(
 						appDir,
 						canisterConfig.src,
 					)
+					const cargoTomlPath = yield* getCargoPath(cargoTomlOrDirPath)
+					// const cargoTomlPath = ""
+
 					const cargoTomlContent =
 						yield* fs.readFileString(cargoTomlPath)
 					const packageName =
@@ -572,8 +593,6 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 				cargoTomlHash: input.cargoToml.sha256,
 			}
 			const cacheKey = hashJson(buildInput)
-			console.log("build computeCacheKey input", input)
-			console.log("cacheKey", cacheKey)
 			return cacheKey
 		},
 		input: (taskCtx) =>
@@ -589,10 +608,15 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						?.result as RustCanisterConfig
 					const path = yield* Path.Path
 					const fs = yield* FileSystem.FileSystem
-					const cargoTomlPath = path.resolve(
+					// const cargoTomlPath = path.resolve(
+					// 	taskCtx.appDir,
+					// 	canisterConfig.src,
+					// )
+					const cargoTomlOrDirPath = path.resolve(
 						taskCtx.appDir,
 						canisterConfig.src,
 					)
+					const cargoTomlPath = yield* getCargoPath(cargoTomlOrDirPath)
 					const srcDir = path.join(path.dirname(cargoTomlPath), "src")
 
 					// Hash Cargo.toml
@@ -946,7 +970,7 @@ export const makeRustCanister = <_SERVICE = unknown, I = unknown, U = unknown>(
 		| ((args: { ctx: TaskCtx }) => Promise<RustCanisterConfig>),
 ) => {
 	const config = makeConfigTask(builderLayer, canisterConfigOrFn)
-    const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
+	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
 		builderLayer,
 		{ fn: () => [] as I, customEncode: undefined },
 		{ fn: () => [] as U, customEncode: undefined },
@@ -960,15 +984,8 @@ export const makeRustCanister = <_SERVICE = unknown, I = unknown, U = unknown>(
 		defaultTask: "deploy",
 		children: {
 			config,
-			create: makeCreateTask(
-				builderLayer,
-				config,
-				[Tags.RUST],
-			),
-			build: makeRustBuildTask(
-				builderLayer,
-				config,
-			),
+			create: makeCreateTask(builderLayer, config, [Tags.RUST]),
+			build: makeRustBuildTask(builderLayer, config),
 			bindings: makeRustBindingsTask(builderLayer),
 			stop: makeStopTask(builderLayer),
 			remove: makeRemoveTask(builderLayer),
