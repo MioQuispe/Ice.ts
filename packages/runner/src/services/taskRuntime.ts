@@ -121,7 +121,7 @@ export interface TaskCtx<A extends Record<string, unknown> = {}> {
 		set: (params: {
 			canisterName: string
 			network: string
-			deployment: Deployment
+			deployment: Omit<Deployment, "id">
 		}) => Promise<void>
 	}
 	readonly canisterIds: {

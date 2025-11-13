@@ -67,7 +67,7 @@ export const baseLayer = Layer.mergeAll(
 	ClackLoggingLive,
 	// Logger.pretty,
 	// TODO: get logLevel
-	Logger.minimumLogLevel(LogLevel.Info),
+	Logger.minimumLogLevel(LogLevel.Debug),
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
 export type BuilderLayer = typeof baseLayer
@@ -385,9 +385,14 @@ export const makeCreateTask = <Config extends CreateConfig>(
 											const confirmResult =
 												yield* Effect.tryPromise({
 													try: () => {
-                                                        if (taskCtx.origin === "extension") {
-                                                            return Promise.resolve(true)
-                                                        }
+														if (
+															taskCtx.origin ===
+															"extension"
+														) {
+															return Promise.resolve(
+																true,
+															)
+														}
 														return taskCtx.prompts.confirm(
 															{
 																message:
@@ -395,7 +400,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 																initialValue: true,
 															},
 														)
-                                                    },
+													},
 													catch: (error) =>
 														new TaskError({
 															message:
@@ -630,26 +635,31 @@ export function digestFile(path: string): FileDigest {
 	}
 }
 
-export async function isArtifactCached(
+export const isArtifactCached = (
 	path: string,
 	prev: FileDigest | undefined, // last run (undefined = cache miss)
-): Promise<{ fresh: boolean; digest: FileDigest }> {
-	// No previous record – must rebuild
-	if (!prev) {
-		return { fresh: false, digest: digestFile(path) }
-	}
+) =>
+	Effect.gen(function* () {
+		// No previous record – must rebuild
+		if (!prev) {
+			return { fresh: false, digest: yield* digestFileEffect(path) }
+		}
+		const fs = yield* FileSystem.FileSystem
 
-	// 1️⃣ fast-path : stat only
-	const currentStat = await stat(path)
-	if (currentStat.mtimeMs === prev.mtimeMs) {
-		return { fresh: true, digest: prev } // timestamps match ⟹ assume fresh
-	}
+		// 1️⃣ fast-path : stat only
+		const stat = yield* fs.stat(path)
+		const mtimeMs = Option.isSome(stat.mtime)
+			? stat.mtime.value.getTime()
+			: 0
+		if (mtimeMs === prev.mtimeMs) {
+			return { fresh: true, digest: prev } // timestamps match ⟹ assume fresh
+		}
 
-	// 2️⃣ slow-path : hash check
-	const digest = digestFile(path)
-	const fresh = digest.sha256 === prev.sha256
-	return { fresh, digest }
-}
+		// 2️⃣ slow-path : hash check
+		const digest = yield* digestFileEffect(path)
+		const fresh = digest.sha256 === prev.sha256
+		return { fresh, digest }
+	})
 
 export const digestFileEffect = (path: string) =>
 	Effect.gen(function* () {
@@ -884,8 +894,10 @@ export type InstallTask<
 			// computeKeyMode?: "install" | "upgrade"
 			depCacheKeys: Record<string, string | undefined>
 			wasmDigest: FileDigest
+			candidDigest: FileDigest
 			installArgsDigest: string
 			upgradeArgsDigest: string
+			// deploymentId: number
 			// installArgsFn: Function
 			// upgradeArgsFn: Function
 		}
@@ -1392,6 +1404,8 @@ export const makeCanisterStatusTask = (
 export const resolveMode = (
 	taskCtx: TaskCtx,
 	configCanisterId: string | undefined,
+	// TODO: REMOVE! temporary hack. clean up
+	unCached: boolean = false,
 ) => {
 	return Effect.gen(function* () {
 		const {
@@ -1467,6 +1481,13 @@ export const resolveMode = (
 
 		// // const mode =
 		// // 	resolvedMode === "reinstall" ? "install" : resolvedMode
+		yield* Effect.logDebug("resolveMode", {
+			requestedMode,
+			noModule,
+			lastDeployment,
+			installArgsHash,
+			upgradeArgsHash,
+		})
 
 		let mode: InstallModes
 		if (requestedMode === "auto") {
@@ -1479,10 +1500,10 @@ export const resolveMode = (
 						if (
 							lastDeployment.installArgsHash !== installArgsHash
 						) {
-                            if (taskCtx.origin === "extension") {
-                                // do not wipe canister state unless confirmed
-                                return "upgrade"
-                            }
+							if (taskCtx.origin === "extension") {
+								// do not wipe canister state unless confirmed
+								return "upgrade"
+							}
 							return "reinstall"
 						}
 						if (
@@ -1493,9 +1514,14 @@ export const resolveMode = (
 						// unchanged args: prefer upgrade over install (idempotent)
 						// but this breaks second run where it should use install cache
 						// return "upgrade"
+
 						return lastDeployment.mode === "upgrade"
 							? "upgrade"
-							: "install"
+							: // TODO: breaks on initial install. upgradeArgs may differ from installArgs
+								// : (noModule ? "install" : "upgrade")
+								unCached
+								? "upgrade"
+								: "install"
 					},
 					onNone: () => {
 						// Module present but no history: if current funcs differ, treat as upgrade intent
@@ -2102,8 +2128,14 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						"install_args"
 					]?.result as TaskSuccess<InstallArgsTask<_SERVICE, I, U>>
 
-					// TODO: cache somehow?
-					const mode = yield* resolveMode(taskCtx, canisterId)
+					// TODO: Clean up. temporary hack. also cache it?
+					let mode = yield* resolveMode(taskCtx, canisterId, true)
+					// TODO: returns install instead of reinstall....
+					// slightly different from resolveMode in input??
+					// if (mode === "install" && requestedMode === "auto" && !noModule) {
+					//     mode = "reinstall"
+					// }
+
 					yield* Effect.logDebug("Resolved mode in install effect", {
 						mode,
 					})
@@ -2287,11 +2319,16 @@ export const makeInstallTask = <_SERVICE, I, U>(
 				depsHash: hashJson(input.depCacheKeys),
 				canisterId: input.canisterId,
 				network: input.network,
-				wasmDigest: input.wasmDigest.sha256,
+				wasmDigest: hashJson(input.wasmDigest),
+				candidDigest: hashJson(input.candidDigest),
 				mode: input.computedMode,
 				argsDigest,
 			}
-			return hashJson(keyInput)
+            const cacheKey = hashJson(keyInput)
+            console.log("install computeCacheKey input", input)
+			console.log("install cacheKey", cacheKey)
+			return cacheKey
+			// return `${input.canisterId}:${input.computedMode}:${argsDigest}`
 		},
 		input: (taskCtx) =>
 			runtime.runPromise(
@@ -2352,12 +2389,31 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const installArgsDigest = hashConfig(installArgs.fn)
 					const upgradeArgsDigest = hashConfig(upgradeArgs.fn)
 					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
+					// TODO: customEncoding?
+					const candidDigest = taskArgs.candid
+						? yield* digestFileEffect(taskArgs.candid)
+						: {
+								path: "",
+								mtimeMs: 0,
+								sha256: "",
+							}
 					const resolvedMode = yield* resolveMode(taskCtx, canisterId)
+					const deployment = yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.deployments.get(
+								canisterName,
+								currentNetwork,
+							),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					// const deploymentId = deployment?.updatedAt ?? Date.now()
 					if (
 						resolvedMode === "reinstall" &&
-						!taskArgs.forceReinstall
-                        && taskCtx.origin !== "extension"
-                        // TODO: check if running from extension
+						!taskArgs.forceReinstall &&
+						taskCtx.origin !== "extension"
+						// TODO: check if running from extension
 					) {
 						const confirmResult = yield* Effect.tryPromise({
 							try: () =>
@@ -2387,9 +2443,11 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						computedMode,
 						resolvedMode,
 						wasmDigest,
+						candidDigest,
 						depCacheKeys,
 						installArgsDigest,
 						upgradeArgsDigest,
+						// deploymentId,
 					}
 					return input
 				})(),

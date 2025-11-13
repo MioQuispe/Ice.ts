@@ -10,6 +10,7 @@ export type Deployment = {
 	upgradeArgsHash: string
 	wasmHash: string
 	updatedAt: number
+	id: number
 }
 export type Deployments = Record<string, Record<string, string>>
 
@@ -34,7 +35,7 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 		set: (params: {
 			canisterName: string
 			network: string
-			deployment: Deployment
+			deployment: Omit<Deployment, "id">
 		}) => Effect.Effect<void, PlatformError>
 		remove: (
 			canisterName: string,
@@ -75,23 +76,35 @@ export class DeploymentsService extends Context.Tag("DeploymentsService")<
 					}),
 				set: ({ canisterName, network, deployment }) =>
 					Effect.gen(function* () {
+						const prevDeployment = yield* kv.get(
+							`${canisterName}:${network}`,
+						)
+						const nextId = Option.match(prevDeployment, {
+							onSome: (prevDeployment) =>
+								Number(JSON.parse(prevDeployment).id) + 1,
+							onNone: () => 0,
+						})
+                        const newDeployment = { ...deployment, id: nextId }
 						yield* kv.set(
 							`${canisterName}:${network}`,
-							JSON.stringify(deployment),
+							JSON.stringify(newDeployment),
 						)
 						yield* Effect.logDebug("Deployment set successfully", {
 							canisterName,
 							network,
-							deployment,
+							deployment: newDeployment,
 						})
 					}),
 				remove: (canisterName, network) =>
 					Effect.gen(function* () {
 						yield* kv.remove(`${canisterName}:${network}`)
-                        yield* Effect.logDebug("Deployment removed successfully", {
-                            canisterName,
-                            network,
-                        })
+						yield* Effect.logDebug(
+							"Deployment removed successfully",
+							{
+								canisterName,
+								network,
+							},
+						)
 					}),
 				serviceType: "Live",
 			}

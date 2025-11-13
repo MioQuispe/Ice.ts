@@ -624,13 +624,14 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 
 	const taskEffects = EffectArray.map(tasks, (task) =>
 		Effect.fn("task_execute_effect")(function* () {
-			yield* Effect.logDebug("starting task effect")
 			const taskPath = yield* getTaskPathById(task.id)
+			yield* Effect.logDebug(
+				`[TASK_START] Task entered: ${taskPath}`,
+			)
 			yield* Effect.annotateCurrentSpan({
 				taskPath,
 				dependencies: Object.keys(task.dependencies),
 			})
-			progressCb({ taskId: task.id, taskPath, status: "starting" })
 
 			// TODO: not sure if this is correct
 			const inflightKey = hashJson({
@@ -644,6 +645,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			})
 
 			if (Option.isSome(maybeInflight)) {
+				yield* Effect.logDebug(
+					`[INFLIGHT_HIT] Task ${taskPath} found inflight, awaiting...`,
+				)
 				const inflight = maybeInflight.value
 				const taskResult = yield* Deferred.await(inflight).pipe(
 					Effect.catchAll((error) => {
@@ -654,6 +658,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					}),
 				)
 				yield* inflightTaskCount(Effect.succeed(1))
+				yield* Effect.logDebug(
+					`[INFLIGHT_DONE] Task ${taskPath} got result from inflight`,
+				)
 				return taskResult
 			}
 			const inFlightDef = yield* Deferred.make<
@@ -661,6 +668,12 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 				unknown
 			>()
 			yield* inflightTasks.set(inflightKey, inFlightDef)
+			yield* Effect.logDebug(
+				`[INFLIGHT_SET] Task ${taskPath} set as inflight`,
+			)
+
+			yield* Effect.logDebug("starting task effect")
+			progressCb({ taskId: task.id, taskPath, status: "starting" })
 
 			const dependencyResults: Record<
 				string,
@@ -702,7 +715,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			return yield* Option.match(maybeCachedTask, {
 				onSome: (cachedTask) =>
 					Effect.gen(function* () {
-						yield* Effect.logDebug("getting cached task input")
+						yield* Effect.logDebug(
+							`[CACHE_INPUT_START] Getting cached task input for ${taskPath}`,
+						)
 						const maybeInput = yield* Effect.tryPromise({
 							try: () => cachedTask.input(taskCtx),
 							catch: (error) => {
@@ -712,6 +727,9 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 								})
 							},
 						})
+						yield* Effect.logDebug(
+							`[CACHE_INPUT_DONE] Got cached task input for ${taskPath}`,
+						)
 						if (isTaskCancelled(maybeInput)) {
 							yield* cancelledTaskCount(Effect.succeed(1))
 							yield* Effect.annotateCurrentSpan({
@@ -736,8 +754,13 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 									}
 								: {}),
 						})
-						yield* Effect.logDebug("computing cache key")
+						yield* Effect.logDebug(
+							`[CACHE_KEY_START] Computing cache key for ${taskPath}`,
+						)
 						let cacheKey: string = cachedTask.computeCacheKey(input)
+						yield* Effect.logDebug(
+							`[CACHE_KEY_DONE] Cache key for ${taskPath}: ${cacheKey}`,
+						)
 
 						yield* Effect.annotateCurrentSpan({
 							cacheKey: cacheKey,
@@ -755,7 +778,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 											}),
 										catch: (error) => {
 											return new TaskRuntimeError({
-												message: `Error revalidating cached task ${taskPath}`,
+												message: `Error revalidating cached task ${taskPath}, ${String(error)}`,
 												error,
 											})
 										},
@@ -765,8 +788,14 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							revalidate: revalidate,
 						})
 
+						yield* Effect.logDebug(
+							`[CACHE_LOOKUP] Looking up cache for ${taskPath} with key ${cacheKey}`,
+						)
 						const cacheHit =
 							!revalidate && (yield* taskRegistry.has(cacheKey))
+						yield* Effect.logDebug(
+							`[CACHE_RESULT] Cache ${cacheHit ? "HIT" : "MISS"} for ${taskPath}`,
+						)
 
 						const hasCacheKey = yield* taskRegistry.has(cacheKey)
 
@@ -787,7 +816,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 						if (cacheHit) {
 							yield* cacheHitCount(Effect.succeed(1))
 							yield* Effect.logDebug(
-								`Cache hit for cacheKey: ${cacheKey}`,
+								`[CACHE_HIT] Cache hit for ${taskPath}, cacheKey: ${cacheKey}`,
 							)
 							const encodingFormat = cachedTask.encodingFormat
 							const maybeResult = yield* taskRegistry.get(
@@ -800,8 +829,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 							if (Option.isSome(maybeResult)) {
 								const encodedResult = maybeResult.value
 								yield* Effect.logDebug(
-									"decoding result",
-									// encodedResult,
+									`[DECODE_START] Decoding cached result for ${taskPath}`,
 								)
 								const decodedResult = yield* Effect.tryPromise({
 									try: () =>
@@ -820,8 +848,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 
 								const result = decodedResult
 								yield* Effect.logDebug(
-									"decoded result",
-									// decodedResult,
+									`[DECODE_DONE] Decoded cached result for ${taskPath}`,
 								)
 								const taskResult = {
 									cacheKey,

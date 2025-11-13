@@ -80,6 +80,7 @@ import { PromptsService } from "../services/prompts.js"
 import { ClackLoggingLive } from "../services/logger.js"
 import { TaskRuntime } from "../services/taskRuntime.js"
 import { NodeSdk } from "@effect/opentelemetry"
+import { ICReplica } from "../services/ic-replica.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -229,20 +230,46 @@ export const makeCliRuntime = ({
 	// const TaskRegistryLayer = TaskRegistry.Live.pipe(
 	// 	Layer.provide(KVStorageLayer),
 	// )
-	const ReplicaService = layerFromAsyncReplica(
-		new PICReplica({
-			host: "0.0.0.0",
-			port: 8081,
-			ttlSeconds: 9_999_999_999,
-		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
-	)
+	const replicas = {
+		local: layerFromAsyncReplica(
+			new PICReplica({
+				host: "0.0.0.0",
+				port: 8081,
+				ttlSeconds: 9_999_999_999,
+			}),
+			{
+				iceDirPath: iceDirName,
+				network: globalArgs.network,
+				logLevel: globalArgs.logLevel,
+				background: globalArgs.background,
+				policy: globalArgs.policy,
+			},
+		),
+		ic: layerFromAsyncReplica(
+			new ICReplica({
+				host: "0.0.0.0",
+				port: 8080,
+			}),
+			{
+				iceDirPath: iceDirName,
+				network: globalArgs.network,
+				logLevel: globalArgs.logLevel,
+				background: globalArgs.background,
+				policy: globalArgs.policy,
+			},
+		),
+	}
+
+    // TODO: clean up
+	//@ts-ignore
+	const ReplicaService = replicas[globalArgs.network] as typeof replicas.local
+
+	// const icReplicaHost = "0.0.0.0"
+	// const icReplicaPort = 8080
+	// const icReplica = new ICReplica({
+	// 	host: icReplicaHost,
+	// 	port: icReplicaPort,
+	// })
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
 	)
@@ -478,10 +505,6 @@ const stopCommand = defineCommand({
 					try: () =>
 						replica.stop({
 							scope: "background",
-							ctx: {
-								...globalArgs,
-								iceDirPath: iceDir.path,
-							},
 						}),
 					catch: (e) =>
 						new ReplicaError({

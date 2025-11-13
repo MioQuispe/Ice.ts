@@ -25,40 +25,6 @@ import { customCanister } from "../../src/builders/index.js"
 import { spawn } from "node:child_process"
 import { pocketIcPath } from "@ice.ts/pocket-ic"
 
-const launchManualPocketIc = (opts: {
-	bind: string
-	port: number
-	cwd: string
-}) => {
-	const args = [
-		"-i",
-		opts.bind,
-		"-p",
-		String(opts.port),
-		// "--ttl",
-		// "99999999999",
-	]
-	// TODO: ?? not working
-	const proc = spawn(pocketIcPath, args, {
-		cwd: opts.cwd,
-		detached: true,
-		stdio: "ignore",
-	})
-	// try {
-	proc.unref()
-	// } catch (e) {
-	// 	console.error("error spawning manual pocketic", e)
-	// 	throw e
-	// }
-	return proc.pid!
-}
-
-const killManualPocketIc = (pid: number) => {
-	try {
-		process.kill(pid, "SIGKILL")
-	} catch {}
-}
-
 type Mode = "auto" | "install" | "reinstall" | "upgrade"
 
 type Scenario = {

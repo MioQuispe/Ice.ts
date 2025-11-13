@@ -3,6 +3,7 @@ import { Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
 import { Replica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
+import { ICReplica } from "./ic-replica.js"
 
 // const DfxReplicaService = DfxReplica.pipe(
 // 	Layer.provide(NodeContext.layer),
@@ -45,26 +46,29 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
             //         },
             //     },
 			// })
+
             const defaultReplica = yield* Replica
 			const defaultUser = yield* Effect.tryPromise({
 				try: () => Ids.fromDfx("default"),
 				catch: () => new TaskRuntimeError({ message: "Failed to get default user" }),
 			})
+
+            // TODO: dont export all networks. just the current network.
 			const defaultNetworks = {
 				local: {
 					replica: defaultReplica,
-					host: "https://0.0.0.0",
-					port: 8080,
+					host: defaultReplica.host,
+					port: defaultReplica.port,
 				},
 				staging: {
 					replica: defaultReplica,
-					host: "https://staging.ic0.app",
-					port: 80,
+					host: defaultReplica.host,
+					port: defaultReplica.port,
 				},
 				ic: {
 					replica: defaultReplica,
-					host: "https://ic0.app",
-					port: 80,
+					host: defaultReplica.host,
+					port: defaultReplica.port,
 				},
 			}
 			const defaultUsers = {

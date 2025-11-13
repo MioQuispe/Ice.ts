@@ -183,13 +183,12 @@ export class PICReplica implements ReplicaServiceClass {
 	async stop(
 		args: {
 			scope: "background" | "foreground"
-			ctx?: ICEConfigContext
 		} = { scope: "foreground" },
 	): Promise<void> {
 		if (this.monitor) {
 			await this.monitor.stop({ scope: args.scope }) //???
 		} else {
-			await this.stopExistingMonitor(args.ctx ?? this.ctx)
+			await this.stopExistingMonitor(this.ctx)
 		}
 	}
 

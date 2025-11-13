@@ -1,0 +1,14 @@
+{
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    },
+    "replica": {
+      "subnet_type": "system"
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
+

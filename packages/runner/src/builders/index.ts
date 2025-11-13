@@ -39,5 +39,6 @@ export {
     Tags,
 } from "./lib.js"
 export * from "./motoko.js"
+export * from "./rust.js"
 export * from "./task.js"
 export * from "./custom.js"

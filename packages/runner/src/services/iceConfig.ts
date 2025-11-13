@@ -59,7 +59,7 @@ const createService = (globalArgs: {
 	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 	background: boolean
-    origin: "extension" | "cli"
+	origin: "extension" | "cli"
 }) =>
 	Effect.gen(function* () {
 		// TODO: service?
@@ -116,54 +116,12 @@ const createService = (globalArgs: {
 		} else {
 			config = d
 		}
-		const currentNetwork = globalArgs.network ?? "local"
-        // // TODO: dont start here!!!
-		// yield* Effect.tryPromise({
-		// 	try: () => {
-		// 		return (
-		// 			config.networks?.[currentNetwork]?.replica.start({
-		// 				iceDirPath,
-		// 				policy: globalArgs.policy,
-		// 				network: currentNetwork,
-		// 				logLevel: globalArgs.logLevel,
-		// 				background: globalArgs.background,
-		// 			}) ??
-		// 			Promise.resolve()
-		// 		)
-		// 	},
-		// 	catch: (error) => {
-		// 		return new ReplicaStartError({
-		// 			reason: (error as ReplicaStartError).reason,
-		// 			message: `Failed to start replicas in config ${error}`,
-		// 		})
-		// 	},
-		// })
 		return {
 			taskTree: transformedTaskTree,
 			config,
 			globalArgs,
 		}
 	})
-
-export class ICEConfigInject extends Context.Tag("ICEConfigInject")<
-	ICEConfigInject,
-	{
-		readonly configRef: Ref.Ref<Partial<ICEConfig>>
-		readonly taskTreeRef: Ref.Ref<TaskTree>
-	}
->() {
-	static readonly Test = Layer.effect(
-		ICEConfigInject,
-		Effect.gen(function* () {
-			let configRef = yield* Ref.make({})
-			let taskTreeRef = yield* Ref.make({})
-			return {
-				configRef,
-				taskTreeRef,
-			}
-		}),
-	)
-}
 
 /**
  * Service to load and process the ICE configuration.
@@ -178,7 +136,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			logLevel: "debug" | "info" | "error"
 			background: boolean
 			policy: "reuse" | "restart"
-            origin: "extension" | "cli"
+			origin: "extension" | "cli"
 		}
 	}
 >() {
@@ -187,7 +145,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 		logLevel: "debug" | "info" | "error"
 		background: boolean
 		policy: "reuse" | "restart"
-        origin: "extension" | "cli"
+		origin: "extension" | "cli"
 	}) => Layer.effect(ICEConfigService, createService(globalArgs))
 
 	static readonly Test = (
@@ -196,7 +154,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			logLevel: "debug" | "info" | "error"
 			background: boolean
 			policy: "reuse" | "restart"
-            origin: "extension" | "cli"
+			origin: "extension" | "cli"
 		},
 		taskTree: TaskTree,
 		config: Partial<ICEConfig>,

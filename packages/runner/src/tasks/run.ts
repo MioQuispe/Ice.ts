@@ -30,7 +30,10 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	// yield* Effect.annotateCurrentSpan({
 	// 	taskPath: path,
 	// })
-	yield* Effect.logDebug("run_task:", taskPath, { args })
+	yield* Effect.logDebug(
+		`[RUN_TASK] Running task: ${taskPath}`,
+		{ args },
+	)
 	const taskWithArgs = {
 		...task,
 		// TODO: this adds args: undefined. fix
