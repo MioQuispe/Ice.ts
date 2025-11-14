@@ -1,7 +1,7 @@
 {
 	"name": "@ice.ts/pocket-ic",
 	"version": "0.0.1",
-	"description": "Vendored PocketIC binary (10.0.0, macOS arm64) with a JS shim.",
+	"description": "PocketIC binary wrapper for all platforms",
 	"license": "ISC",
 	"author": "Mio Quispe",
 	"type": "module",
@@ -21,14 +21,7 @@
 	},
 	"files": [
 		"dist",
-		"10.0.0/pocket-ic",
 		"README.md"
-	],
-	"os": [
-		"darwin"
-	],
-	"cpu": [
-		"arm64"
 	],
 	"engines": {
 		"node": ">=18"

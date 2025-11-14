@@ -6,7 +6,8 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "packages/didc_js/pkg"
+    "packages/didc_js/pkg",
+    "packages/pocket-ic/platforms/*"
   ],
   "devDependencies": {
     "@biomejs/biome": "^2.1.1",
