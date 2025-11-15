@@ -1,7 +1,7 @@
-import { customCanister, Opt } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./swap_trs_storage.types.js"
 import { Principal } from "@dfinity/principal"
 import { NFIDIdentityManager } from "../identity_manager/index.js"
@@ -21,9 +21,9 @@ type InitArgs = {
 export const NFIDSwapTrsStorage = (
   initArgsOrFn?:
     | { canisterId?: string }
-    | ((args: { ctx: TaskCtxShape }) => { canisterId?: string }),
+    | ((args: { ctx: TaskCtx }) => { canisterId?: string }),
 ) =>
-  customCanister<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+  canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

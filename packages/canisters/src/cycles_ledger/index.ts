@@ -1,6 +1,6 @@
 import path from "node:path"
 import * as url from "node:url"
-import { customCanister, Opt, type TaskCtxShape } from "@ice.ts/runner"
+import { canister, Opt, TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE, LedgerArgs, UpgradeArgs, InitArgs } from "./cycles_ledger.types"
 import type { Principal } from "@dfinity/principal"
 
@@ -28,10 +28,10 @@ const CyclesLedgerIds = {
 export const CyclesLedger = (
 	initArgsOrFn?:
 		| WrapperInitArgs
-		| ((args: { ctx: TaskCtxShape }) => WrapperInitArgs),
+		| ((args: { ctx: TaskCtx }) => WrapperInitArgs),
 ) => {
 	// TODO: init args
-	return customCanister<_SERVICE, [LedgerInitArgs], [LedgerUpgradeArgs]>(({ ctx }) => {
+	return canister.custom<_SERVICE, [LedgerInitArgs], [LedgerUpgradeArgs]>(({ ctx }) => {
 		const initArgs =
 			typeof initArgsOrFn === "function"
 				? initArgsOrFn({ ctx })

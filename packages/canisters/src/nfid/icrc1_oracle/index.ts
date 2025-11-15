@@ -1,7 +1,7 @@
-import { customCanister, Opt } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./icrc1_oracle.types.js"
 import { Principal } from "@dfinity/principal"
 import { NFIDIdentityManager } from "../identity_manager/index.js"
@@ -31,9 +31,9 @@ type NFIDIcrc1OracleInitArgs = {
 export const NFIDIcrc1Oracle = (
   initArgsOrFn?:
     | NFIDIcrc1OracleInitArgs
-    | ((args: { ctx: TaskCtxShape }) => NFIDIcrc1OracleInitArgs),
+    | ((args: { ctx: TaskCtx }) => NFIDIcrc1OracleInitArgs),
 ) =>
-  customCanister<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+  canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

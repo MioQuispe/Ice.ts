@@ -1,7 +1,7 @@
-import { customCanister } from "@ice.ts/runner";
+import { canister } from "@ice.ts/runner";
 import * as url from "node:url";
 import path from "node:path";
-import type { TaskCtxShape } from "@ice.ts/runner";
+import type { TaskCtx } from "@ice.ts/runner";
 import type { _SERVICE } from "./signer_ic.types.js";
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url));
@@ -14,9 +14,9 @@ type InitArgs = []
  * @returns A canister instance.
  */
 export const NFIDSignerIc = (
-  initArgsOrFn?: { canisterId?: string } | ((args: { ctx: TaskCtxShape }) => { canisterId?: string }),
+  initArgsOrFn?: { canisterId?: string } | ((args: { ctx: TaskCtx }) => { canisterId?: string }),
 ) =>
-  customCanister<_SERVICE, InitArgs>(({ ctx }) => {
+  canister.custom<_SERVICE, InitArgs>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn;
     return {

@@ -1,7 +1,7 @@
 import * as url from "node:url"
 import path from "node:path"
 import { Principal } from "@dfinity/principal"
-import { customCanister, type TaskCtxShape } from "@ice.ts/runner"
+import { canister, customCanister, type TaskCtx } from "@ice.ts/runner"
 import { CapRouter } from "../cap"
 import type { _SERVICE } from "./dip20.types.js"
 
@@ -45,7 +45,7 @@ const canisterName = "dip20"
 
 // type DIP20Builder = ReturnType<typeof customCanister<CanisterInitArgs, _SERVICE>>
 export const DIP20 = () => {
-	const result = customCanister<_SERVICE, DIP20InitArgs>(async ({ ctx }) => {
+	const result = canister.custom<_SERVICE, DIP20InitArgs>(async ({ ctx }) => {
 		// const initArgs =
 		// 	typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
 		return {
@@ -57,7 +57,7 @@ export const DIP20 = () => {
 			candid: path.resolve(__dirname, `./${canisterName}/${canisterName}.did`),
 		}
 	})
-		.dependsOn({ CapRouter: CapRouter.provides })
+		.dependsOn({ CapRouter: CapRouter().make() })
 		// .installArgs(async ({ ctx, mode, deps }) => {
 		// 	const { CapRouter } = deps
 		// 	const initArgs =

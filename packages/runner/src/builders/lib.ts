@@ -44,7 +44,6 @@ import { getNodeByPath } from "../tasks/lib.js"
 import type { ActorSubclass } from "../types/actor.js"
 import type { CachedTask, Task } from "../types/types.js"
 import { proxyActor } from "../utils/extension.js"
-import { ExtractArgsFromTaskParams } from "./task.js"
 import { CustomCanisterConfig, deployParams } from "./custom.js"
 import { Moc, MocError } from "../services/moc.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
@@ -1797,65 +1796,71 @@ export const makeInstallArgsTask = <
 						`${canisterName}.did.js`,
 					)
 
-					// TODO: should it catch errors?
-					// TODO: handle different modes
-					const deps = Record.map(
-						depResults,
-						(dep) => dep.result,
-					) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+				// TODO: should it catch errors?
+				// TODO: handle different modes
+				const deps = Record.map(
+					depResults,
+					(dep) => dep.result,
+				) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 
-					const installFnResult = installArgs.fn({
-						ctx: taskCtx,
-						deps,
+				const installFnResult =
+					typeof installArgs.fn === "function"
+						? installArgs.fn({
+								ctx: taskCtx,
+								deps,
+						  })
+						: installArgs.fn
+				let installArgsResult = [] as unknown as I
+				if (installFnResult instanceof Promise) {
+					installArgsResult = yield* Effect.tryPromise<
+						I,
+						TaskError
+					>({
+						try: () => installFnResult,
+						catch: (e) =>
+							new TaskError({
+								message: `Install args function failed for: ${canisterName},
+						typeof installArgsFn: ${typeof installArgs.fn},
+						 typeof installResult: ${typeof installFnResult}
+						 error: ${e},
+						 installArgsFn: ${installArgs.fn},
+						 installResult: ${installFnResult},
+						 `,
+							}),
 					})
-					let installArgsResult = [] as unknown as I
-					if (installFnResult instanceof Promise) {
-						installArgsResult = yield* Effect.tryPromise<
-							I,
-							TaskError
-						>({
-							try: () => installFnResult,
-							catch: (e) =>
-								new TaskError({
-									message: `Install args function failed for: ${canisterName},
-							typeof installArgsFn: ${typeof installArgs.fn},
-							 typeof installResult: ${typeof installFnResult}
-							 error: ${e},
-							 installArgsFn: ${installArgs.fn},
-							 installResult: ${installFnResult},
-							 `,
-								}),
-						})
-					} else {
-						installArgsResult = installFnResult
-					}
+				} else {
+					installArgsResult = installFnResult
+				}
 
-					const upgradeFnResult = upgradeArgs.fn({
-						ctx: taskCtx,
-						deps,
+				const upgradeFnResult =
+					typeof upgradeArgs.fn === "function"
+						? upgradeArgs.fn({
+								ctx: taskCtx,
+								deps,
+						  })
+						: upgradeArgs.fn
+
+				let upgradeArgsResult = [] as unknown as U
+				if (upgradeFnResult instanceof Promise) {
+					upgradeArgsResult = yield* Effect.tryPromise<
+						U,
+						TaskError
+					>({
+						try: () => upgradeFnResult,
+						catch: (e) =>
+							new TaskError({
+								message: `Install args function failed for: ${canisterName},
+						typeof installArgsFn: ${typeof upgradeArgs.fn},
+						 typeof installResult: ${typeof upgradeFnResult}
+						 error: ${e},
+						 installArgsFn: ${upgradeArgs.fn},
+						 installResult: ${upgradeFnResult},
+						 `,
+							}),
 					})
-
-					let upgradeArgsResult = [] as unknown as U
-					if (upgradeFnResult instanceof Promise) {
-						upgradeArgsResult = yield* Effect.tryPromise<
-							U,
-							TaskError
-						>({
-							try: () => upgradeFnResult,
-							catch: (e) =>
-								new TaskError({
-									message: `Install args function failed for: ${canisterName},
-							typeof installArgsFn: ${typeof upgradeArgs.fn},
-							 typeof installResult: ${typeof upgradeFnResult}
-							 error: ${e},
-							 installArgsFn: ${upgradeArgs.fn},
-							 installResult: ${upgradeFnResult},
-							 `,
-								}),
-						})
-					} else {
-						upgradeArgsResult = upgradeFnResult
-					}
+				} else {
+					upgradeArgsResult = upgradeFnResult
+				}
 
 					yield* Effect.logDebug(
 						"Install args generated",

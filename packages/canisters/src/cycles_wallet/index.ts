@@ -1,6 +1,6 @@
 import path from "node:path"
 import * as url from "node:url"
-import { customCanister, type TaskCtxShape } from "@ice.ts/runner"
+import { canister, type TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./cycles_wallet.types"
 
 export type {
@@ -21,10 +21,10 @@ const CyclesWalletIds = {
 }
 
 export const CyclesWallet = (
-  initArgsOrFn?: WrapperInitArgs | ((args: { ctx: TaskCtxShape }) => WrapperInitArgs),
+  initArgsOrFn?: WrapperInitArgs | ((args: { ctx: TaskCtx }) => WrapperInitArgs),
 ) => {
   // TODO: init args
-  return customCanister<_SERVICE, InitArgs>(({ ctx }) => {
+  return canister.custom<_SERVICE, InitArgs>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

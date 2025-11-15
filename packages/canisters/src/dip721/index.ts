@@ -1,8 +1,8 @@
 import { Opt } from "../types"
 import * as url from "node:url"
 import path from "node:path"
-import { customCanister } from "@ice.ts/runner"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import { canister, customCanister } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 import type { InitArgs, _SERVICE } from "./dip721.types.js"
 
@@ -22,9 +22,9 @@ const canisterName = "dip721"
 export const DIP721 = (
 	initArgsOrFn?:
 		| DIP721InitArgs
-		| ((args: { ctx: TaskCtxShape }) => DIP721InitArgs),
+		| ((args: { ctx: TaskCtx }) => DIP721InitArgs),
 ) => {
-	return customCanister<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+	return canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
 		// TODO: support async?
 		const initArgs =
 			typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn

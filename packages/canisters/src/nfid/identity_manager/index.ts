@@ -1,8 +1,8 @@
-import { Opt } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
 import { customCanister } from "@ice.ts/runner"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 import type { _SERVICE } from "./identity_manager.types.js"
 
@@ -23,9 +23,9 @@ type InitArgs = []
 const canisterName = "identity_manager"
 
 export const NFIDIdentityManager = (
-  initArgsOrFn?: NFIDIdentityManagerInitArgs | ((args: { ctx: TaskCtxShape }) => NFIDIdentityManagerInitArgs),
+  initArgsOrFn?: NFIDIdentityManagerInitArgs | ((args: { ctx: TaskCtx }) => NFIDIdentityManagerInitArgs),
 ) => {
-  return customCanister<_SERVICE, InitArgs>(({ ctx }) => {
+  return canister.custom<_SERVICE, InitArgs>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

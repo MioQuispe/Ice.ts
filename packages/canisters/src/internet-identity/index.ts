@@ -8,6 +8,7 @@ import type {
 	_SERVICE,
 } from "./internet_identity.types.js"
 import {
+	canister,
 	customCanister,
 	CustomCanisterConfig,
 	type TaskCtxShape,
@@ -47,7 +48,7 @@ export const InternetIdentity = (
 		| ((env: TaskCtx) => Partial<CustomCanisterConfig>),
 ) => {
 	// const currentNetwork = "local" // TODO: how?
-	return customCanister<_SERVICE, CanisterInitArgs>((env) => ({
+	return canister.custom<_SERVICE, CanisterInitArgs>((env) => ({
 		canisterId: InternetIdentityIds[env.ctx.network as Networks],
 		candid: path.resolve(
 			__dirname,

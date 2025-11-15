@@ -1,6 +1,6 @@
 import path from "node:path"
-import type { TaskCtxShape } from "@ice.ts/runner"
-import { customCanister, Opt } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import type {
   _SERVICE,
   InitArgList,
@@ -34,9 +34,9 @@ type WrapperInitArgs = {
 
 // TODO: implement this
 export const ICRC7NFT = (
-  initArgsOrFn?: WrapperInitArgs | ((args: { ctx: TaskCtxShape }) => WrapperInitArgs),
+  initArgsOrFn?: WrapperInitArgs | ((args: { ctx: TaskCtx }) => WrapperInitArgs),
 ) => {
-  return customCanister<_SERVICE, [ICRC7NFTInitArgs], [ICRC7NFTInitArgs]>(({ ctx }) => {
+  return canister.custom<_SERVICE, [ICRC7NFTInitArgs], [ICRC7NFTInitArgs]>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

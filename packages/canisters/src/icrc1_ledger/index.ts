@@ -10,7 +10,7 @@ import type {
 	FeatureFlags,
 	_SERVICE,
 } from "./icrc1_ledger.types"
-import { customCanister, type TaskCtxShape } from "@ice.ts/runner"
+import { canister, type TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 
 export type {
@@ -63,18 +63,23 @@ export type InitArgsSimple = {
 export const ICRC1Ledger = (
 	initArgsOrFn?:
 		| InitArgsSimple
-		| ((args: { ctx: TaskCtxShape }) => InitArgsSimple),
+		| ((args: { ctx: TaskCtx }) => InitArgsSimple),
 ) => {
-	return customCanister<_SERVICE, [LedgerArg]>(({ ctx }) => {
+	return canister.custom<_SERVICE, [LedgerArg]>(({ ctx }) => {
 		const initArgs =
-			typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
+			typeof initArgsOrFn === "function"
+				? initArgsOrFn({ ctx })
+				: initArgsOrFn
 		return {
 			canisterId: initArgs?.canisterId,
 			wasm: path.resolve(
 				__dirname,
 				`./${canisterName}/${canisterName}.wasm.gz`,
 			),
-			candid: path.resolve(__dirname, `./${canisterName}/${canisterName}.did`),
+			candid: path.resolve(
+				__dirname,
+				`./${canisterName}/${canisterName}.did`,
+			),
 		}
 	})
 }

@@ -5,10 +5,10 @@ import {
 	motokoCanister,
 	createMotokoCanister,
 	createRustCanister,
-    createScope,
-    createTask,
+	createScope,
+	createTask,
 	// customCanister,
-    createCustomCanister,
+	createCustomCanister,
 	task,
 	scope,
 } from "./builders/index.js"
@@ -27,16 +27,28 @@ export { ICReplica } from "./services/ic-replica.js"
 
 export const Ice = <T extends Partial<ICEConfig>>(
 	configOrFn: T | ((ctx: ICEConfigContext) => Promise<T>),
-) => {
+): {
+	config: T | ((ctx: ICEConfigContext) => Promise<T>)
+	canister: {
+		custom: ReturnType<typeof createCustomCanister<TaskCtx<{}, T>>>
+		motoko: ReturnType<typeof createMotokoCanister<TaskCtx<{}, T>>>
+		rust: ReturnType<typeof createRustCanister<TaskCtx<{}, T>>>
+	}
+	task: ReturnType<typeof createTask<TaskCtx<{}, T>>>
+	scope: ReturnType<typeof createScope<TaskCtx<{}, T>>>
+} => {
 	// TODO: return canister builders with types also
 	return {
-        // TODO: pass T to builders
+		// TODO: pass T to builders
 		config: configOrFn,
-		customCanister: createCustomCanister<TaskCtx<{}, T>>(),
-		motokoCanister: createMotokoCanister<TaskCtx<{}, T>>(),
-		rustCanister: createRustCanister<TaskCtx<{}, T>>(),
 		task: createTask<TaskCtx<{}, T>>(),
+		// task: task,
 		scope: createScope<TaskCtx<{}, T>>(),
+		canister: {
+			custom: createCustomCanister<TaskCtx<{}, T>>(),
+			motoko: createMotokoCanister<TaskCtx<{}, T>>(),
+			rust: createRustCanister<TaskCtx<{}, T>>(),
+		},
 	}
 }
 // const ice = Ice({
@@ -48,6 +60,11 @@ export const Ice = <T extends Partial<ICEConfig>>(
 // 		},
 // 	},
 // })
+
+// const t = ice.customCanister(ctx => ({
+// 	wasm: "bla.wasm",
+// 	candid: "bla.did",
+// })).installArgs(ctx => [])
 
 // ice.test
 

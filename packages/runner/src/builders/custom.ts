@@ -598,10 +598,12 @@ type ArgsFields<
 	P extends Record<string, Task>,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > = {
-	fn: (args: {
-		ctx: TCtx
-		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-	}) => I | Promise<I>
+	fn:
+		| ((args: {
+				ctx: TCtx
+				deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+		  }) => I | Promise<I>)
+		| I
 	customEncode:
 		| undefined
 		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
@@ -709,6 +711,45 @@ export class CustomCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): CustomCanisterBuilder<
+		I,
+		U,
+		CustomCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsValue: I,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): CustomCanisterBuilder<
+		I,
+		U,
+		CustomCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => I | Promise<I>)
+			| I,
 		{
 			customEncode,
 		}: {
@@ -733,7 +774,7 @@ export class CustomCanisterBuilder<
 
 		// const upgradeArgsFn = this.#scope.children.install_args ??
 		this.#installArgs = {
-			fn: installArgsFn,
+			fn: installArgsOrFn,
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
@@ -774,6 +815,45 @@ export class CustomCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): CustomCanisterBuilder<
+		I,
+		U,
+		CustomCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsValue: U,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): CustomCanisterBuilder<
+		I,
+		U,
+		CustomCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => U | Promise<U>)
+			| U,
 		{
 			customEncode,
 		}: {
@@ -794,7 +874,7 @@ export class CustomCanisterBuilder<
 		TCtx
 	> {
 		this.#upgradeArgs = {
-			fn: upgradeArgsFn,
+			fn: upgradeArgsOrFn,
 			customEncode,
 		}
 		// deps??
@@ -918,7 +998,7 @@ export class CustomCanisterBuilder<
 
 	make(
 		this: IsValid<S> extends true
-			? CustomCanisterBuilder<I, U, S, D, P, Config, _SERVICE>
+			? CustomCanisterBuilder<I, U, S, D, P, Config, _SERVICE, TCtx>
 			: DependencyMismatchError<S>,
 	): S {
 		// Otherwise we get a type error
@@ -929,7 +1009,8 @@ export class CustomCanisterBuilder<
 			D,
 			P,
 			Config,
-			_SERVICE
+			_SERVICE,
+			TCtx
 		>
 		const linkedChildren = linkChildren(self.#scope.children)
 		const finalScope = {
@@ -1090,31 +1171,3 @@ export const createCustomCanister = <TCtx extends TaskCtx<any, any>>() => {
 		)
 	}
 }
-
-// type TestTaskCtx = TaskCtx<
-// 	{},
-// 	{
-// 		users: {
-// 			alice: ICEUser
-// 			bob: ICEUser
-// 		}
-// 		// roles: {
-// 		// 	deployer: string
-// 		// 	minter: string
-// 		// 	controller: string
-// 		// 	treasury: string
-// 		// }
-// 	}
-// >
-
-// // TODO: should accept a Partial<ICEConfig>
-// const cc = createCustomCanister<TestTaskCtx>()
-
-// cc(async ({ ctx }) => ({
-// 	canisterId: ctx.users.alice.principal.toString(),
-//     // canisterId: ctx.roles.deployer.principal.toString(),
-// 	wasm: "wasm",
-// 	candid: "candid",
-// })).installArgs(({ ctx, deps }) => ([
-//     ctx.users.alice.principal.toString(),
-// ]))

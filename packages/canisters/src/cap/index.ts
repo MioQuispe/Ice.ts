@@ -3,7 +3,7 @@ import { idlFactory as capBucketIdlFactory } from "./cap-bucket/cap-bucket.did.j
 import { idlFactory as capRootIdlFactory } from "./cap-root/cap-root.did.js"
 import { idlFactory as capRouterIdlFactory } from "./cap-router/cap-router.did.js"
 import { idlFactory as capRouterTestIdlFactory } from "./cap-router-test/cap-router-test.did.js"
-import { customCanister, type TaskCtxShape, scope } from "@ice.ts/runner"
+import { canister, customCanister, type TaskCtx, scope } from "@ice.ts/runner"
 import type { _SERVICE as CAP_ROUTER_SERVICE } from "./cap-router/types.js"
 import type { _SERVICE as CAP_ROOT_SERVICE } from "./cap-root/types.js"
 import type { _SERVICE as CAP_BUCKET_SERVICE } from "./cap-bucket/types.js"
@@ -42,14 +42,14 @@ type CapBucketInitArgs = {
 }
 
 export const CapBucket = (
-  initArgsOrFn?: CapBucketInitArgs | ((args: { ctx: TaskCtxShape }) => CapBucketInitArgs),
+  initArgsOrFn?: CapBucketInitArgs | ((args: { ctx: TaskCtx }) => CapBucketInitArgs),
 ) => {
   // const {
   //   contract,  // Id   // Principal probably?
   //   offset = 0, // u64,
   //   next_canisters = [0], // Vec<BucketId>,
   // } = args
-  return customCanister<CAP_BUCKET_SERVICE, []>(({ ctx }) => {
+  return canister.custom<CAP_BUCKET_SERVICE, []>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {
@@ -94,13 +94,13 @@ type CapRootInitArgs = {
 }
 
 export const CapRoot = (
-  initArgsOrFn?: CapRootInitArgs | ((args: { ctx: TaskCtxShape }) => CapRootInitArgs),
+  initArgsOrFn?: CapRootInitArgs | ((args: { ctx: TaskCtx }) => CapRootInitArgs),
 ) => {
   // const {
   //   contract,
   //   writers,
   // } = args
-  return customCanister<CAP_ROOT_SERVICE, []>(({ ctx }) => {
+  return canister.custom<CAP_ROOT_SERVICE, []>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {
@@ -142,14 +142,14 @@ type CapRouterInitArgs = {
 }
 
 // Here we create the shape
-const capRouter = customCanister<CAP_ROUTER_SERVICE, []>(({ ctx }) => ({
+const capRouter = canister.custom<CAP_ROUTER_SERVICE, []>(({ ctx }) => ({
   candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
   wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
   canisterId: CapRouterIds.local,
 }))
 
 export const CapRouter = (
-  initArgsOrFn?: CapRouterInitArgs | ((args: { ctx: TaskCtxShape }) => CapRouterInitArgs),
+  initArgsOrFn?: CapRouterInitArgs | ((args: { ctx: TaskCtx }) => CapRouterInitArgs),
 ) => {
   return capRouter
     .create(({ ctx }) => {
@@ -171,7 +171,7 @@ export const CapRouter = (
 
 
 // export type CapRouterBuilder = ReturnType<typeof customCanister<[], CAP_ROUTER_SERVICE>>
-CapRouter.provides = capRouter.make().children.install
+// CapRouter.provides = capRouter.make().children.install
 
 
 // CapRouter.id = CapRouterIds
@@ -216,5 +216,5 @@ CapRouter.provides = capRouter.make().children.install
 export const Cap = scope(ctx => ({
   // bucket: CapBucket(),
   // root: CapRoot(),
-  router: CapRouter.provides,
+  router: CapRouter().make(),
 }))

@@ -1,7 +1,7 @@
-import { customCanister, Opt } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./icrc1_registry.types"
 import { Principal } from "@dfinity/principal"
 import { NFIDIdentityManager } from "../identity_manager/index.js"
@@ -25,9 +25,9 @@ type InitArgs = {
 export const NFIDIcrc1Registry = (
   initArgsOrFn?:
     | NFIDIcrc1RegistryInitArgs
-    | ((args: { ctx: TaskCtxShape }) => NFIDIcrc1RegistryInitArgs),
+    | ((args: { ctx: TaskCtx }) => NFIDIcrc1RegistryInitArgs),
 ) =>
-  customCanister<_SERVICE, [InitArgs]>(({ ctx }) => {
+  canister.custom<_SERVICE, [InitArgs]>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

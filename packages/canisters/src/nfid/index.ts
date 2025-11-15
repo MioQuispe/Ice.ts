@@ -1,4 +1,4 @@
-import { scope } from "@ice.ts/runner"
+import { scope, type TaskCtx } from "@ice.ts/runner"
 import { NFIDDelegationFactory } from "./delegation_factory/index.js"
 import { NFIDIcrc1Oracle } from "./icrc1_oracle/index.js"
 import { NFIDIcrc1Registry } from "./icrc1_registry/index.js"

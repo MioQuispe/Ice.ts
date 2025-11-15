@@ -1,7 +1,7 @@
 import * as url from "node:url"
 import path from "node:path"
 import { Principal } from "@dfinity/principal"
-import { customCanister, type TaskCtxShape } from "@ice.ts/runner"
+import { canister, type TaskCtx } from "@ice.ts/runner"
 import { CapRouter } from "../cap"
 import type { _SERVICE } from "./candid_ui.types"
 import { Effect } from "effect"
@@ -19,7 +19,7 @@ type CanisterInitArgs = []
 const canisterName = "candid_ui"
 
 export const CandidUI = () => {
-	const result = customCanister<_SERVICE, CanisterInitArgs>(
+	const result = canister.custom<_SERVICE, CanisterInitArgs>(
 		async ({ ctx }) => {
 			return {
 				wasm: path.resolve(

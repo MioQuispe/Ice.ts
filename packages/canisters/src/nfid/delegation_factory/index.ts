@@ -1,8 +1,8 @@
-import { Opt } from "@ice.ts/runner"
+import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
 import { customCanister } from "@ice.ts/runner"
-import type { TaskCtxShape } from "@ice.ts/runner"
+import type { TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./delegation_factory.types"
 import { NFIDIdentityManager } from "../identity_manager/index.js"
 import { Principal } from "@dfinity/principal"
@@ -23,10 +23,10 @@ const canisterName = "delegation_factory"
 export const NFIDDelegationFactory = (
   initArgsOrFn?:
     | NFIDDelegationFactoryInitArgs
-    | ((args: { ctx: TaskCtxShape }) => NFIDDelegationFactoryInitArgs),
+    | ((args: { ctx: TaskCtx }) => NFIDDelegationFactoryInitArgs),
 ) => {
   //   return customCanister<[Opt<InitArgs>], _SERVICE>((ctx) => {
-  return customCanister<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+  return canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
     const initArgs =
       typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
     return {

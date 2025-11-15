@@ -635,10 +635,12 @@ type ArgsFields<
 	P extends Record<string, Task>,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > = {
-	fn: (args: {
-		ctx: TCtx
-		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-	}) => I | Promise<I>
+	fn:
+		| ((args: {
+				ctx: TCtx
+				deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+		  }) => I | Promise<I>)
+		| I
 	customEncode:
 		| undefined
 		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
@@ -731,6 +733,45 @@ export class MotokoCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): MotokoCanisterBuilder<
+		I,
+		U,
+		MotokoCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsValue: I,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): MotokoCanisterBuilder<
+		I,
+		U,
+		MotokoCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => I | Promise<I>)
+			| I,
 		{
 			customEncode,
 		}: {
@@ -751,7 +792,7 @@ export class MotokoCanisterBuilder<
 		TCtx
 	> {
 		this.#installArgs = {
-			fn: installArgsFn,
+			fn: installArgsOrFn,
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
@@ -785,6 +826,45 @@ export class MotokoCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): MotokoCanisterBuilder<
+		I,
+		U,
+		MotokoCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsValue: U,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): MotokoCanisterBuilder<
+		I,
+		U,
+		MotokoCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => U | Promise<U>)
+			| U,
 		{
 			customEncode,
 		}: {
@@ -805,7 +885,7 @@ export class MotokoCanisterBuilder<
 		TCtx
 	> {
 		this.#upgradeArgs = {
-			fn: upgradeArgsFn,
+			fn: upgradeArgsOrFn,
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
@@ -904,7 +984,7 @@ export class MotokoCanisterBuilder<
 
 	make(
 		this: IsValid<S> extends true
-			? MotokoCanisterBuilder<I, U, S, D, P, Config, _SERVICE>
+			? MotokoCanisterBuilder<I, U, S, D, P, Config, _SERVICE, TCtx>
 			: DependencyMismatchError<S>,
 	): S {
 		// // Otherwise we get a type error
@@ -915,7 +995,8 @@ export class MotokoCanisterBuilder<
 			D,
 			P,
 			Config,
-			_SERVICE
+			_SERVICE,
+			TCtx
 		>
 
 		// TODO: can we do this in a type-safe way?

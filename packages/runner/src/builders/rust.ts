@@ -677,10 +677,12 @@ type ArgsFields<
 	P extends Record<string, Task>,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > = {
-	fn: (args: {
-		ctx: TCtx
-		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
-	}) => I | Promise<I>
+	fn:
+		| ((args: {
+				ctx: TCtx
+				deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+		  }) => I | Promise<I>)
+		| I
 	customEncode:
 		| undefined
 		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
@@ -773,6 +775,45 @@ export class RustCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): RustCanisterBuilder<
+		I,
+		U,
+		RustCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsValue: I,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): RustCanisterBuilder<
+		I,
+		U,
+		RustCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	installArgs(
+		installArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => I | Promise<I>)
+			| I,
 		{
 			customEncode,
 		}: {
@@ -793,7 +834,7 @@ export class RustCanisterBuilder<
 		TCtx
 	> {
 		this.#installArgs = {
-			fn: installArgsFn,
+			fn: installArgsOrFn,
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
@@ -827,6 +868,45 @@ export class RustCanisterBuilder<
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): RustCanisterBuilder<
+		I,
+		U,
+		RustCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsValue: U,
+		options?: {
+			customEncode:
+				| undefined
+				| ((args: U) => Promise<Uint8Array<ArrayBufferLike>>)
+		},
+	): RustCanisterBuilder<
+		I,
+		U,
+		RustCanisterScope<_SERVICE, I, U, D, P>,
+		D,
+		P,
+		Config,
+		_SERVICE,
+		TCtx
+	>
+	upgradeArgs(
+		upgradeArgsOrFn:
+			| ((args: {
+					ctx: TCtx
+					deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+			  }) => U | Promise<U>)
+			| U,
 		{
 			customEncode,
 		}: {
@@ -847,7 +927,7 @@ export class RustCanisterBuilder<
 		TCtx
 	> {
 		this.#upgradeArgs = {
-			fn: upgradeArgsFn,
+			fn: upgradeArgsOrFn,
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
@@ -946,7 +1026,7 @@ export class RustCanisterBuilder<
 
 	make(
 		this: IsValid<S> extends true
-			? RustCanisterBuilder<I, U, S, D, P, Config, _SERVICE>
+			? RustCanisterBuilder<I, U, S, D, P, Config, _SERVICE, TCtx>
 			: DependencyMismatchError<S>,
 	): S {
 		const self = this as RustCanisterBuilder<
@@ -956,7 +1036,8 @@ export class RustCanisterBuilder<
 			D,
 			P,
 			Config,
-			_SERVICE
+			_SERVICE,
+			TCtx
 		>
 
 		const linkedChildren = linkChildren(self.#scope.children)
