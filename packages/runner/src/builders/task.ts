@@ -189,12 +189,14 @@ type TaskBuilderOmit<
 	S extends BuilderMethods,
 	T extends Task,
 	TP extends AddNameToParams<InputParams>,
-> = Pick<TaskBuilder<S, T, TP>, Next<S>>
+	TCtx extends TaskCtx<any, any> = TaskCtx,
+> = Pick<TaskBuilder<S, T, TP, TCtx>, Next<S>>
 
 class TaskBuilder<
 	S extends BuilderMethods,
 	T extends Task,
 	TP extends AddNameToParams<InputParams>,
+	TCtx extends TaskCtx<any, any> = TaskCtx,
 > {
 	#task: T
 	constructor(task: T) {
@@ -236,7 +238,8 @@ class TaskBuilder<
 		return new TaskBuilder(updatedTask) as unknown as TaskBuilderOmit<
 			S | "params",
 			typeof updatedTask,
-			typeof updatedParams
+			typeof updatedParams,
+			TCtx
 		>
 	}
 
@@ -248,10 +251,11 @@ class TaskBuilder<
 			...this.#task,
 			dependencies: updatedDeps,
 		} satisfies Task as MergeTaskDependencies<T, NP>
-		return new TaskBuilder(updatedTask) as TaskBuilderOmit<
+		return new TaskBuilder(updatedTask) as unknown as TaskBuilderOmit<
 			S | "deps",
 			typeof updatedTask,
-			TP
+			TP,
+			TCtx
 		>
 	}
 
@@ -260,23 +264,24 @@ class TaskBuilder<
 		ND extends NormalizeDeps<UD>,
 	>(
 		dependencies: UD,
-	): TaskBuilderOmit<S | "dependsOn", MergeTaskDependsOn<T, ND>, TP> {
+	): TaskBuilderOmit<S | "dependsOn", MergeTaskDependsOn<T, ND>, TP, TCtx> {
 		const updatedDeps = normalizeDepsMap(dependencies) as ND
 		const updatedTask = {
 			...this.#task,
 			dependsOn: updatedDeps,
 		} satisfies Task as MergeTaskDependsOn<T, ND>
-		return new TaskBuilder(updatedTask) as TaskBuilderOmit<
+		return new TaskBuilder(updatedTask) as unknown as TaskBuilderOmit<
 			S | "dependsOn",
 			typeof updatedTask,
-			TP
+			TP,
+			TCtx
 		>
 	}
 
 	run<Output>(
 		fn: (env: {
 			args: ExtractArgsFromTaskParams<TP>
-			ctx: TaskCtx<ExtractArgsFromTaskParams<TP>>
+			ctx: TCtx
 			deps: ExtractScopeSuccesses<T["dependencies"]> &
 				ExtractScopeSuccesses<T["dependsOn"]>
 		}) => Promise<Output> | Output,
@@ -293,9 +298,7 @@ class TaskBuilder<
 						)
 						const maybePromise = fn({
 							args: taskCtx.args as ExtractArgsFromTaskParams<TP>,
-							ctx: taskCtx as TaskCtx<
-								ExtractArgsFromTaskParams<TP>
-							>,
+							ctx: taskCtx as TCtx,
 							deps: deps as ExtractScopeSuccesses<
 								T["dependencies"]
 							> &
@@ -325,10 +328,11 @@ class TaskBuilder<
 		// TODO: unknown params?
 		// newTask.params
 
-		return new TaskBuilder(newTask) as TaskBuilderOmit<
+		return new TaskBuilder(newTask) as unknown as TaskBuilderOmit<
 			S | "run",
 			typeof newTask,
-			TP
+			TP,
+			TCtx
 		>
 	}
 
@@ -354,5 +358,44 @@ export function task(description = "") {
 		positionalParams: [],
 		effect: async (ctx) => {},
 	} satisfies Task
-	return new TaskBuilder<Start, typeof baseTask, {}>(baseTask)
+	return new TaskBuilder<Start, typeof baseTask, {}, TaskCtx>(baseTask)
+}
+
+/**
+ * Creates a typed task builder with a specific TaskCtx type.
+ * Use this to get autocomplete for the ctx parameter in the run function.
+ * 
+ * @example
+ * ```ts
+ * interface MyTaskCtx extends TaskCtx {
+ *   users: {
+ *     alice: ICEUser
+ *     bob: ICEUser
+ *   }
+ * }
+ * 
+ * const taskCtx = createTask<MyTaskCtx>()
+ * 
+ * taskCtx()
+ *   .run(({ctx}) => {
+ *     ctx.users.alice.principal // ✅ Full autocomplete!
+ *   })
+ * ```
+ */
+export const createTask = <TCtx extends TaskCtx<any, any>>() => {
+	return (description = "") => {
+		const baseTask = {
+			_tag: "task",
+			id: Symbol("task"),
+			description,
+			dependsOn: {},
+			dependencies: {},
+			tags: [],
+			params: {},
+			namedParams: {},
+			positionalParams: [],
+			effect: async (ctx) => {},
+		} satisfies Task
+		return new TaskBuilder<Start, typeof baseTask, {}, TCtx>(baseTask)
+	}
 }

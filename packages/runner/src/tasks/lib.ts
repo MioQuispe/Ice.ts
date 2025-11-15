@@ -489,7 +489,7 @@ export const logDetailedError = (
 					.join(":"),
 				appDir: taskCtx.appDir,
 				iceDir: taskCtx.iceDir,
-				currentNetwork: taskCtx.currentNetwork,
+				network: taskCtx.network,
 				dependencies: Object.keys(taskCtx.depResults),
 			}
 		}).pipe(

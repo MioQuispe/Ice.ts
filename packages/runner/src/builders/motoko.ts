@@ -633,9 +633,10 @@ type ArgsFields<
 	I,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
+	TCtx extends TaskCtx<any, any> = TaskCtx,
 > = {
 	fn: (args: {
-		ctx: TaskCtx
+		ctx: TCtx
 		deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 	}) => I | Promise<I>
 	customEncode:
@@ -651,16 +652,17 @@ export class MotokoCanisterBuilder<
 	P extends Record<string, Task>,
 	Config extends MotokoCanisterConfig,
 	_SERVICE = unknown,
+	TCtx extends TaskCtx<any, any> = TaskCtx,
 > {
 	#scope: S
 	#builderLayer: BuilderLayer
-	#installArgs: ArgsFields<I, D, P>
-	#upgradeArgs: ArgsFields<U, D, P>
+	#installArgs: ArgsFields<I, D, P, TCtx>
+	#upgradeArgs: ArgsFields<U, D, P, TCtx>
 	constructor(
 		builderLayer: BuilderLayer,
 		scope: S,
-		installArgs: ArgsFields<I, D, P>,
-		upgradeArgs: ArgsFields<U, D, P>,
+		installArgs: ArgsFields<I, D, P, TCtx>,
+		upgradeArgs: ArgsFields<U, D, P, TCtx>,
 	) {
 		this.#builderLayer = builderLayer
 		this.#scope = scope
@@ -670,8 +672,8 @@ export class MotokoCanisterBuilder<
 	create(
 		canisterConfigOrFn:
 			| Config
-			| ((args: { ctx: TaskCtx }) => Config)
-			| ((args: { ctx: TaskCtx }) => Promise<Config>),
+			| ((args: { ctx: TCtx }) => Config)
+			| ((args: { ctx: TCtx }) => Promise<Config>),
 	): MotokoCanisterBuilder<
 		I,
 		U,
@@ -679,11 +681,12 @@ export class MotokoCanisterBuilder<
 		D,
 		P,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		const config = makeConfigTask<Config>(
 			this.#builderLayer,
-			canisterConfigOrFn,
+			canisterConfigOrFn as any,
 		)
 		const updatedScope = {
 			...this.#scope,
@@ -711,7 +714,8 @@ export class MotokoCanisterBuilder<
 		D,
 		P,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		// no-op; build is derived from config
 		return new MotokoCanisterBuilder(
@@ -724,7 +728,7 @@ export class MotokoCanisterBuilder<
 
 	installArgs(
 		installArgsFn: (args: {
-			ctx: TaskCtx
+			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => I | Promise<I>,
 		{
@@ -743,7 +747,8 @@ export class MotokoCanisterBuilder<
 		D,
 		P,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		this.#installArgs = {
 			fn: installArgsFn,
@@ -751,8 +756,8 @@ export class MotokoCanisterBuilder<
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
 			this.#builderLayer,
-			this.#installArgs,
-			this.#upgradeArgs,
+			this.#installArgs as any,
+			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
 		)
 		const updatedScope = {
@@ -777,7 +782,7 @@ export class MotokoCanisterBuilder<
 
 	upgradeArgs(
 		upgradeArgsFn: (args: {
-			ctx: TaskCtx
+			ctx: TCtx
 			deps: ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 		}) => U | Promise<U>,
 		{
@@ -796,7 +801,8 @@ export class MotokoCanisterBuilder<
 		D,
 		P,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		this.#upgradeArgs = {
 			fn: upgradeArgsFn,
@@ -804,8 +810,8 @@ export class MotokoCanisterBuilder<
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
 			this.#builderLayer,
-			this.#installArgs,
-			this.#upgradeArgs,
+			this.#installArgs as any,
+			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
 		)
 		const updatedScope = {
@@ -833,11 +839,12 @@ export class MotokoCanisterBuilder<
 		D,
 		NP,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		const finalDeps = normalizeDepsMap(providedDeps) as NP
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, D, NP>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, D, NP>
+		const installArgs = this.#installArgs as unknown as ArgsFields<I, D, NP, TCtx>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, D, NP, TCtx>
 		const install_args = {
 			...this.#scope.children.install_args,
 			dependencies: finalDeps,
@@ -870,11 +877,12 @@ export class MotokoCanisterBuilder<
 		ND,
 		P,
 		Config,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	> {
 		const updatedDependsOn = normalizeDepsMap(dependencies) as ND
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, ND, P>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, ND, P>
+		const installArgs = this.#installArgs as unknown as ArgsFields<I, ND, P, TCtx>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, ND, P, TCtx>
 		const updatedChildren = {
 			...this.#scope.children,
 			install_args: {
@@ -927,14 +935,15 @@ export const makeMotokoCanister = <
 	_SERVICE = unknown,
 	I = unknown,
 	U = unknown,
+	TCtx extends TaskCtx<any, any> = TaskCtx,
 >(
 	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| MotokoCanisterConfig
-		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
-		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>),
+		| ((args: { ctx: TCtx }) => MotokoCanisterConfig)
+		| ((args: { ctx: TCtx }) => Promise<MotokoCanisterConfig>),
 ) => {
-	const config = makeConfigTask(builderLayer, canisterConfigOrFn)
+	const config = makeConfigTask(builderLayer, canisterConfigOrFn as any)
 
 	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
 		builderLayer,
@@ -962,7 +971,7 @@ export const makeMotokoCanister = <
 			),
 			deploy: makeMotokoDeployTask<_SERVICE>(
 				builderLayer,
-				canisterConfigOrFn,
+				canisterConfigOrFn as any,
 			),
 			status: makeCanisterStatusTask(builderLayer, [Tags.MOTOKO]),
 		},
@@ -977,7 +986,8 @@ export const makeMotokoCanister = <
 		{},
 		{},
 		MotokoCanisterConfig,
-		_SERVICE
+		_SERVICE,
+		TCtx
 	>(builderLayer, initialScope, installArgs, upgradeArgs)
 }
 
@@ -995,4 +1005,26 @@ export const motokoCanister = <
 		baseLayer as BuilderLayer,
 		canisterConfigOrFn,
 	)
+}
+
+/**
+ * Creates a typed motokoCanister builder with a specific TaskCtx type.
+ * Use this to get autocomplete for the ctx parameter in all callback functions.
+ */
+export const createMotokoCanister = <TCtx extends TaskCtx<any, any>>() => {
+	return <
+		_SERVICE = unknown,
+		I extends unknown[] = unknown[],
+		U extends unknown[] = unknown[],
+	>(
+		canisterConfigOrFn:
+			| MotokoCanisterConfig
+			| ((args: { ctx: TCtx }) => MotokoCanisterConfig)
+			| ((args: { ctx: TCtx }) => Promise<MotokoCanisterConfig>),
+	) => {
+		return makeMotokoCanister<_SERVICE, I, U, TCtx>(
+			baseLayer as BuilderLayer,
+			canisterConfigOrFn,
+		)
+	}
 }

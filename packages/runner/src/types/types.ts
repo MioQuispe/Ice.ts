@@ -37,7 +37,7 @@ export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
 >
 
 export type ReplicaConfig = {
-    // TODO: use pocket-ic subnet config
+	// TODO: use pocket-ic subnet config
 	subnet: "system" | "application" | "verified_application"
 	// type?: "ephemeral" | "persistent"
 	bitcoin?: boolean
@@ -59,6 +59,24 @@ export type ICEConfig = {
 	}
 	roles: {
 		[key: string]: string
+	}
+	networks: {
+		[key: string]: {
+			replica: ReplicaServiceClass
+		}
+	}
+}
+
+export type DefaultICEConfig = {
+	readonly users: {
+		[name: string]: ICEUser
+	}
+	readonly roles: {
+		deployer: string
+		minter: string
+		controller: string
+		treasury: string
+		[name: string]: string
 	}
 	networks: {
 		[key: string]: {
@@ -149,10 +167,7 @@ export type CachedTask<
 > = Task<A, D, P> & {
 	input: (taskCtx: TaskCtx) => Promise<Input | TaskCancelled> // optional input
 	computeCacheKey: (input: Input) => string
-	revalidate?: (
-		taskCtx: TaskCtx,
-		args: { input: Input },
-	) => Promise<boolean>
+	revalidate?: (taskCtx: TaskCtx, args: { input: Input }) => Promise<boolean>
 	// TODO: rename to codec and create adapters for zod etc.
 	encodingFormat: "string" | "uint8array"
 	encode: (
@@ -178,6 +193,16 @@ export type Scope = {
 	// this is just the modules default export
 	defaultTask?: string
 }
+export type ScopeEval = {
+	_tag: "scope"
+	readonly id: symbol
+	// TODO: hmm do we need this?
+	tags: Array<string | symbol>
+	description: string
+	children: (ctx: TaskCtx) => Record<string, TaskTreeNodeEval>
+	// this is just the modules default export
+	defaultTask?: string
+}
 
 export type BuilderResult = {
 	_tag: "builder"
@@ -185,7 +210,10 @@ export type BuilderResult = {
 	[key: string]: any
 }
 
-export type TaskTreeNode = Task | Scope | BuilderResult
+export type TaskTreeNodeEval = Task | Scope | ScopeEval | BuilderResult
+export type TaskTreeEval = Record<string, TaskTreeNodeEval>
+
+export type TaskTreeNode = Task | Scope
 
 export type TaskTree = Record<string, TaskTreeNode>
 
@@ -201,7 +229,9 @@ export type ICEConfigContext = {
 export type ICEConfigFile = {
 	default:
 		| Partial<ICEConfig>
-		| ((ctx: ICEConfigContext) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
+		| ((
+				ctx: ICEConfigContext,
+		  ) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
 } & {
 	[key: string]: TaskTreeNode
 }

@@ -2,18 +2,23 @@ import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
 	ICEConfig,
 	ICEConfigFile,
+	Scope,
+	ScopeEval,
 	TaskTree,
+	TaskTreeEval,
 	TaskTreeNode,
+	TaskTreeNodeEval,
 } from "../types/types.js"
 import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
 import { InstallModes, ReplicaStartError } from "./replica.js"
 import { LogLevel } from "effect/LogLevel"
 import { IceDir } from "./iceDir.js"
+import { TaskCtx } from "./taskRuntime.js"
 
 export const removeBuilders = (
-	taskTree: TaskTree | TaskTreeNode,
-): TaskTree | TaskTreeNode => {
+	taskTree: TaskTreeEval | TaskTreeNodeEval,
+): TaskTreeEval | TaskTreeNodeEval => {
 	if ("_tag" in taskTree && taskTree._tag === "builder") {
 		return removeBuilders(taskTree.make())
 	}
@@ -25,8 +30,8 @@ export const removeBuilders = (
 					key,
 					removeBuilders(value),
 				]),
-			) as Record<string, TaskTreeNode>,
-		}
+			) as Record<string, TaskTreeNodeEval>,
+		} as ScopeEval | Scope
 	}
 	if ("_tag" in taskTree && taskTree._tag === "task") {
 		return taskTree
@@ -36,10 +41,48 @@ export const removeBuilders = (
 			key,
 			removeBuilders(value),
 		]),
-	) as TaskTree
+	) as TaskTreeEval
 }
 
-const applyPlugins = (taskTree: TaskTree) =>
+// export const evalScopes = (
+// 	taskTree: TaskTreeEval | TaskTreeNodeEval,
+// ): TaskTree | TaskTreeNode => {
+// 	if ("_tag" in taskTree && taskTree._tag === "scope") {
+// 		// children: Object.fromEntries(
+// 		// 	Object.entries(taskTree.children).map(([key, value]) => [
+// 		// 		key,
+// 		// 		evalScopes(value),
+// 		// 	]),
+// 		// ) as Record<string, TaskTreeNode>,
+
+// 		// TODO: ?? get ctx from somewhere
+// 		const ctx = {} as TaskCtx
+// 		const children =
+// 			typeof taskTree.children === "function"
+// 				? taskTree.children(ctx)
+// 				: taskTree.children
+// 		return {
+// 			...taskTree,
+// 			children: Object.fromEntries(
+// 				Object.entries(children).map(([key, value]) => [
+// 					key,
+// 					evalScopes(value),
+// 				]),
+// 			) as Record<string, TaskTreeNode>,
+// 		}
+// 	}
+// 	if ("_tag" in taskTree && taskTree._tag === "task") {
+// 		return taskTree
+// 	}
+// 	return Object.fromEntries(
+// 		Object.entries(taskTree).map(([key, value]) => [
+// 			key,
+// 			evalScopes(value),
+// 		]),
+// 	) as TaskTree
+// }
+
+const applyPlugins = (taskTree: TaskTreeEval) =>
 	Effect.gen(function* () {
 		yield* Effect.logDebug("Applying plugins...")
 		const transformedTaskTree = removeBuilders(taskTree) as TaskTree
@@ -92,7 +135,6 @@ const createService = (globalArgs: {
 		const taskTree = Object.fromEntries(
 			Object.entries(mod).filter(([key]) => key !== "default"),
 		) as TaskTree
-		const transformedTaskTree = yield* applyPlugins(taskTree)
 		const iceCtx = { iceDirPath, ...globalArgs }
 		let config: Partial<ICEConfig>
 		const d = mod.default
@@ -116,6 +158,7 @@ const createService = (globalArgs: {
 		} else {
 			config = d
 		}
+		const transformedTaskTree = yield* applyPlugins(taskTree)
 		return {
 			taskTree: transformedTaskTree,
 			config,

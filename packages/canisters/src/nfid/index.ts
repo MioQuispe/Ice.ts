@@ -37,7 +37,7 @@ export const NFID = () => {
     NFIDIdentityManager: identityManager.children.install,
   }).make()
 
-  return scope("NFID tasks", {
+  return scope(ctx => ({
     identityManager,
     delegationFactory,
     icrc1Oracle,
@@ -45,5 +45,5 @@ export const NFID = () => {
     storage,
     signerIc,
     swapTrsStorage,
-  })
+  }))
 }

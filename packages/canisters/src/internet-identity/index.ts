@@ -7,7 +7,12 @@ import type {
 	InternetIdentityInit,
 	_SERVICE,
 } from "./internet_identity.types.js"
-import { customCanister, type TaskCtxShape } from "@ice.ts/runner"
+import {
+	customCanister,
+	CustomCanisterConfig,
+	type TaskCtxShape,
+} from "@ice.ts/runner"
+import { TaskCtx } from "@ice.ts/runner/dist/services/taskRuntime"
 // TODO: make subtasks easily overrideable. maybe helpers like withInstall(). or just let users keep chaining the builder api
 type InitArgsSimple = {
 	owner: string
@@ -25,6 +30,7 @@ const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 const InternetIdentityIds = {
 	local: "rdmx6-jaaaa-aaaaa-aaadq-cai",
 	ic: "rdmx6-jaaaa-aaaaa-aaadq-cai",
+	staging: "rdmx6-jaaaa-aaaaa-aaadq-cai",
 }
 
 export type CanisterInitArgs = [
@@ -33,10 +39,16 @@ export type CanisterInitArgs = [
 	}>,
 ]
 
+type Networks = "local" | "ic" | "staging"
+
 export const InternetIdentity = (
+	ConfigOrFn?:
+		| Partial<CustomCanisterConfig>
+		| ((env: TaskCtx) => Partial<CustomCanisterConfig>),
 ) => {
-	return customCanister<_SERVICE, CanisterInitArgs>({
-		canisterId: InternetIdentityIds.local,
+	// const currentNetwork = "local" // TODO: how?
+	return customCanister<_SERVICE, CanisterInitArgs>((env) => ({
+		canisterId: InternetIdentityIds[env.ctx.network as Networks],
 		candid: path.resolve(
 			__dirname,
 			"./internet-identity/internet_identity.did",
@@ -45,7 +57,10 @@ export const InternetIdentity = (
 			__dirname,
 			"./internet-identity/internet_identity.wasm.gz",
 		),
-	})
+		...(ConfigOrFn && typeof ConfigOrFn === "function"
+			? ConfigOrFn(env.ctx)
+			: ConfigOrFn),
+	}))
 }
 
 InternetIdentity.makeArgs = (initArgs: InitArgsSimple): CanisterInitArgs => {

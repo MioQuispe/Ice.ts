@@ -99,7 +99,7 @@ export const isTaskCancelled = Match.type<unknown>().pipe(
 
 export const loadCanisterId = (taskCtx: TaskCtx, taskPath: string) =>
 	Effect.gen(function* () {
-		const { currentNetwork } = taskCtx
+		const { network } = taskCtx
 		const canisterName = taskPath.split(":").slice(0, -1).join(":")
 		// const canisterIdsService = yield* CanisterIdsService
 		const canisterIds = yield* Effect.tryPromise({
@@ -108,7 +108,7 @@ export const loadCanisterId = (taskCtx: TaskCtx, taskPath: string) =>
 				return new TaskError({ message: String(error) })
 			},
 		})
-		const canisterId = canisterIds[canisterName]?.[currentNetwork]
+		const canisterId = canisterIds[canisterName]?.[network]
 		if (canisterId) {
 			return Option.some(canisterId as string)
 		}
@@ -260,7 +260,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					const path = yield* Path.Path
 					const fs = yield* FileSystem.FileSystem
 					// const canisterIdsService = yield* CanisterIdsService
-					const currentNetwork = taskCtx.currentNetwork
+					const network = taskCtx.network
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
@@ -275,7 +275,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					// const storedCanisterIds =
 					// 	yield* canisterIdsService.getCanisterIds()
 					const storedCanisterId =
-						storedCanisterIds[canisterName]?.[currentNetwork]
+						storedCanisterIds[canisterName]?.[network]
 					yield* Effect.logDebug("makeCreateTask", {
 						storedCanisterId,
 					})
@@ -292,6 +292,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					// and how about mainnet?
 					const resolvedCanisterId =
 						storedCanisterId ?? configCanisterId
+
 					const {
 						roles: {
 							deployer: { identity },
@@ -464,7 +465,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						try: () =>
 							taskCtx.canisterIds.setCanisterId({
 								canisterName,
-								network: taskCtx.currentNetwork,
+								network: taskCtx.network,
 								canisterId,
 							}),
 						catch: (error) => {
@@ -511,7 +512,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						.join(":")
 					const input = {
 						canisterName,
-						network: taskCtx.currentNetwork,
+						network: taskCtx.network,
 					}
 					return input
 				})(),
@@ -522,7 +523,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					const {
 						replica,
 						roles: { deployer },
-						currentNetwork,
+						network,
 						taskPath,
 					} = taskCtx
 					const canisterName = taskPath
@@ -546,7 +547,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					// const storedCanisterIds =
 					// 	yield* canisterIdsService.getCanisterIds()
 					const storedCanisterId =
-						storedCanisterIds[canisterName]?.[currentNetwork]
+						storedCanisterIds[canisterName]?.[network]
 					// TODO: handle changes to configCanisterId
 					// Prefer an existing/stored id; fallback to config-provided id; may be undefined on first run
 					const resolvedCanisterId =
@@ -1332,7 +1333,7 @@ export const makeCanisterStatusTask = (
 			runtime.runPromise(
 				Effect.fn("task_effect")(function* () {
 					// TODO:
-					const { replica, currentNetwork } = taskCtx
+					const { replica, network } = taskCtx
 					const { taskPath } = taskCtx
 					const canisterName = taskPath
 						.split(":")
@@ -1356,7 +1357,7 @@ export const makeCanisterStatusTask = (
 							info: undefined,
 						}
 					}
-					const canisterId = canisterIds[currentNetwork]
+					const canisterId = canisterIds[network]
 					if (!canisterId) {
 						// TODO: fix format
 						return {
@@ -1411,7 +1412,7 @@ export const resolveMode = (
 		const {
 			replica,
 			args,
-			currentNetwork,
+			network,
 			roles: {
 				deployer: { identity },
 			},
@@ -1430,7 +1431,7 @@ export const resolveMode = (
 		})
 		// const canisterIdsMap = yield* canisterIdsService.getCanisterIds()
 		const canisterId =
-			canisterIdsMap[canisterName]?.[currentNetwork] ?? configCanisterId
+			canisterIdsMap[canisterName]?.[network] ?? configCanisterId
 		// TODO: use Option.Option?
 		// 🔁 resolveMode – wrap getCanisterInfo (+ keep your catchTag branch)
 		const canisterInfo = canisterId
@@ -1464,7 +1465,7 @@ export const resolveMode = (
 		const lastDeployment = Option.fromNullable(
 			yield* Effect.tryPromise({
 				try: () =>
-					taskCtx.deployments.get(canisterName, currentNetwork),
+					taskCtx.deployments.get(canisterName, network),
 				catch: (error) => {
 					return new TaskError({ message: String(error) })
 				},
@@ -1976,14 +1977,14 @@ export const makeInstallArgsTask = <
 						dependencies,
 						(dep) => dep.cacheKey,
 					)
-					const { currentNetwork } = taskCtx
+					const { network } = taskCtx
 					const mode = taskArgs.mode
 
 					// const taskRegistry = yield* TaskRegistry
 					// TODO: we need a separate cache for this?
 					const input = {
 						canisterName,
-						network: currentNetwork,
+						network,
 						mode,
 						depCacheKeys,
 						installArgsFn: installArgs.fn,
@@ -2255,7 +2256,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						try: () =>
 							taskCtx.deployments.set({
 								canisterName,
-								network: taskCtx.currentNetwork,
+								network: taskCtx.network,
 								deployment: {
 									installArgsHash: hashConfig(installArgs.fn),
 									upgradeArgsHash: hashConfig(upgradeArgs.fn),
@@ -2374,7 +2375,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const canisterId = maybeCanisterId.value
 
 					const {
-						currentNetwork,
+						network,
 						// replica,
 						// roles: {
 						// 	deployer: { identity },
@@ -2400,7 +2401,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						try: () =>
 							taskCtx.deployments.get(
 								canisterName,
-								currentNetwork,
+								network,
 							),
 						catch: (error) => {
 							return new TaskError({ message: String(error) })
@@ -2437,7 +2438,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const input = {
 						canisterId,
 						// canisterName,
-						network: currentNetwork,
+						network,
 						computedMode,
 						resolvedMode,
 						wasmDigest,
@@ -2471,7 +2472,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						try: () =>
 							taskCtx.deployments.get(
 								canisterName,
-								taskCtx.currentNetwork,
+								taskCtx.network,
 							),
 						catch: (error) => {
 							return new TaskError({ message: String(error) })

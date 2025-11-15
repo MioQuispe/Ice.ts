@@ -464,7 +464,7 @@ export const NNSRegistry = (
 				// encoding is broken
 				const idlFactory = undefined as any
 				// return args
-				const encodedInitPayload = encodeArgs(args, {
+				const encodedInitPayload = encodeArgs(args as unknown[], {
 					init: ({ IDL }) => {
 					// build IDL types exactly as declared above
 					const RegistryMutation = IDL.Record({
@@ -1133,17 +1133,17 @@ NNSLifeline.id = NNSLifelineIds
 // TODO: init args
 // Define an overall scope that groups these NNS tasks
 export const NNS = () =>
-	scope("NNS tasks", {
+	scope(ctx => ({
 		NNSDapp: NNSDapp().make(),
 		NNSSNSWasm: NNSSNSWasm().make(),
 		NNSRoot: NNSRoot().make(),
-		// NNSRegistry: NNSRegistry().make(),
+		NNSRegistry: NNSRegistry().make(),
 		NNSGovernance: NNSGovernance().make(),
 		NNSLedger: NNSLedger().make(),
 		NNSGenesisToken: NNSGenesisToken().make(),
 		NNSCyclesMinting: NNSCyclesMinting().make(),
 		NNSLifeline: NNSLifeline().make(),
-	})
+	}))
 
 // nns-registry          rwlgt-iiaaa-aaaaa-aaaaa-cai
 // nns-governance        rrkah-fqaaa-aaaaa-aaaaq-cai

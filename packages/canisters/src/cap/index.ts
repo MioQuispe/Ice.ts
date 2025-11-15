@@ -22,9 +22,12 @@ import * as url from "node:url"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
+type Networks = "local" | "ic" | "staging"
+
 const CapBucketIds = {
   local: "r7inp-6aaaa-aaaaa-aaabq-cai",
   ic: "r7inp-6aaaa-aaaaa-aaabq-cai",
+  staging: "r7inp-6aaaa-aaaaa-aaabq-cai",
 }
 
 export type CapBucketActor = import("@dfinity/agent").ActorSubclass<
@@ -52,7 +55,7 @@ export const CapBucket = (
     return {
       candid: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.did"),
       wasm: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.wasm.gz"),
-      canisterId: CapBucketIds.local,
+      canisterId: CapBucketIds[ctx.network as Networks],
     }
   }).installArgs(async ({ ctx }) => {
     return [
@@ -139,11 +142,11 @@ type CapRouterInitArgs = {
 }
 
 // Here we create the shape
-const capRouter = customCanister<CAP_ROUTER_SERVICE, []>({
+const capRouter = customCanister<CAP_ROUTER_SERVICE, []>(({ ctx }) => ({
   candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
   wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
   canisterId: CapRouterIds.local,
-})
+}))
 
 export const CapRouter = (
   initArgsOrFn?: CapRouterInitArgs | ((args: { ctx: TaskCtxShape }) => CapRouterInitArgs),
@@ -210,8 +213,8 @@ CapRouter.provides = capRouter.make().children.install
 
 // export type CapRouterTestActor = import("@dfinity/agent").ActorSubclass<import("./cap-router-test/types")._SERVICE>
 
-export const Cap = scope("Cap", {
+export const Cap = scope(ctx => ({
   // bucket: CapBucket(),
   // root: CapRoot(),
   router: CapRouter.provides,
-})
+}))

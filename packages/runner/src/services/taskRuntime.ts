@@ -39,7 +39,7 @@ import {
 	ReplicaServiceClass,
 	ReplicaStartError,
 } from "./replica.js"
-import type { ICEConfig, ICEConfigContext } from "../types/types.js"
+import type { ICEConfigContext } from "../types/types.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { TelemetryConfig } from "./telemetryConfig.js"
 import { makeTelemetryLayer } from "./telemetryConfig.js"
@@ -56,29 +56,55 @@ import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
 import { SignIdentity } from "@dfinity/agent"
 import { ConfirmOptions } from "@clack/prompts"
+import { DefaultICEConfig, ICEConfig } from "../types/types.js"
 
-export interface TaskCtx<A extends Record<string, unknown> = {}> {
+// // TODO: rename?? duplicate type name
+// export type ICEConfig = {
+// 	users: {
+// 		[key: string]: ICEUser
+// 	}
+// 	roles: {
+// 		[key: string]: ICEUser
+// 	}
+// 	networks: {
+// 		[key: string]: {
+// 			replica: ReplicaServiceClass
+// 		}
+// 	}
+// }
+
+export type InitializedICEConfig<I extends Partial<ICEConfig>> = {
+	users: I["users"]
+	roles: {
+        [key in keyof I["roles"]]: ICEUser
+    }
+	networks: {
+		[key: string]: {
+			replica: ReplicaServiceClass
+		}
+	}
+}
+
+export type TaskCtx<
+	A extends Record<string, unknown> = {},
+	I extends Partial<ICEConfig> = DefaultICEConfig,
+> = InitializedICEConfig<I> & {
 	readonly taskTree: TaskTree
-	readonly users: {
-		[name: string]: {
-			identity: SignIdentity
-			// agent: HttpAgent
-			principal: string
-			accountId: string
-			// TODO: neurons?
-		}
-	}
-	readonly roles: {
-		deployer: ICEUser
-		minter: ICEUser
-		controller: ICEUser
-		treasury: ICEUser
-		[name: string]: {
-			identity: SignIdentity
-			principal: string
-			accountId: string
-		}
-	}
+	// readonly users: {
+	// 	[name: string]: ICEUser
+	// }
+	// readonly roles: {
+	// 	deployer: ICEUser
+	// 	minter: ICEUser
+	// 	controller: ICEUser
+	// 	treasury: ICEUser
+	// 	[name: string]: ICEUser
+	// }
+	// readonly networks: {
+	// 	[key: string]: {
+	// 		replica: ReplicaServiceClass
+	// 	}
+	// }
 
 	readonly runTask: {
 		<T extends Task>(task: T): Promise<TaskSuccess<T>>
@@ -88,13 +114,9 @@ export interface TaskCtx<A extends Record<string, unknown> = {}> {
 		): Promise<TaskSuccess<T>>
 	}
 
-	readonly currentNetwork: string
+	readonly network: string
 	readonly replica: ReplicaServiceClass
-	readonly networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
-	}
+
 	readonly args: A
 	readonly taskPath: string
 	readonly appDir: string
@@ -352,7 +374,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					},
 					replica,
 					taskTree,
-					currentNetwork,
+					network: currentNetwork,
 					networks,
 					users: {
 						...defaultConfig.users,
