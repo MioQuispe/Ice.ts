@@ -65,23 +65,10 @@ export const InternetIdentity = (
 }
 
 InternetIdentity.makeArgs = (initArgs: InitArgsSimple): CanisterInitArgs => {
-	// TODO: do we need to install the canister here also?
 	const args: InternetIdentityInit = {
 		assigned_user_number_range: initArgs.assignedUserNumberRange,
 	}
 	return [Opt(args)]
-	// }
-	// TODO: should be error, type is wrong!
-	// if (mode === "reinstall") {
-	//   return [Opt(initArgs.owner ?? null)]
-	// }
-	// if (mode === "upgrade") {
-	//   // return [Opt(initArgs.owner ?? null)]
-	// }
-	// -m, --mode <MODE>
-	// Specifies the mode of canister installation.
-	// If set to 'auto', either 'install' or 'upgrade' will be used, depending on whether the canister is already installed.
-	// [possible values: install, reinstall, upgrade, auto]
 }
 
 InternetIdentity.id = InternetIdentityIds
@@ -91,7 +78,3 @@ InternetIdentity.idlFactory = idlFactory
 export type InternetIdentityActor = ActorSubclass<
 	import("./internet_identity.types")._SERVICE
 >
-
-// InternetIdentity({ owner: "123", assignedUserNumberRange: [1n, 100n] }).installArgs(async ({ mode, ctx }) => {
-//   return [[{assigned_user_number_range: [1n, 100n]}]]
-// })

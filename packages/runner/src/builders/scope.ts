@@ -1,9 +1,9 @@
 import { TaskCtx } from "../services/taskRuntime.js"
-import { Scope, ScopeEval, TaskTreeNode, TaskTreeNodeEval } from "../types/types.js"
+import { Scope, TaskTree, TaskTreeNode } from "../types/types.js"
 import { Tags } from "./lib.js"
 
 export const scope = (
-	childrenFn: (ctx: TaskCtx) => Record<string, TaskTreeNodeEval>,
+	children: TaskTree
 ) => {
 	const scopeDefinition = {
 		_tag: "scope" as const,
@@ -11,9 +11,9 @@ export const scope = (
 		tags: [],
 		description: "Scope",
 		// defaultTask: "",
-		children: childrenFn,
+		children,
 	}
-    return scopeDefinition satisfies ScopeEval
+    return scopeDefinition satisfies Scope
 }
 
 /**
@@ -21,16 +21,16 @@ export const scope = (
  * Use this to get autocomplete for the ctx parameter in the scope function.
  */
 export const createScope = <TCtx extends TaskCtx<any, any>>() => {
-	return (childrenFn: (ctx: TCtx) => Record<string, TaskTreeNodeEval>) => {
+	return (children: TaskTree) => {
 		const scopeDefinition = {
 			_tag: "scope" as const,
 			id: Symbol("scope"),
 			tags: [],
 			description: "Scope",
 			// defaultTask: "",
-			children: childrenFn as any,
+			children,
 		}
-		return scopeDefinition satisfies ScopeEval
+		return scopeDefinition satisfies Scope
 	}
 }
 

@@ -17,7 +17,7 @@ import type {
 	log_visibility,
 } from "../canisters/management_latest/management.types.js"
 import type { DfxJson } from "../types/schema.js"
-import type { ManagementActor, ICEConfigContext } from "../types/types.js"
+import type { ICEGlobalArgs } from "../types/types.js"
 import type { PlatformError } from "@effect/platform/Error"
 import os from "node:os"
 import psList from "ps-list"
@@ -38,6 +38,10 @@ import { Opt } from "../canister.js"
 import type * as ActorTypes from "../types/actor.js"
 import type { SubnetTopology } from "@dfinity/pic"
 import { spawn, type ChildProcess } from "node:child_process"
+
+export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
+	import("../canisters/management_latest/management.types.js")._SERVICE
+>
 
 export const dfxDefaults: DfxJson = {
 	defaults: {
@@ -116,7 +120,7 @@ export class ICReplica implements ReplicaServiceClass {
 	public readonly host: string = "0.0.0.0"
 	public readonly port: number = 8080
 	public readonly manual?: boolean
-	public ctx?: ICEConfigContext
+	public ctx?: ICEGlobalArgs
 	public proc?: ChildProcess
 
 	constructor(opts: { host: string; port: number; manual?: boolean }) {
@@ -423,7 +427,7 @@ export class ICReplica implements ReplicaServiceClass {
 		return []
 	}
 
-	public async start(ctx: ICEConfigContext): Promise<void> {
+	public async start(ctx: ICEGlobalArgs): Promise<void> {
 		this.ctx = ctx
 		// TODO: implement?
 		// if (!this.manual) {
@@ -435,12 +439,12 @@ export class ICReplica implements ReplicaServiceClass {
 		// 		args.push("--background")
 		// 	}
 		// 	// args.push("--clean")
-        //     console.log("spawning dfx")
+		//     console.log("spawning dfx")
 		// 	this.proc = spawn("dfx", args, {
 		// 		cwd: ctx.iceDirPath,
 		// 	})
-        //     console.log("dfx spawned", this.proc?.pid)
-        //     await new Promise(resolve => setTimeout(resolve, 1000))
+		//     console.log("dfx spawned", this.proc?.pid)
+		//     await new Promise(resolve => setTimeout(resolve, 1000))
 		// }
 	}
 
@@ -451,14 +455,14 @@ export class ICReplica implements ReplicaServiceClass {
 		// 	if (args?.scope === "background" && this.ctx?.background) {
 		// 		this.proc?.kill("SIGTERM")
 		// 	}
-        //     if (args?.scope === "background" && !this.ctx?.background) {
+		//     if (args?.scope === "background" && !this.ctx?.background) {
 		// 		this.proc?.kill("SIGTERM")
-        //     }
-        //     if (args?.scope === "foreground" && this.ctx?.background) {
-        //     }
-        //     if (args?.scope === "foreground" && !this.ctx?.background) {
-        //         this.proc?.kill("SIGTERM")
-        //     }
+		//     }
+		//     if (args?.scope === "foreground" && this.ctx?.background) {
+		//     }
+		//     if (args?.scope === "foreground" && !this.ctx?.background) {
+		//         this.proc?.kill("SIGTERM")
+		//     }
 		// }
 	}
 }

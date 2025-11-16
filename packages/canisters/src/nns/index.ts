@@ -75,24 +75,26 @@ export const NNSDapp = (
 		| ((args: { ctx: TaskCtx }) => NNSDappInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSDappInitArgs>),
 ) => {
-	return canister.custom<NNSDappService, []>(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return {
-			canisterId: NNSDappIds.local,
-			wasm: path.resolve(__dirname, "./nns/nns-ui/nns.wasm.gz"),
-			candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
-		}
-	}).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		// Here we return an empty installation argument list.
-		return []
-	})
+	return canister
+		.custom<NNSDappService, []>(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: NNSDappIds.local,
+				wasm: path.resolve(__dirname, "./nns/nns-ui/nns.wasm.gz"),
+				candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
+			}
+		})
+		.installArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			// Here we return an empty installation argument list.
+			return []
+		})
 }
 
 NNSDapp.id = NNSDappIds
@@ -113,91 +115,96 @@ export const NNSSNSWasm = (
 		| ((args: { ctx: TaskCtx }) => SnsWasmCanisterInitPayload)
 		| ((args: { ctx: TaskCtx }) => Promise<SnsWasmCanisterInitPayload>),
 ) => {
-	return canister.custom<NNSSNSWasmService, [SnsWasmCanisterInitPayload]>(
-		async ({ ctx }) => {
+	return canister
+		.custom<NNSSNSWasmService, [SnsWasmCanisterInitPayload]>(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				return {
+					canisterId: NNSSNSWasmIds.local,
+					wasm: path.resolve(
+						__dirname,
+						"./nns/nns-sns-wasm/nns-sns-wasm.wasm.gz",
+					),
+					candid: path.resolve(
+						__dirname,
+						"./nns/nns-sns-wasm/nns-sns-wasm.did",
+					),
+				}
+			},
+		)
+		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
 					: initArgsOrFn
-			return {
-				canisterId: NNSSNSWasmIds.local,
-				wasm: path.resolve(
-					__dirname,
-					"./nns/nns-sns-wasm/nns-sns-wasm.wasm.gz",
-				),
-				candid: path.resolve(__dirname, "./nns/nns-sns-wasm/nns-sns-wasm.did"),
-			}
-		},
-	).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
 
-		return [
-			{
-				allowed_principals: [],
-				access_controls_enabled: false,
-				sns_subnet_ids: [],
-			},
-		]
-		// this is SnsInitPayload
-		// return [{
-		//   url: Opt(), // string
-		//   max_dissolve_delay_seconds: Opt(0n),
-		//   max_dissolve_delay_bonus_percentage: Opt(0n),
-		//   nns_proposal_id: Opt(0n),
-		//   min_participant_icp_e8s: Opt(0n),
-		//   neuron_basket_construction_parameters:[{
-		//       dissolve_delay_interval_seconds: 0n,
-		//       count: 0n,
-		//     }],
-		//   fallback_controller_principal_ids: [],
-		//   token_symbol: [],
-		//   final_reward_rate_basis_points: [],
-		//   max_icp_e8s: [],
-		//   neuron_minimum_stake_e8s: [],
-		//   confirmation_text: [],
-		//   logo: [],
-		//   name: [],
-		//   swap_start_timestamp_seconds: [],
-		//   swap_due_timestamp_seconds: [],
-		//   initial_voting_period_seconds: [],
-		//   neuron_minimum_dissolve_delay_to_vote_seconds: [],
-		//   description: [],
-		//   max_neuron_age_seconds_for_age_bonus: [],
-		//   min_participants: [],
-		//   initial_reward_rate_basis_points: [],
-		//   wait_for_quiet_deadline_increase_seconds: [],
-		//   transaction_fee_e8s: [],
-		//   dapp_canisters: [],
-		//   neurons_fund_participation_constraints: [],
-		//   neurons_fund_participants: [],
-		//   max_age_bonus_percentage: [],
-		//   initial_token_distribution: [],
-		//   reward_rate_transition_duration_seconds: [],
-		//   token_logo: [],
-		//   token_name: [],
-		//   max_participant_icp_e8s: [],
-		//   proposal_reject_cost_e8s: [],
-		//   restricted_countries: [],
-		//   min_icp_e8s: [],
-		// }]
-	})
-	.upgradeArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
+			return [
+				{
+					allowed_principals: [],
+					access_controls_enabled: false,
+					sns_subnet_ids: [],
+				},
+			]
+			// this is SnsInitPayload
+			// return [{
+			//   url: Opt(), // string
+			//   max_dissolve_delay_seconds: Opt(0n),
+			//   max_dissolve_delay_bonus_percentage: Opt(0n),
+			//   nns_proposal_id: Opt(0n),
+			//   min_participant_icp_e8s: Opt(0n),
+			//   neuron_basket_construction_parameters:[{
+			//       dissolve_delay_interval_seconds: 0n,
+			//       count: 0n,
+			//     }],
+			//   fallback_controller_principal_ids: [],
+			//   token_symbol: [],
+			//   final_reward_rate_basis_points: [],
+			//   max_icp_e8s: [],
+			//   neuron_minimum_stake_e8s: [],
+			//   confirmation_text: [],
+			//   logo: [],
+			//   name: [],
+			//   swap_start_timestamp_seconds: [],
+			//   swap_due_timestamp_seconds: [],
+			//   initial_voting_period_seconds: [],
+			//   neuron_minimum_dissolve_delay_to_vote_seconds: [],
+			//   description: [],
+			//   max_neuron_age_seconds_for_age_bonus: [],
+			//   min_participants: [],
+			//   initial_reward_rate_basis_points: [],
+			//   wait_for_quiet_deadline_increase_seconds: [],
+			//   transaction_fee_e8s: [],
+			//   dapp_canisters: [],
+			//   neurons_fund_participation_constraints: [],
+			//   neurons_fund_participants: [],
+			//   max_age_bonus_percentage: [],
+			//   initial_token_distribution: [],
+			//   reward_rate_transition_duration_seconds: [],
+			//   token_logo: [],
+			//   token_name: [],
+			//   max_participant_icp_e8s: [],
+			//   proposal_reject_cost_e8s: [],
+			//   restricted_countries: [],
+			//   min_icp_e8s: [],
+			// }]
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
 
-		return [
-			{
-				allowed_principals: [],
-				access_controls_enabled: false,
-				sns_subnet_ids: [],
-			},
-		]
-	})
+			return [
+				{
+					allowed_principals: [],
+					access_controls_enabled: false,
+					sns_subnet_ids: [],
+				},
+			]
+		})
 }
 
 NNSSNSWasm.id = NNSSNSWasmIds
@@ -217,25 +224,31 @@ export const NNSRoot = (
 		| ((args: { ctx: TaskCtx }) => NNSRootInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSRootInitArgs>),
 ) => {
-	return canister.custom<NNSRootService, []>(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return {
-			canisterId: NNSRootIds.local,
-			wasm: path.resolve(__dirname, "./nns/nns-root/nns-root.wasm.gz"),
-			candid: path.resolve(__dirname, "./nns/nns-root/nns-root.did"),
-		}
-	}).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return []
-	}).upgradeArgs(async ({ ctx }) => {
-		return []
-	})
+	return canister
+		.custom<NNSRootService, []>(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: NNSRootIds.local,
+				wasm: path.resolve(
+					__dirname,
+					"./nns/nns-root/nns-root.wasm.gz",
+				),
+				candid: path.resolve(__dirname, "./nns/nns-root/nns-root.did"),
+			}
+		})
+		.installArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return []
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			return []
+		})
 }
 
 NNSRoot.id = NNSRootIds
@@ -331,168 +344,176 @@ export const NNSRegistry = (
 		| ((args: { ctx: TaskCtx }) => NNSRegistryInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSRegistryInitArgs>),
 ) => {
-	return canister.custom<NNSRegistryService, [RegistryCanisterInitPayload]>(
-		async ({ ctx }) => {
-			const initArgs =
-				typeof initArgsOrFn === "function"
-					? await initArgsOrFn({ ctx })
-					: initArgsOrFn
-			return {
-				canisterId: NNSRegistryIds.local,
-				// For some reason the init args are not working with a gzipped wasm
-				wasm: path.resolve(__dirname, "./nns/nns-registry/nns-registry.wasm"),
+	return canister
+		.custom<NNSRegistryService, [RegistryCanisterInitPayload]>(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				return {
+					canisterId: NNSRegistryIds.local,
+					// For some reason the init args are not working with a gzipped wasm
+					wasm: path.resolve(
+						__dirname,
+						"./nns/nns-registry/nns-registry.wasm",
+					),
 
-				// TODO: add custom init candid
-				candid: path.resolve(__dirname, "./nns/nns-registry/nns-registry.did"),
-			}
-		},
-	).installArgs(
-		async ({ ctx }) => {
-			const initArgs =
-				typeof initArgsOrFn === "function"
-					? await initArgsOrFn({ ctx })
-					: initArgsOrFn
-			// return undefined
-			// return [`
-			// (
-			//   record {
-			//     mutations = vec {
-			//       record {
-			//         preconditions = vec {
-			//           record {
-			//             key = vec { 1; 2; 3 };
-			//             expected_version = 42
-			//           }
-			//         };
-			//         mutations = vec {
-			//           record {
-			//             key = vec { 4; 5; 6 };
-			//             mutation_type = 1;
-			//             value = vec { 7; 8; 9 }
-			//           }
-			//         }
-			//       }
-			//     }
-			//   }
-			// )
-			// `]
-			// return ""
-
-			// TODO:
-			// if (mode === "upgrade") {
-			// 	return [
-			// 		{
-			// 			Upgrade: [],
-			// 		},
-			// 	]
-			// }
-			const initPayload: [RegistryCanisterInitPayload] = [
-				{
-					mutations: [
-						// {}
-						//   {
-						//   preconditions: [],
-						//   mutations: [],
-						// }
-					],
-				},
-			]
-
-			// const encodedInitPayload = encodeArgs(initPayload, {
-			// 	init,
-			// 	idlFactory,
-			// })
-			return initPayload
-		},
-		{
-			// TODO: add mode
-			customEncode: async (args) => {
-				// TODO: fix, this is disabled for now
-				// encoding is broken
-				const idlFactory = undefined as any
-				// return args
-				const encodedInitPayload = encodeArgs(args, {
-					init: ({ IDL }) => {
-					// build IDL types exactly as declared above
-					const RegistryMutation = IDL.Record({
-						key: IDL.Vec(IDL.Nat8),
-						mutation_type: IDL.Int32,
-						value: IDL.Vec(IDL.Nat8),
-					})
-					const Precondition = IDL.Record({
-						key: IDL.Vec(IDL.Nat8),
-						expected_version: IDL.Nat64,
-					})
-					const RegistryAtomicMutateRequest = IDL.Record({
-						mutations: IDL.Vec(RegistryMutation),
-						preconditions: IDL.Vec(Precondition),
-					})
-					const RegistryCanisterInitPayload = IDL.Record({
-						mutations: IDL.Vec(RegistryAtomicMutateRequest),
-					})
-					return [RegistryCanisterInitPayload]
-				},
-					idlFactory,
-				})
-				return encodedInitPayload
+					// TODO: add custom init candid
+					candid: path.resolve(
+						__dirname,
+						"./nns/nns-registry/nns-registry.did",
+					),
+				}
 			},
-		},
-	)
-	.upgradeArgs(
-		async ({ ctx }) => {
-			const initArgs =
-				typeof initArgsOrFn === "function"
-					? await initArgsOrFn({ ctx })
-					: initArgsOrFn
-			const initPayload: [RegistryCanisterInitPayload] = [
-				{
-					mutations: [
-						// {}
-						//   {
-						//   preconditions: [],
-						//   mutations: [],
-						// }
-					],
-				},
-			]
-			return initPayload
-		},
-		{
-			// TODO: add mode
-			customEncode: async (args) => {
-				// TODO: fix, this is disabled for now
-				// encoding is broken
-				const idlFactory = undefined as any
-				// return args
-				const encodedInitPayload = encodeArgs(args as unknown[], {
-					init: ({ IDL }) => {
-					// build IDL types exactly as declared above
-					const RegistryMutation = IDL.Record({
-						key: IDL.Vec(IDL.Nat8),
-						mutation_type: IDL.Int32,
-						value: IDL.Vec(IDL.Nat8),
-					})
-					const Precondition = IDL.Record({
-						key: IDL.Vec(IDL.Nat8),
-						expected_version: IDL.Nat64,
-					})
-					const RegistryAtomicMutateRequest = IDL.Record({
-						mutations: IDL.Vec(RegistryMutation),
-						preconditions: IDL.Vec(Precondition),
-					})
-					const RegistryCanisterInitPayload = IDL.Record({
-						mutations: IDL.Vec(RegistryAtomicMutateRequest),
-					})
-					return [RegistryCanisterInitPayload]
-				},
-					idlFactory,
-				})
-				return encodedInitPayload
+		)
+		.installArgs(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				// return undefined
+				// return [`
+				// (
+				//   record {
+				//     mutations = vec {
+				//       record {
+				//         preconditions = vec {
+				//           record {
+				//             key = vec { 1; 2; 3 };
+				//             expected_version = 42
+				//           }
+				//         };
+				//         mutations = vec {
+				//           record {
+				//             key = vec { 4; 5; 6 };
+				//             mutation_type = 1;
+				//             value = vec { 7; 8; 9 }
+				//           }
+				//         }
+				//       }
+				//     }
+				//   }
+				// )
+				// `]
+				// return ""
+
+				// TODO:
+				// if (mode === "upgrade") {
+				// 	return [
+				// 		{
+				// 			Upgrade: [],
+				// 		},
+				// 	]
+				// }
+				const initPayload: [RegistryCanisterInitPayload] = [
+					{
+						mutations: [
+							// {}
+							//   {
+							//   preconditions: [],
+							//   mutations: [],
+							// }
+						],
+					},
+				]
+
+				// const encodedInitPayload = encodeArgs(initPayload, {
+				// 	init,
+				// 	idlFactory,
+				// })
+				return initPayload
 			},
-		},
-	)
-    // TODO: ? custom upgrade args?
-    // .upgradeArgs(async ({ ctx }) => {
+			{
+				// TODO: add mode
+				customEncode: async (args) => {
+					// TODO: fix, this is disabled for now
+					// encoding is broken
+					const idlFactory = undefined as any
+					// return args
+					const encodedInitPayload = encodeArgs(args, {
+						init: ({ IDL }) => {
+							// build IDL types exactly as declared above
+							const RegistryMutation = IDL.Record({
+								key: IDL.Vec(IDL.Nat8),
+								mutation_type: IDL.Int32,
+								value: IDL.Vec(IDL.Nat8),
+							})
+							const Precondition = IDL.Record({
+								key: IDL.Vec(IDL.Nat8),
+								expected_version: IDL.Nat64,
+							})
+							const RegistryAtomicMutateRequest = IDL.Record({
+								mutations: IDL.Vec(RegistryMutation),
+								preconditions: IDL.Vec(Precondition),
+							})
+							const RegistryCanisterInitPayload = IDL.Record({
+								mutations: IDL.Vec(RegistryAtomicMutateRequest),
+							})
+							return [RegistryCanisterInitPayload]
+						},
+						idlFactory,
+					})
+					return encodedInitPayload
+				},
+			},
+		)
+		.upgradeArgs(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				const initPayload: [RegistryCanisterInitPayload] = [
+					{
+						mutations: [
+							// {}
+							//   {
+							//   preconditions: [],
+							//   mutations: [],
+							// }
+						],
+					},
+				]
+				return initPayload
+			},
+			{
+				// TODO: add mode
+				customEncode: async (args) => {
+					// TODO: fix, this is disabled for now
+					// encoding is broken
+					const idlFactory = undefined as any
+					// return args
+					const encodedInitPayload = encodeArgs(args as unknown[], {
+						init: ({ IDL }) => {
+							// build IDL types exactly as declared above
+							const RegistryMutation = IDL.Record({
+								key: IDL.Vec(IDL.Nat8),
+								mutation_type: IDL.Int32,
+								value: IDL.Vec(IDL.Nat8),
+							})
+							const Precondition = IDL.Record({
+								key: IDL.Vec(IDL.Nat8),
+								expected_version: IDL.Nat64,
+							})
+							const RegistryAtomicMutateRequest = IDL.Record({
+								mutations: IDL.Vec(RegistryMutation),
+								preconditions: IDL.Vec(Precondition),
+							})
+							const RegistryCanisterInitPayload = IDL.Record({
+								mutations: IDL.Vec(RegistryAtomicMutateRequest),
+							})
+							return [RegistryCanisterInitPayload]
+						},
+						idlFactory,
+					})
+					return encodedInitPayload
+				},
+			},
+		)
+	// TODO: ? custom upgrade args?
+	// .upgradeArgs(async ({ ctx }) => {
 	// 	return [
 	// 		{
 	// 			Upgrade: [],
@@ -518,274 +539,286 @@ export const NNSGovernance = (
 		| ((args: { ctx: TaskCtx }) => NNSGovernanceInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSGovernanceInitArgs>),
 ) => {
-	return canister.custom<NNSGovernanceService, [NNSGovernanceInitArgs]>(
-		async ({ ctx }) => {
+	return canister
+		.custom<NNSGovernanceService, [NNSGovernanceInitArgs]>(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				return {
+					canisterId: NNSGovernanceIds.local,
+					wasm: path.resolve(
+						__dirname,
+						"./nns/nns-governance/governance_latest.opt.wasm",
+					),
+					candid: path.resolve(
+						__dirname,
+						"./nns/nns-governance/governance_latest.did",
+					),
+				}
+			},
+		)
+		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
 					: initArgsOrFn
-			return {
-				canisterId: NNSGovernanceIds.local,
-				wasm: path.resolve(
-					__dirname,
-					"./nns/nns-governance/governance_latest.opt.wasm",
-				),
-				candid: path.resolve(
-					__dirname,
-					"./nns/nns-governance/governance_latest.did",
-				),
+			// return null
+			const governanceInitArgs: NNSGovernanceInitArgs = {
+				default_followees: [],
+				making_sns_proposal: [],
+				most_recent_monthly_node_provider_rewards: [],
+				maturity_modulation_last_updated_at_timestamp_seconds: [],
+				wait_for_quiet_threshold_seconds: BigInt(60 * 60 * 24 * 4), // 4 days
+				metrics: [],
+				neuron_management_voting_period_seconds: [BigInt(60 * 60 * 48)], // 48 hours
+				node_providers: [],
+				cached_daily_maturity_modulation_basis_points: [],
+				economics: [
+					{
+						neuron_minimum_stake_e8s: 0n,
+						voting_power_economics: [
+							{
+								start_reducing_voting_power_after_seconds: [0n],
+								clear_following_after_seconds: [0n],
+								neuron_minimum_dissolve_delay_to_vote_seconds: [
+									0n,
+								],
+							},
+						],
+						max_proposals_to_keep_per_topic: 0,
+						neuron_management_fee_per_proposal_e8s: 0n,
+						reject_cost_e8s: 0n,
+						transaction_fee_e8s: 0n,
+						neuron_spawn_dissolve_delay_seconds: 0n,
+						minimum_icp_xdr_rate: 0n,
+						maximum_node_provider_rewards_e8s: 0n,
+						neurons_fund_economics: [
+							{
+								maximum_icp_xdr_rate: [
+									{
+										// human_readable: ["0"],
+										basis_points: [0n],
+									},
+								],
+								neurons_fund_matched_funding_curve_coefficients:
+									[
+										{
+											contribution_threshold_xdr: [
+												{
+													human_readable: ["0"],
+													// basis_points: [0n],
+												},
+											],
+											one_third_participation_milestone_xdr:
+												[
+													{
+														human_readable: ["0"],
+														// basis_points: [0n],
+													},
+												],
+											full_participation_milestone_xdr: [
+												{
+													human_readable: ["0"],
+													// basis_points: [0n],
+												},
+											],
+										},
+									],
+								max_theoretical_neurons_fund_participation_amount_xdr:
+									[
+										{
+											human_readable: ["0"],
+											// basis_points: [0n],
+										},
+									],
+								minimum_icp_xdr_rate: [
+									{
+										// human_readable: ["0"],
+										basis_points: [0n],
+									},
+								],
+							},
+						],
+					},
+				],
+				restore_aging_summary: [],
+				spawning_neurons: [],
+				latest_reward_event: [],
+				to_claim_transfers: [],
+				short_voting_period_seconds: BigInt(60 * 60 * 12), // 12 hours
+				// topic_followee_index: [],
+				// migrations: [],
+				proposals: [],
+				xdr_conversion_rate: [
+					{
+						xdr_permyriad_per_icp: [10_000n],
+						// exchange_rate: [0n],
+						timestamp_seconds: [0n],
+					},
+				],
+				in_flight_commands: [],
+				neurons: [],
+				genesis_timestamp_seconds: 0n,
 			}
-		},
-	).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		// return null
-		const governanceInitArgs: NNSGovernanceInitArgs = {
-			default_followees: [],
-			making_sns_proposal: [],
-			most_recent_monthly_node_provider_rewards: [],
-			maturity_modulation_last_updated_at_timestamp_seconds: [],
-			wait_for_quiet_threshold_seconds: BigInt(60 * 60 * 24 * 4), // 4 days
-			metrics: [],
-			neuron_management_voting_period_seconds: [BigInt(60 * 60 * 48)], // 48 hours
-			node_providers: [],
-			cached_daily_maturity_modulation_basis_points: [],
-			economics: [
-				{
-					neuron_minimum_stake_e8s: 0n,
-					voting_power_economics: [
-						{
-							start_reducing_voting_power_after_seconds: [0n],
-							clear_following_after_seconds: [0n],
-							neuron_minimum_dissolve_delay_to_vote_seconds: [0n],
-						},
-					],
-					max_proposals_to_keep_per_topic: 0,
-					neuron_management_fee_per_proposal_e8s: 0n,
-					reject_cost_e8s: 0n,
-					transaction_fee_e8s: 0n,
-					neuron_spawn_dissolve_delay_seconds: 0n,
-					minimum_icp_xdr_rate: 0n,
-					maximum_node_provider_rewards_e8s: 0n,
-					neurons_fund_economics: [
-						{
-							maximum_icp_xdr_rate: [
-								{
-									// human_readable: ["0"],
-									basis_points: [0n],
-								},
-							],
-							neurons_fund_matched_funding_curve_coefficients: [
-								{
-									contribution_threshold_xdr: [
-										{
-											human_readable: ["0"],
-											// basis_points: [0n],
-										},
-									],
-									one_third_participation_milestone_xdr: [
-										{
-											human_readable: ["0"],
-											// basis_points: [0n],
-										},
-									],
-									full_participation_milestone_xdr: [
-										{
-											human_readable: ["0"],
-											// basis_points: [0n],
-										},
-									],
-								},
-							],
-							max_theoretical_neurons_fund_participation_amount_xdr: [
-								{
-									human_readable: ["0"],
-									// basis_points: [0n],
-								},
-							],
-							minimum_icp_xdr_rate: [
-								{
-									// human_readable: ["0"],
-									basis_points: [0n],
-								},
-							],
-						},
-					],
-				},
-			],
-			restore_aging_summary: [],
-			spawning_neurons: [],
-			latest_reward_event: [],
-			to_claim_transfers: [],
-			short_voting_period_seconds: BigInt(60 * 60 * 12), // 12 hours
-			// topic_followee_index: [],
-			// migrations: [],
-			proposals: [],
-			xdr_conversion_rate: [
-				{
-					xdr_permyriad_per_icp: [10_000n],
-					// exchange_rate: [0n],
-					timestamp_seconds: [0n],
-				},
-			],
-			in_flight_commands: [],
-			neurons: [],
-			genesis_timestamp_seconds: 0n,
-		}
 
-		return [governanceInitArgs]
-		// type Governance = record {
-		//   default_followees : vec record { int32; Followees };
-		//   making_sns_proposal : opt MakingSnsProposal;
-		//   most_recent_monthly_node_provider_rewards : opt MonthlyNodeProviderRewards;
-		//   maturity_modulation_last_updated_at_timestamp_seconds : opt nat64;
-		//   wait_for_quiet_threshold_seconds : nat64;
-		//   metrics : opt GovernanceCachedMetrics;
-		//   neuron_management_voting_period_seconds : opt nat64;
-		//   node_providers : vec NodeProvider;
-		//   cached_daily_maturity_modulation_basis_points : opt int32;
-		//   economics : opt NetworkEconomics;
-		//   restore_aging_summary : opt RestoreAgingSummary;
-		//   spawning_neurons : opt bool;
-		//   latest_reward_event : opt RewardEvent;
-		//   to_claim_transfers : vec NeuronStakeTransfer;
-		//   short_voting_period_seconds : nat64;
-		//   topic_followee_index : vec record { int32; FollowersMap };
-		//   migrations : opt Migrations;
-		//   proposals : vec record { nat64; ProposalData };
-		//   xdr_conversion_rate : opt XdrConversionRate;
-		//   in_flight_commands : vec record { nat64; NeuronInFlightCommand };
-		//   neurons : vec record { nat64; Neuron };
-		//   genesis_timestamp_seconds : nat64;
-		// };
-	})
-	.upgradeArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		// return null
-		const governanceInitArgs: NNSGovernanceInitArgs = {
-			default_followees: [],
-			making_sns_proposal: [],
-			most_recent_monthly_node_provider_rewards: [],
-			maturity_modulation_last_updated_at_timestamp_seconds: [],
-			wait_for_quiet_threshold_seconds: BigInt(60 * 60 * 24 * 4), // 4 days
-			metrics: [],
-			neuron_management_voting_period_seconds: [BigInt(60 * 60 * 48)], // 48 hours
-			node_providers: [],
-			cached_daily_maturity_modulation_basis_points: [],
-			economics: [
-				{
-					neuron_minimum_stake_e8s: 0n,
-					voting_power_economics: [
-						{
-							start_reducing_voting_power_after_seconds: [0n],
-							clear_following_after_seconds: [0n],
-							neuron_minimum_dissolve_delay_to_vote_seconds: [0n],
-						},
-					],
-					max_proposals_to_keep_per_topic: 0,
-					neuron_management_fee_per_proposal_e8s: 0n,
-					reject_cost_e8s: 0n,
-					transaction_fee_e8s: 0n,
-					neuron_spawn_dissolve_delay_seconds: 0n,
-					minimum_icp_xdr_rate: 0n,
-					maximum_node_provider_rewards_e8s: 0n,
-					neurons_fund_economics: [
-						{
-							maximum_icp_xdr_rate: [
-								{
-									// human_readable: ["0"],
-									basis_points: [0n],
-								},
-							],
-							neurons_fund_matched_funding_curve_coefficients: [
-								{
-									contribution_threshold_xdr: [
+			return [governanceInitArgs]
+			// type Governance = record {
+			//   default_followees : vec record { int32; Followees };
+			//   making_sns_proposal : opt MakingSnsProposal;
+			//   most_recent_monthly_node_provider_rewards : opt MonthlyNodeProviderRewards;
+			//   maturity_modulation_last_updated_at_timestamp_seconds : opt nat64;
+			//   wait_for_quiet_threshold_seconds : nat64;
+			//   metrics : opt GovernanceCachedMetrics;
+			//   neuron_management_voting_period_seconds : opt nat64;
+			//   node_providers : vec NodeProvider;
+			//   cached_daily_maturity_modulation_basis_points : opt int32;
+			//   economics : opt NetworkEconomics;
+			//   restore_aging_summary : opt RestoreAgingSummary;
+			//   spawning_neurons : opt bool;
+			//   latest_reward_event : opt RewardEvent;
+			//   to_claim_transfers : vec NeuronStakeTransfer;
+			//   short_voting_period_seconds : nat64;
+			//   topic_followee_index : vec record { int32; FollowersMap };
+			//   migrations : opt Migrations;
+			//   proposals : vec record { nat64; ProposalData };
+			//   xdr_conversion_rate : opt XdrConversionRate;
+			//   in_flight_commands : vec record { nat64; NeuronInFlightCommand };
+			//   neurons : vec record { nat64; Neuron };
+			//   genesis_timestamp_seconds : nat64;
+			// };
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			// return null
+			const governanceInitArgs: NNSGovernanceInitArgs = {
+				default_followees: [],
+				making_sns_proposal: [],
+				most_recent_monthly_node_provider_rewards: [],
+				maturity_modulation_last_updated_at_timestamp_seconds: [],
+				wait_for_quiet_threshold_seconds: BigInt(60 * 60 * 24 * 4), // 4 days
+				metrics: [],
+				neuron_management_voting_period_seconds: [BigInt(60 * 60 * 48)], // 48 hours
+				node_providers: [],
+				cached_daily_maturity_modulation_basis_points: [],
+				economics: [
+					{
+						neuron_minimum_stake_e8s: 0n,
+						voting_power_economics: [
+							{
+								start_reducing_voting_power_after_seconds: [0n],
+								clear_following_after_seconds: [0n],
+								neuron_minimum_dissolve_delay_to_vote_seconds: [
+									0n,
+								],
+							},
+						],
+						max_proposals_to_keep_per_topic: 0,
+						neuron_management_fee_per_proposal_e8s: 0n,
+						reject_cost_e8s: 0n,
+						transaction_fee_e8s: 0n,
+						neuron_spawn_dissolve_delay_seconds: 0n,
+						minimum_icp_xdr_rate: 0n,
+						maximum_node_provider_rewards_e8s: 0n,
+						neurons_fund_economics: [
+							{
+								maximum_icp_xdr_rate: [
+									{
+										// human_readable: ["0"],
+										basis_points: [0n],
+									},
+								],
+								neurons_fund_matched_funding_curve_coefficients:
+									[
+										{
+											contribution_threshold_xdr: [
+												{
+													human_readable: ["0"],
+													// basis_points: [0n],
+												},
+											],
+											one_third_participation_milestone_xdr:
+												[
+													{
+														human_readable: ["0"],
+														// basis_points: [0n],
+													},
+												],
+											full_participation_milestone_xdr: [
+												{
+													human_readable: ["0"],
+													// basis_points: [0n],
+												},
+											],
+										},
+									],
+								max_theoretical_neurons_fund_participation_amount_xdr:
+									[
 										{
 											human_readable: ["0"],
 											// basis_points: [0n],
 										},
 									],
-									one_third_participation_milestone_xdr: [
-										{
-											human_readable: ["0"],
-											// basis_points: [0n],
-										},
-									],
-									full_participation_milestone_xdr: [
-										{
-											human_readable: ["0"],
-											// basis_points: [0n],
-										},
-									],
-								},
-							],
-							max_theoretical_neurons_fund_participation_amount_xdr: [
-								{
-									human_readable: ["0"],
-									// basis_points: [0n],
-								},
-							],
-							minimum_icp_xdr_rate: [
-								{
-									// human_readable: ["0"],
-									basis_points: [0n],
-								},
-							],
-						},
-					],
-				},
-			],
-			restore_aging_summary: [],
-			spawning_neurons: [],
-			latest_reward_event: [],
-			to_claim_transfers: [],
-			short_voting_period_seconds: BigInt(60 * 60 * 12), // 12 hours
-			// topic_followee_index: [],
-			// migrations: [],
-			proposals: [],
-			xdr_conversion_rate: [
-				{
-					xdr_permyriad_per_icp: [10_000n],
-					// exchange_rate: [0n],
-					timestamp_seconds: [0n],
-				},
-			],
-			in_flight_commands: [],
-			neurons: [],
-			genesis_timestamp_seconds: 0n,
-		}
+								minimum_icp_xdr_rate: [
+									{
+										// human_readable: ["0"],
+										basis_points: [0n],
+									},
+								],
+							},
+						],
+					},
+				],
+				restore_aging_summary: [],
+				spawning_neurons: [],
+				latest_reward_event: [],
+				to_claim_transfers: [],
+				short_voting_period_seconds: BigInt(60 * 60 * 12), // 12 hours
+				// topic_followee_index: [],
+				// migrations: [],
+				proposals: [],
+				xdr_conversion_rate: [
+					{
+						xdr_permyriad_per_icp: [10_000n],
+						// exchange_rate: [0n],
+						timestamp_seconds: [0n],
+					},
+				],
+				in_flight_commands: [],
+				neurons: [],
+				genesis_timestamp_seconds: 0n,
+			}
 
-		return [governanceInitArgs]
-		// type Governance = record {
-		//   default_followees : vec record { int32; Followees };
-		//   making_sns_proposal : opt MakingSnsProposal;
-		//   most_recent_monthly_node_provider_rewards : opt MonthlyNodeProviderRewards;
-		//   maturity_modulation_last_updated_at_timestamp_seconds : opt nat64;
-		//   wait_for_quiet_threshold_seconds : nat64;
-		//   metrics : opt GovernanceCachedMetrics;
-		//   neuron_management_voting_period_seconds : opt nat64;
-		//   node_providers : vec NodeProvider;
-		//   cached_daily_maturity_modulation_basis_points : opt int32;
-		//   economics : opt NetworkEconomics;
-		//   restore_aging_summary : opt RestoreAgingSummary;
-		//   spawning_neurons : opt bool;
-		//   latest_reward_event : opt RewardEvent;
-		//   to_claim_transfers : vec NeuronStakeTransfer;
-		//   short_voting_period_seconds : nat64;
-		//   topic_followee_index : vec record { int32; FollowersMap };
-		//   migrations : opt Migrations;
-		//   proposals : vec record { nat64; ProposalData };
-		//   xdr_conversion_rate : opt XdrConversionRate;
-		//   in_flight_commands : vec record { nat64; NeuronInFlightCommand };
-		//   neurons : vec record { nat64; Neuron };
-		//   genesis_timestamp_seconds : nat64;
-		// };
-	})
+			return [governanceInitArgs]
+			// type Governance = record {
+			//   default_followees : vec record { int32; Followees };
+			//   making_sns_proposal : opt MakingSnsProposal;
+			//   most_recent_monthly_node_provider_rewards : opt MonthlyNodeProviderRewards;
+			//   maturity_modulation_last_updated_at_timestamp_seconds : opt nat64;
+			//   wait_for_quiet_threshold_seconds : nat64;
+			//   metrics : opt GovernanceCachedMetrics;
+			//   neuron_management_voting_period_seconds : opt nat64;
+			//   node_providers : vec NodeProvider;
+			//   cached_daily_maturity_modulation_basis_points : opt int32;
+			//   economics : opt NetworkEconomics;
+			//   restore_aging_summary : opt RestoreAgingSummary;
+			//   spawning_neurons : opt bool;
+			//   latest_reward_event : opt RewardEvent;
+			//   to_claim_transfers : vec NeuronStakeTransfer;
+			//   short_voting_period_seconds : nat64;
+			//   topic_followee_index : vec record { int32; FollowersMap };
+			//   migrations : opt Migrations;
+			//   proposals : vec record { nat64; ProposalData };
+			//   xdr_conversion_rate : opt XdrConversionRate;
+			//   in_flight_commands : vec record { nat64; NeuronInFlightCommand };
+			//   neurons : vec record { nat64; Neuron };
+			//   genesis_timestamp_seconds : nat64;
+			// };
+		})
 }
 
 NNSGovernance.id = NNSGovernanceIds
@@ -805,8 +838,8 @@ export const NNSLedger = (
 		| ((args: { ctx: TaskCtx }) => LedgerCanisterPayload)
 		| ((args: { ctx: TaskCtx }) => Promise<LedgerCanisterPayload>),
 ) => {
-	return canister.custom<NNSLedgerService, [LedgerCanisterPayload]>(
-		async ({ ctx }) => {
+	return canister
+		.custom<NNSLedgerService, [LedgerCanisterPayload]>(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -817,42 +850,46 @@ export const NNSLedger = (
 					__dirname,
 					"./nns/nns-ledger/ledger-canister.opt.wasm",
 				),
-				candid: path.resolve(__dirname, "./nns/nns-ledger/ledger-canister.did"),
+				candid: path.resolve(
+					__dirname,
+					"./nns/nns-ledger/ledger-canister.did",
+				),
 			}
-		},
-	).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		// TODO:
-		return [
-			{
-				Init: {
-					send_whitelist: [],
-					token_symbol: ["ICP"],
-					transfer_fee: [],
-					minting_account: ctx.roles.deployer.accountId,
-					maximum_number_of_accounts: [],
-					accounts_overflow_trim_quantity: [],
-					transaction_window: [],
-					max_message_size_bytes: [],
-					icrc1_minting_account: [],
-					archive_options: [],
-					initial_values: [],
-					token_name: [],
-					feature_flags: [],
+		})
+		.installArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			// TODO:
+			return [
+				{
+					Init: {
+						send_whitelist: [],
+						token_symbol: ["ICP"],
+						transfer_fee: [],
+						minting_account: ctx.roles.deployer.accountId,
+						maximum_number_of_accounts: [],
+						accounts_overflow_trim_quantity: [],
+						transaction_window: [],
+						max_message_size_bytes: [],
+						icrc1_minting_account: [],
+						archive_options: [],
+						initial_values: [],
+						token_name: [],
+						feature_flags: [],
+					},
 				},
-			},
-		]
-	}).upgradeArgs(async ({ ctx }) => {
-        // TODO: add missing fields?
-		return [
-			{
-				Upgrade: [],
-			},
-		]
-	})
+			]
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			// TODO: add missing fields?
+			return [
+				{
+					Upgrade: [],
+				},
+			]
+		})
 }
 
 NNSLedger.id = NNSLedgerIds
@@ -872,82 +909,86 @@ export const NNSGenesisToken = (
 		| ((args: { ctx: TaskCtx }) => NNSGenesisTokenInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSGenesisTokenInitArgs>),
 ) => {
-	return canister.custom<NNSGenesisTokenService, Gtc, Gtc>(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return {
-			canisterId: NNSGenesisTokenIds.local,
-			wasm: path.resolve(
-				__dirname,
-				"./nns/nns-genesis-token/nns-genesis-token.wasm.gz",
-			),
-			candid: path.resolve(
-				__dirname,
-				"./nns/nns-genesis-token/nns-genesis-token.did",
-			),
-		}
-	}).installArgs(
-		async ({ ctx }) => {
+	return canister
+		.custom<NNSGenesisTokenService, Gtc, Gtc>(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
 					: initArgsOrFn
-			// We need to serialize it to protobuf format
-			const exampleGtc: Gtc = {
-				accounts: {
-					// address1: { icpts: 150 },
-					// address2: { icpts: 250 },
-				},
-				total_alloc: 400,
-				genesis_timestamp_seconds: Math.floor(Date.now() / 1000),
-				donate_account_recipient_neuron_id: { id: 123456789 },
-				// You can set this to null (or leave undefined) if not used.
-				forward_whitelisted_unclaimed_accounts_recipient_neuron_id: null,
-				whitelisted_accounts_to_forward: ["address1", "address2"],
+			return {
+				canisterId: NNSGenesisTokenIds.local,
+				wasm: path.resolve(
+					__dirname,
+					"./nns/nns-genesis-token/nns-genesis-token.wasm.gz",
+				),
+				candid: path.resolve(
+					__dirname,
+					"./nns/nns-genesis-token/nns-genesis-token.did",
+				),
 			}
-			// const serialized = serializeGtc(exampleGtc)
-			return exampleGtc
-		},
-		{
-			customEncode: async (args) => {
-				// return args
-				const serialized = serializeGtc(args)
-				return serialized
+		})
+		.installArgs(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				// We need to serialize it to protobuf format
+				const exampleGtc: Gtc = {
+					accounts: {
+						// address1: { icpts: 150 },
+						// address2: { icpts: 250 },
+					},
+					total_alloc: 400,
+					genesis_timestamp_seconds: Math.floor(Date.now() / 1000),
+					donate_account_recipient_neuron_id: { id: 123456789 },
+					// You can set this to null (or leave undefined) if not used.
+					forward_whitelisted_unclaimed_accounts_recipient_neuron_id:
+						null,
+					whitelisted_accounts_to_forward: ["address1", "address2"],
+				}
+				// const serialized = serializeGtc(exampleGtc)
+				return exampleGtc
 			},
-		},
-	)
-	.upgradeArgs(
-		async ({ ctx }) => {
-			const initArgs =
-				typeof initArgsOrFn === "function"
-					? await initArgsOrFn({ ctx })
-					: initArgsOrFn
-			// We need to serialize it to protobuf format
-			const exampleGtc: Gtc = {
-				accounts: {
-					// address1: { icpts: 150 },
-					// address2: { icpts: 250 },
+			{
+				customEncode: async (args) => {
+					// return args
+					const serialized = serializeGtc(args)
+					return serialized
 				},
-				total_alloc: 400,
-				genesis_timestamp_seconds: Math.floor(Date.now() / 1000),
-				donate_account_recipient_neuron_id: { id: 123456789 },
-				// You can set this to null (or leave undefined) if not used.
-				forward_whitelisted_unclaimed_accounts_recipient_neuron_id: null,
-				whitelisted_accounts_to_forward: ["address1", "address2"],
-			}
-			// const serialized = serializeGtc(exampleGtc)
-			return exampleGtc
-		},
-		{
-			customEncode: async (args) => {
-				// return args
-				const serialized = serializeGtc(args)
-				return serialized
 			},
-		},
-	)
+		)
+		.upgradeArgs(
+			async ({ ctx }) => {
+				const initArgs =
+					typeof initArgsOrFn === "function"
+						? await initArgsOrFn({ ctx })
+						: initArgsOrFn
+				// We need to serialize it to protobuf format
+				const exampleGtc: Gtc = {
+					accounts: {
+						// address1: { icpts: 150 },
+						// address2: { icpts: 250 },
+					},
+					total_alloc: 400,
+					genesis_timestamp_seconds: Math.floor(Date.now() / 1000),
+					donate_account_recipient_neuron_id: { id: 123456789 },
+					// You can set this to null (or leave undefined) if not used.
+					forward_whitelisted_unclaimed_accounts_recipient_neuron_id:
+						null,
+					whitelisted_accounts_to_forward: ["address1", "address2"],
+				}
+				// const serialized = serializeGtc(exampleGtc)
+				return exampleGtc
+			},
+			{
+				customEncode: async (args) => {
+					// return args
+					const serialized = serializeGtc(args)
+					return serialized
+				},
+			},
+		)
 }
 
 NNSGenesisToken.id = NNSGenesisTokenIds
@@ -968,25 +1009,26 @@ export const NNSCyclesMinting = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSCyclesMintingInitArgs>),
 ) => {
 	return (
-		canister.custom<NNSCyclesMintingService, [Opt<NNSCyclesInitArgs>]>(
-			async ({ ctx }) => {
-				const initArgs =
-					typeof initArgsOrFn === "function"
-						? await initArgsOrFn({ ctx })
-						: initArgsOrFn
-				return {
-					canisterId: NNSCyclesMintingIds.local,
-					wasm: path.resolve(
-						__dirname,
-						"./nns/nns-cycles-minting/nns-cycles-minting.wasm.gz",
-					),
-					candid: path.resolve(
-						__dirname,
-						"./nns/nns-cycles-minting/nns-cycles-minting.did",
-					),
-				}
-			},
-		)
+		canister
+			.custom<NNSCyclesMintingService, [Opt<NNSCyclesInitArgs>]>(
+				async ({ ctx }) => {
+					const initArgs =
+						typeof initArgsOrFn === "function"
+							? await initArgsOrFn({ ctx })
+							: initArgsOrFn
+					return {
+						canisterId: NNSCyclesMintingIds.local,
+						wasm: path.resolve(
+							__dirname,
+							"./nns/nns-cycles-minting/nns-cycles-minting.wasm.gz",
+						),
+						candid: path.resolve(
+							__dirname,
+							"./nns/nns-cycles-minting/nns-cycles-minting.did",
+						),
+					}
+				},
+			)
 			// TODO:
 			// .dependsOn({
 			//   NNSGovernance,
@@ -1023,7 +1065,9 @@ export const NNSCyclesMinting = (
 						],
 						last_purged_notification: Opt<bigint>(),
 						// TODO: get from dependencies instead?
-						governance_canister_id: [Principal.fromText(NNSGovernanceIds.ic)],
+						governance_canister_id: [
+							Principal.fromText(NNSGovernanceIds.ic),
+						],
 						minting_account_id: [
 							// TODO: ...? also how to handle when tasks require users?
 							// Use context somehow?
@@ -1033,7 +1077,9 @@ export const NNSCyclesMinting = (
 							//   bytes: [ctx.users.default.accountId.toBytes()],
 							// },
 						],
-						ledger_canister_id: [Principal.fromText(NNSLedgerIds.ic)],
+						ledger_canister_id: [
+							Principal.fromText(NNSLedgerIds.ic),
+						],
 					}),
 				]
 			})
@@ -1068,7 +1114,9 @@ export const NNSCyclesMinting = (
 						],
 						last_purged_notification: Opt<bigint>(),
 						// TODO: get from dependencies instead?
-						governance_canister_id: [Principal.fromText(NNSGovernanceIds.ic)],
+						governance_canister_id: [
+							Principal.fromText(NNSGovernanceIds.ic),
+						],
 						minting_account_id: [
 							// TODO: ...? also how to handle when tasks require users?
 							// Use context somehow?
@@ -1078,7 +1126,9 @@ export const NNSCyclesMinting = (
 							//   bytes: [ctx.users.default.accountId.toBytes()],
 							// },
 						],
-						ledger_canister_id: [Principal.fromText(NNSLedgerIds.ic)],
+						ledger_canister_id: [
+							Principal.fromText(NNSLedgerIds.ic),
+						],
 					}),
 				]
 			})
@@ -1102,48 +1152,55 @@ export const NNSLifeline = (
 		| ((args: { ctx: TaskCtx }) => NNSLifelineInitArgs)
 		| ((args: { ctx: TaskCtx }) => Promise<NNSLifelineInitArgs>),
 ) => {
-	return canister.custom<NNSLifelineService, []>(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return {
-			canisterId: NNSLifelineIds.local,
-			wasm: path.resolve(__dirname, "./nns/nns-lifeline/nns-lifeline.wasm.gz"),
-			candid: path.resolve(__dirname, "./nns/nns-lifeline/nns-lifeline.did"),
-		}
-	}).installArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return []
-	})
-	.upgradeArgs(async ({ ctx }) => {
-		const initArgs =
-			typeof initArgsOrFn === "function"
-				? await initArgsOrFn({ ctx })
-				: initArgsOrFn
-		return []
-	})
+	return canister
+		.custom<NNSLifelineService, []>(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: NNSLifelineIds.local,
+				wasm: path.resolve(
+					__dirname,
+					"./nns/nns-lifeline/nns-lifeline.wasm.gz",
+				),
+				candid: path.resolve(
+					__dirname,
+					"./nns/nns-lifeline/nns-lifeline.did",
+				),
+			}
+		})
+		.installArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return []
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return []
+		})
 }
 
 NNSLifeline.id = NNSLifelineIds
 
 // TODO: init args
 // Define an overall scope that groups these NNS tasks
-export const NNS = () =>
-	scope(ctx => ({
-		NNSDapp: NNSDapp().make(),
-		NNSSNSWasm: NNSSNSWasm().make(),
-		NNSRoot: NNSRoot().make(),
-		NNSRegistry: NNSRegistry().make(),
-		NNSGovernance: NNSGovernance().make(),
-		NNSLedger: NNSLedger().make(),
-		NNSGenesisToken: NNSGenesisToken().make(),
-		NNSCyclesMinting: NNSCyclesMinting().make(),
-		NNSLifeline: NNSLifeline().make(),
-	}))
+export const NNS = {
+	NNSDapp,
+	NNSSNSWasm,
+	NNSRoot,
+	NNSRegistry,
+	NNSGovernance,
+	NNSLedger,
+	NNSGenesisToken,
+	NNSCyclesMinting,
+	NNSLifeline,
+}
 
 // nns-registry          rwlgt-iiaaa-aaaaa-aaaaa-cai
 // nns-governance        rrkah-fqaaa-aaaaa-aaaaq-cai

@@ -5,6 +5,7 @@ import {
 	motokoCanister,
 	createMotokoCanister,
 	createRustCanister,
+	createRemoteCanister,
 	createScope,
 	createTask,
 	// customCanister,
@@ -13,7 +14,7 @@ import {
 	scope,
 } from "./builders/index.js"
 import { makeCliRuntime } from "./cli/index.js"
-import type { ICEConfig, ICEConfigContext } from "./types/types.js"
+import type { ICEConfig, ICEGlobalArgs } from "./types/types.js"
 import type { Scope, TaskTree } from "./types/types.js"
 import { TaskCtx } from "./services/taskRuntime.js"
 export { Opt } from "./types/types.js"
@@ -26,13 +27,14 @@ export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
 
 export const Ice = <T extends Partial<ICEConfig>>(
-	configOrFn: T | ((ctx: ICEConfigContext) => Promise<T>),
+	configOrFn: T | ((ctx: ICEGlobalArgs) => Promise<T>),
 ): {
-	config: T | ((ctx: ICEConfigContext) => Promise<T>)
+	config: T | ((ctx: ICEGlobalArgs) => Promise<T>)
 	canister: {
 		custom: ReturnType<typeof createCustomCanister<TaskCtx<{}, T>>>
 		motoko: ReturnType<typeof createMotokoCanister<TaskCtx<{}, T>>>
 		rust: ReturnType<typeof createRustCanister<TaskCtx<{}, T>>>
+		remote: ReturnType<typeof createRemoteCanister<TaskCtx<{}, T>>>
 	}
 	task: ReturnType<typeof createTask<TaskCtx<{}, T>>>
 	scope: ReturnType<typeof createScope<TaskCtx<{}, T>>>
@@ -48,6 +50,7 @@ export const Ice = <T extends Partial<ICEConfig>>(
 			custom: createCustomCanister<TaskCtx<{}, T>>(),
 			motoko: createMotokoCanister<TaskCtx<{}, T>>(),
 			rust: createRustCanister<TaskCtx<{}, T>>(),
+			remote: createRemoteCanister<TaskCtx<{}, T>>(),
 		},
 	}
 }

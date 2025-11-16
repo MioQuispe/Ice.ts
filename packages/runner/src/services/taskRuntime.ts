@@ -39,7 +39,7 @@ import {
 	ReplicaServiceClass,
 	ReplicaStartError,
 } from "./replica.js"
-import type { ICEConfigContext } from "../types/types.js"
+import type { ICEGlobalArgs } from "../types/types.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { TelemetryConfig } from "./telemetryConfig.js"
 import { makeTelemetryLayer } from "./telemetryConfig.js"
@@ -56,7 +56,27 @@ import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
 import { SignIdentity } from "@dfinity/agent"
 import { ConfirmOptions } from "@clack/prompts"
-import { DefaultICEConfig, ICEConfig } from "../types/types.js"
+import { ICEConfig } from "../types/types.js"
+
+export type DefaultICEConfig = {
+	readonly users: {
+		[name: string]: ICEUser
+	}
+	readonly roles: {
+		deployer: string
+		minter: string
+		controller: string
+		treasury: string
+		[name: string]: string
+	}
+	networks: {
+		[key: string]: {
+			replica: ReplicaServiceClass
+		}
+	}
+}
+
+export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 
 // // TODO: rename?? duplicate type name
 // export type ICEConfig = {
@@ -90,22 +110,6 @@ export type TaskCtx<
 	I extends Partial<ICEConfig> = DefaultICEConfig,
 > = InitializedICEConfig<I> & {
 	readonly taskTree: TaskTree
-	// readonly users: {
-	// 	[name: string]: ICEUser
-	// }
-	// readonly roles: {
-	// 	deployer: ICEUser
-	// 	minter: ICEUser
-	// 	controller: ICEUser
-	// 	treasury: ICEUser
-	// 	[name: string]: ICEUser
-	// }
-	// readonly networks: {
-	// 	[key: string]: {
-	// 		replica: ReplicaServiceClass
-	// 	}
-	// }
-
 	readonly runTask: {
 		<T extends Task>(task: T): Promise<TaskSuccess<T>>
 		<T extends Task>(

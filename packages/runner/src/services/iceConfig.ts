@@ -1,13 +1,11 @@
 import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
+    BuilderResult,
 	ICEConfig,
 	ICEConfigFile,
 	Scope,
-	ScopeEval,
 	TaskTree,
-	TaskTreeEval,
-	TaskTreeNode,
-	TaskTreeNodeEval,
+    TaskTreeNode,
 } from "../types/types.js"
 import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
@@ -17,8 +15,8 @@ import { IceDir } from "./iceDir.js"
 import { TaskCtx } from "./taskRuntime.js"
 
 export const removeBuilders = (
-	taskTree: TaskTreeEval | TaskTreeNodeEval,
-): TaskTreeEval | TaskTreeNodeEval => {
+	taskTree: TaskTree | TaskTreeNode | BuilderResult,
+): TaskTree | TaskTreeNode => {
 	if ("_tag" in taskTree && taskTree._tag === "builder") {
 		return removeBuilders(taskTree.make())
 	}
@@ -30,8 +28,8 @@ export const removeBuilders = (
 					key,
 					removeBuilders(value),
 				]),
-			) as Record<string, TaskTreeNodeEval>,
-		} as ScopeEval | Scope
+			) as Record<string, TaskTreeNode>,
+		} as Scope
 	}
 	if ("_tag" in taskTree && taskTree._tag === "task") {
 		return taskTree
@@ -41,7 +39,7 @@ export const removeBuilders = (
 			key,
 			removeBuilders(value),
 		]),
-	) as TaskTreeEval
+	) as TaskTree
 }
 
 // export const evalScopes = (
@@ -82,7 +80,7 @@ export const removeBuilders = (
 // 	) as TaskTree
 // }
 
-const applyPlugins = (taskTree: TaskTreeEval) =>
+const applyPlugins = (taskTree: TaskTree) =>
 	Effect.gen(function* () {
 		yield* Effect.logDebug("Applying plugins...")
 		const transformedTaskTree = removeBuilders(taskTree) as TaskTree

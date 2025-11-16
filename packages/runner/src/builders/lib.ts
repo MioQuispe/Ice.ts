@@ -1003,6 +1003,7 @@ export const Tags = {
 	RUST: "$$ice/canister/rust",
 	AZLE: "$$ice/canister/azle",
 	KYBRA: "$$ice/canister/kybra",
+	REMOTE: "$$ice/canister/remote",
 
 	CREATE: "$$ice/canister/create",
 	STATUS: "$$ice/canister/status",

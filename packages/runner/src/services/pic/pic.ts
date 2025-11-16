@@ -47,7 +47,7 @@ import {
 	PocketIcState,
 	readJsonFile,
 } from "./pic-process.js"
-import type { ICEConfigContext } from "../../types/types.js"
+import type { ICEGlobalArgs } from "../../types/types.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -80,7 +80,7 @@ export class PICReplica implements ReplicaServiceClass {
 	public monitor: Monitor | undefined
 	public client?: InstanceType<typeof CustomPocketIcClient>
 	public pic?: PocketIc
-	public ctx: ICEConfigContext | undefined
+	public ctx: ICEGlobalArgs | undefined
 
 	constructor(opts: {
 		host?: string
@@ -96,7 +96,7 @@ export class PICReplica implements ReplicaServiceClass {
 		this.manual = opts.manual ?? false
 	}
 
-	async start(ctx: ICEConfigContext): Promise<void> {
+	async start(ctx: ICEGlobalArgs): Promise<void> {
 		this.ctx = ctx
 
 		try {
@@ -192,7 +192,7 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 	}
 
-	private async stopExistingMonitor(ctx?: ICEConfigContext): Promise<void> {
+	private async stopExistingMonitor(ctx?: ICEGlobalArgs): Promise<void> {
 		if (!ctx) {
 			return
 		}

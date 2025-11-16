@@ -24,18 +24,6 @@ import { Schema as S } from "effect"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { LogLevel } from "effect/LogLevel"
 
-export type CanisterActor = {
-	actor: ActorSubclass<unknown>
-	canisterId: string
-	getControllers: () => Promise<void>
-	addControllers: (controllers: string[]) => Promise<void>
-	setControllers: (controllers: string[]) => Promise<void>
-}
-
-export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
-	import("../canisters/management_latest/management.types.js")._SERVICE
->
-
 export type ReplicaConfig = {
 	// TODO: use pocket-ic subnet config
 	subnet: "system" | "application" | "verified_application"
@@ -67,25 +55,10 @@ export type ICEConfig = {
 	}
 }
 
-export type DefaultICEConfig = {
-	readonly users: {
-		[name: string]: ICEUser
-	}
-	readonly roles: {
-		deployer: string
-		minter: string
-		controller: string
-		treasury: string
-		[name: string]: string
-	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
-	}
+export type ICEEnvironment = {
+    config: ICEConfig
+    tasks: TaskTree
 }
-
-export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 
 export interface TaskParam<T = unknown> {
 	type: StandardSchemaV1<T> // TODO: ship built in types like "string" | "number" etc.
@@ -119,11 +92,18 @@ export interface PositionalParam<T = unknown> extends TaskParam<T> {
 	isFlag: false
 }
 
-export interface Task<
+// TODO: we only want the shape of the task here
+
+export type Opt<T> = [T] | []
+export const Opt = <T>(value?: T): Opt<T> => {
+	return value || value === 0 ? [value] : []
+}
+
+export type Task<
 	out A = unknown,
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
-> {
+> = {
 	_tag: "task"
 	readonly id: symbol // assigned by the builder
 	effect: (ctx: TaskCtx) => Promise<A | TaskCancelled>
@@ -135,26 +115,6 @@ export interface Task<
 	positionalParams: Array<PositionalParam>
 	params: Record<string, NamedParam | PositionalParam>
 }
-// TODO: we only want the shape of the task here
-
-export type Opt<T> = [T] | []
-export const Opt = <T>(value?: T): Opt<T> => {
-	return value || value === 0 ? [value] : []
-}
-const Fn = S.instanceOf(Function)
-const CachedTaskSchema = S.Struct({
-	computeCacheKey: Fn,
-	input: Fn,
-	encode: Fn,
-	decode: Fn,
-	encodingFormat: S.Union(S.Literal("string"), S.Literal("uint8array")),
-})
-
-// export const effectifyTaskFn = <T extends Task | CachedTask>(task: T) => {
-//     return Effect.tryPromise({
-//         try: () => fn,
-//     })
-// }
 
 export type CachedTask<
 	A = unknown,
@@ -182,7 +142,6 @@ export type CachedTask<
 	) => Promise<A>
 }
 
-// TODO: just use namespaces instead
 export type Scope = {
 	_tag: "scope"
 	readonly id: symbol
@@ -193,16 +152,6 @@ export type Scope = {
 	// this is just the modules default export
 	defaultTask?: string
 }
-export type ScopeEval = {
-	_tag: "scope"
-	readonly id: symbol
-	// TODO: hmm do we need this?
-	tags: Array<string | symbol>
-	description: string
-	children: (ctx: TaskCtx) => Record<string, TaskTreeNodeEval>
-	// this is just the modules default export
-	defaultTask?: string
-}
 
 export type BuilderResult = {
 	_tag: "builder"
@@ -210,15 +159,11 @@ export type BuilderResult = {
 	[key: string]: any
 }
 
-export type TaskTreeNodeEval = Task | Scope | ScopeEval | BuilderResult
-export type TaskTreeEval = Record<string, TaskTreeNodeEval>
-
 export type TaskTreeNode = Task | Scope
 
 export type TaskTree = Record<string, TaskTreeNode>
 
-// TODO: come up with a better name
-export type ICEConfigContext = {
+export type ICEGlobalArgs = {
 	network: string
 	iceDirPath: string
 	background: boolean
@@ -230,8 +175,22 @@ export type ICEConfigFile = {
 	default:
 		| Partial<ICEConfig>
 		| ((
-				ctx: ICEConfigContext,
+				globalArgs: ICEGlobalArgs,
 		  ) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
 } & {
 	[key: string]: TaskTreeNode
 }
+
+// export type ScopeEval = {
+// 	_tag: "scope"
+// 	readonly id: symbol
+// 	// TODO: hmm do we need this?
+// 	tags: Array<string | symbol>
+// 	description: string
+// 	children: (ctx: TaskCtx) => Record<string, TaskTreeNodeEval>
+// 	// this is just the modules default export
+// 	defaultTask?: string
+// }
+
+// export type TaskTreeNodeEval = Task | Scope | BuilderResult
+// export type TaskTreeEval = Record<string, TaskTreeNodeEval>

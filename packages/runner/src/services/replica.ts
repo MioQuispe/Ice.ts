@@ -9,7 +9,7 @@ import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
 import { PlatformError } from "@effect/platform/Error"
-import { ICEConfigContext } from "../types/types.js"
+import { ICEGlobalArgs } from "../types/types.js"
 
 export type SubnetType =
 	| "II"
@@ -291,7 +291,7 @@ export type ReplicaServiceClass = {
 		identity: SignIdentity
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
-	start: (ctx: ICEConfigContext) => Promise<void>
+	start: (ctx: ICEGlobalArgs) => Promise<void>
 	stop: (args?: { scope: "background" | "foreground" }) => Promise<void>
 }
 
@@ -303,7 +303,7 @@ export class Replica extends Context.Tag("Replica")<
 // TODO: unnecessary??
 export function layerFromAsyncReplica(
 	replica: ReplicaServiceClass,
-	ctx: ICEConfigContext,
+	ctx: ICEGlobalArgs,
 ) {
 	return Layer.scoped(
 		Replica,

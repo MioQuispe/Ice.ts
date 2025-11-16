@@ -1,6 +1,7 @@
 import { customCanister } from "./custom.js"
 import { motokoCanister } from "./motoko.js"
 import { rustCanister } from "./rust.js"
+import { remoteCanister } from "./remote.js"
 
 export type {
 	CanisterScopeSimple,
@@ -44,12 +45,15 @@ export * from "./rust.js"
 export * from "./task.js"
 export * from "./custom.js"
 export * from "./scope.js"
+export * from "./remote.js"
 export const canister: {
 	custom: typeof customCanister
 	motoko: typeof motokoCanister
 	rust: typeof rustCanister
+	remote: typeof remoteCanister
 } = {
 	custom: customCanister,
 	motoko: motokoCanister,
 	rust: rustCanister,
+	remote: remoteCanister,
 }

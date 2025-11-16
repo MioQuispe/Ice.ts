@@ -58,7 +58,7 @@ import { DefaultConfig } from "../services/defaultConfig.js"
 import { Moc } from "../services/moc.js"
 import { PICReplica } from "../services/pic/pic.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
-import type { ICEConfig, ICEConfigContext } from "../types/types.js"
+import type { ICEConfig, ICEGlobalArgs } from "../types/types.js"
 import {
 	BatchSpanProcessor,
 	InMemorySpanExporter,

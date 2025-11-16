@@ -93,7 +93,6 @@ export type CustomCanisterConfig = {
 	wasm: string
 	candid: string
 	canisterId?: string
-	remote?: boolean
 }
 
 export const deployParams = {
