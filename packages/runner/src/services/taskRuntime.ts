@@ -245,7 +245,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					catch: (e) => new TaskRuntimeError({ message: String(e) }),
 				})
 				const { path: iceDirPath } = yield* IceDir
-				const { config, globalArgs, taskTree } = yield* ICEConfigService
+				const { config, globalArgs, tasks: taskTree } = yield* ICEConfigService
 				const currentNetwork = globalArgs.network ?? "local"
 				const currentNetworkConfig =
 					config?.networks?.[currentNetwork] ??

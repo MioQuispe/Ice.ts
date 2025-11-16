@@ -1087,25 +1087,3 @@ export const motokoCanister = <
 		canisterConfigOrFn,
 	)
 }
-
-/**
- * Creates a typed motokoCanister builder with a specific TaskCtx type.
- * Use this to get autocomplete for the ctx parameter in all callback functions.
- */
-export const createMotokoCanister = <TCtx extends TaskCtx<any, any>>() => {
-	return <
-		_SERVICE = unknown,
-		I extends unknown[] = unknown[],
-		U extends unknown[] = unknown[],
-	>(
-		canisterConfigOrFn:
-			| MotokoCanisterConfig
-			| ((args: { ctx: TCtx }) => MotokoCanisterConfig)
-			| ((args: { ctx: TCtx }) => Promise<MotokoCanisterConfig>),
-	) => {
-		return makeMotokoCanister<_SERVICE, I, U, TCtx>(
-			baseLayer as BuilderLayer,
-			canisterConfigOrFn,
-		)
-	}
-}

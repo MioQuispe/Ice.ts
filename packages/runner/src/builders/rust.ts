@@ -1125,25 +1125,3 @@ export const rustCanister = <
 		canisterConfigOrFn,
 	)
 }
-
-/**
- * Creates a typed rustCanister builder with a specific TaskCtx type.
- * Use this to get autocomplete for the ctx parameter in all callback functions.
- */
-export const createRustCanister = <TCtx extends TaskCtx<any, any>>() => {
-	return <
-		_SERVICE = unknown,
-		I extends unknown[] = unknown[],
-		U extends unknown[] = unknown[],
-	>(
-		canisterConfigOrFn:
-			| RustCanisterConfig
-			| ((args: { ctx: TCtx }) => RustCanisterConfig)
-			| ((args: { ctx: TCtx }) => Promise<RustCanisterConfig>),
-	) => {
-		return makeRustCanister<_SERVICE, I, U, TCtx>(
-			baseLayer as BuilderLayer,
-			canisterConfigOrFn,
-		)
-	}
-}

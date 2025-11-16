@@ -1,12 +1,12 @@
 import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
-    BuilderResult,
+	BuilderResult,
 	ICEConfig,
 	ICEConfigFile,
 	ICEGlobalArgs,
 	Scope,
 	TaskTree,
-    TaskTreeNode,
+	TaskTreeNode,
 } from "../types/types.js"
 import { Path, FileSystem } from "@effect/platform"
 import { tsImport } from "tsx/esm/api"
@@ -117,61 +117,59 @@ const createService = (globalArgs: {
 		const { path: iceDirPath } = yield* IceDir
 
 		// Wrap tsImport in a console.log monkey patch.
-	const mod = yield* Effect.tryPromise({
-		try: () =>
-			tsImport(
-				path.resolve(appDirectory, configPath),
-				import.meta.url,
-			) as Promise<ICEConfigFile>,
-		catch: (error) =>
-			new ICEConfigError({
-				message: `Failed to get ICE config: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			}),
-	})
+		const mod = yield* Effect.tryPromise({
+			try: () =>
+				tsImport(
+					path.resolve(appDirectory, configPath),
+					import.meta.url,
+				) as Promise<ICEConfigFile>,
+			catch: (error) =>
+				new ICEConfigError({
+					message: `Failed to get ICE config: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				}),
+		})
 
-	const iceGlobalArgs: ICEGlobalArgs = {
-		network: globalArgs.network,
-		iceDirPath,
-		background: globalArgs.background,
-		policy: globalArgs.policy,
-		logLevel: globalArgs.logLevel,
-	}
+		const iceGlobalArgs: ICEGlobalArgs = {
+			network: globalArgs.network,
+			iceDirPath,
+			background: globalArgs.background,
+			policy: globalArgs.policy,
+			logLevel: globalArgs.logLevel,
+		}
 
-	const d = mod.default
-	if (typeof d !== "function") {
-		return yield* Effect.fail(
-			new ICEConfigError({
-				message: "Config file must export a default function (use Ice().tasks().make())",
-			}),
-		)
-	}
+		const d = mod.default
+		if (typeof d !== "function") {
+			return yield* Effect.fail(
+				new ICEConfigError({
+					message:
+						"Config file must export a default function (use Ice().tasks().make())",
+				}),
+			)
+		}
 
-	const environment = yield* Effect.tryPromise({
-		try: () => {
-			const result = d(iceGlobalArgs)
-			if (result instanceof Promise) {
-				return result
-			}
-			return Promise.resolve(result)
-		},
-		catch: (error) => {
-			return new ICEConfigError({
-				message: `Failed to load ICE environment: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			})
-		},
-	})
+		const environment = yield* Effect.tryPromise({
+			try: () => {
+				const result = d(iceGlobalArgs)
+				if (result instanceof Promise) {
+					return result
+				}
+				return Promise.resolve(result)
+			},
+			catch: (error) => {
+				return new ICEConfigError({
+					message: `Failed to load ICE environment: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				})
+			},
+		})
 
-	const config = environment.config
-	const taskTree = environment.tasks
-
-	const transformedTaskTree = yield* applyPlugins(taskTree)
+		const transformedTasks = yield* applyPlugins(environment.tasks)
 		return {
-			taskTree: transformedTaskTree,
-			config,
+			tasks: transformedTasks,
+			config: environment.config,
 			globalArgs,
 		}
 	})
@@ -183,7 +181,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 	ICEConfigService,
 	{
 		readonly config: Partial<ICEConfig>
-		readonly taskTree: TaskTree
+		readonly tasks: TaskTree
 		readonly globalArgs: {
 			network: string
 			logLevel: "debug" | "info" | "error"
@@ -209,14 +207,14 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			policy: "reuse" | "restart"
 			origin: "extension" | "cli"
 		},
-		taskTree: TaskTree,
+		tasks: TaskTree,
 		config: Partial<ICEConfig>,
 	) =>
 		Layer.effect(
 			ICEConfigService,
 			Effect.gen(function* () {
 				return {
-					taskTree,
+					tasks,
 					config,
 					globalArgs,
 				}

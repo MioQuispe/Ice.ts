@@ -97,7 +97,7 @@ export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
 	})
 	yield* Effect.logDebug("Running task by path", { taskPath })
 	const taskPathSegments: string[] = taskPath.split(":")
-	const { taskTree } = yield* ICEConfigService
+	const { tasks: taskTree } = yield* ICEConfigService
 	const task = yield* findTaskInTaskTree(taskTree, taskPathSegments)
 	const argsMap = yield* resolveCliArgsMap(task, cliTaskArgs)
 	yield* Effect.logDebug("Task found", taskPath)
@@ -585,7 +585,7 @@ const deployRun = async ({
 	// const telemetryExporter = new OTLPTraceExporter()
 	// TODO: convert to task
 	const program = Effect.fn("deploy")(function* () {
-		const { taskTree } = yield* ICEConfigService
+		const { tasks: taskTree } = yield* ICEConfigService
 		const Prompts = yield* PromptsService
 		const s = yield* Prompts.Spinner()
 		s.start("Deploying all canisters...")
@@ -769,7 +769,7 @@ const canistersCreateCommand = defineCommand({
 			s.start("Creating all canisters")
 
 			yield* Effect.logDebug("Running canisters:create")
-			const { taskTree } = yield* ICEConfigService
+			const { tasks: taskTree } = yield* ICEConfigService
 			const tasksWithPath = (yield* filterNodes(
 				taskTree,
 				(node) =>
@@ -838,7 +838,7 @@ const canistersBuildCommand = defineCommand({
 			s.start("Building all canisters")
 
 			yield* Effect.logDebug("Running canisters:create")
-			const { taskTree } = yield* ICEConfigService
+			const { tasks: taskTree } = yield* ICEConfigService
 			const tasksWithPath = (yield* filterNodes(
 				taskTree,
 				(node) =>
@@ -906,7 +906,7 @@ const canistersBindingsCommand = defineCommand({
 			s.start("Generating bindings for all canisters")
 
 			yield* Effect.logDebug("Running canisters:bindings")
-			const { taskTree } = yield* ICEConfigService
+			const { tasks: taskTree } = yield* ICEConfigService
 			const tasksWithPath = (yield* filterNodes(
 				taskTree,
 				(node) =>
@@ -962,7 +962,7 @@ const canistersInstallCommand = defineCommand({
 			s.start("Installing all canisters")
 
 			yield* Effect.logDebug("Running canisters:create")
-			const { taskTree } = yield* ICEConfigService
+			const { tasks: taskTree } = yield* ICEConfigService
 			const tasksWithPath = (yield* filterNodes(
 				taskTree,
 				(node) =>
@@ -1069,7 +1069,7 @@ const canistersStopCommand = defineCommand({
 			s.start("Stopping all canisters")
 
 			yield* Effect.logDebug("Running canisters:stop")
-			const { taskTree } = yield* ICEConfigService
+			const { tasks: taskTree } = yield* ICEConfigService
 			const tasksWithPath = (yield* filterNodes(
 				taskTree,
 				(node) =>
@@ -1398,7 +1398,7 @@ const canisterCommand = defineCommand({
 			}
 
 			const program = Effect.gen(function* () {
-				const { taskTree } = yield* ICEConfigService
+				const { tasks: taskTree } = yield* ICEConfigService
 				const canisterScopesWithPath = yield* filterNodes(
 					taskTree,
 					(node) =>
@@ -1525,7 +1525,7 @@ const taskCommand = defineCommand({
 			}
 
 			const program = Effect.gen(function* () {
-				const { taskTree } = yield* ICEConfigService
+				const { tasks: taskTree } = yield* ICEConfigService
 				const tasksWithPath = yield* filterNodes(
 					taskTree,
 					(node) =>

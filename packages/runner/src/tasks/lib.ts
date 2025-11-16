@@ -127,7 +127,7 @@ export class TaskNotFoundError extends Data.TaggedError("TaskNotFoundError")<{
 // TODO: do we need to get by id? will symbol work?
 export const getTaskPathById = (id: Symbol) =>
 	Effect.gen(function* () {
-		const { taskTree } = yield* ICEConfigService
+		const { tasks: taskTree } = yield* ICEConfigService
 		const result = yield* filterNodes(
 			taskTree,
 			(node) => node._tag === "task" && node.id === id,

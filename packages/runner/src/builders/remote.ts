@@ -358,22 +358,3 @@ export const remoteCanister = <_SERVICE = unknown>(
 		canisterConfigOrFn,
 	)
 }
-
-/**
- * Creates a typed remoteCanister builder with a specific TaskCtx type.
- * Use this to get autocomplete for the ctx parameter in all callback functions.
- */
-export const createRemoteCanister = <TCtx extends TaskCtx<any, any>>() => {
-	return <_SERVICE = unknown>(
-		canisterConfigOrFn:
-			| RemoteCanisterConfig
-			| ((args: { ctx: TCtx }) => RemoteCanisterConfig)
-			| ((args: { ctx: TCtx }) => Promise<RemoteCanisterConfig>),
-	) => {
-		return makeRemoteCanister<_SERVICE, TCtx>(
-			baseLayer as BuilderLayer,
-			canisterConfigOrFn,
-		)
-	}
-}
-
