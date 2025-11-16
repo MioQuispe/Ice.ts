@@ -3,6 +3,7 @@ import type {
     BuilderResult,
 	ICEConfig,
 	ICEConfigFile,
+	ICEGlobalArgs,
 	Scope,
 	TaskTree,
     TaskTreeNode,
@@ -116,47 +117,58 @@ const createService = (globalArgs: {
 		const { path: iceDirPath } = yield* IceDir
 
 		// Wrap tsImport in a console.log monkey patch.
-		const mod = yield* Effect.tryPromise({
-			try: () =>
-				tsImport(
-					path.resolve(appDirectory, configPath),
-					import.meta.url,
-				) as Promise<ICEConfigFile>,
-			catch: (error) =>
-				new ICEConfigError({
-					message: `Failed to get ICE config: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
-				}),
-		})
+	const mod = yield* Effect.tryPromise({
+		try: () =>
+			tsImport(
+				path.resolve(appDirectory, configPath),
+				import.meta.url,
+			) as Promise<ICEConfigFile>,
+		catch: (error) =>
+			new ICEConfigError({
+				message: `Failed to get ICE config: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			}),
+	})
 
-		const taskTree = Object.fromEntries(
-			Object.entries(mod).filter(([key]) => key !== "default"),
-		) as TaskTree
-		const iceCtx = { iceDirPath, ...globalArgs }
-		let config: Partial<ICEConfig>
-		const d = mod.default
-		if (typeof d === "function") {
-			// TODO: both sync and async in type signature
-			config = yield* Effect.tryPromise({
-				try: () => {
-					const callResult = d(iceCtx)
-					if (callResult instanceof Promise) {
-						return callResult
-					} else {
-						return Promise.resolve(callResult)
-					}
-				},
-				catch: (error) => {
-					return new ICEConfigError({
-						message: `Failed to get ICE config: ${error instanceof Error ? error.message : String(error)}`,
-					})
-				},
+	const iceGlobalArgs: ICEGlobalArgs = {
+		network: globalArgs.network,
+		iceDirPath,
+		background: globalArgs.background,
+		policy: globalArgs.policy,
+		logLevel: globalArgs.logLevel,
+	}
+
+	const d = mod.default
+	if (typeof d !== "function") {
+		return yield* Effect.fail(
+			new ICEConfigError({
+				message: "Config file must export a default function (use Ice().tasks().make())",
+			}),
+		)
+	}
+
+	const environment = yield* Effect.tryPromise({
+		try: () => {
+			const result = d(iceGlobalArgs)
+			if (result instanceof Promise) {
+				return result
+			}
+			return Promise.resolve(result)
+		},
+		catch: (error) => {
+			return new ICEConfigError({
+				message: `Failed to load ICE environment: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
 			})
-		} else {
-			config = d
-		}
-		const transformedTaskTree = yield* applyPlugins(taskTree)
+		},
+	})
+
+	const config = environment.config
+	const taskTree = environment.tasks
+
+	const transformedTaskTree = yield* applyPlugins(taskTree)
 		return {
 			taskTree: transformedTaskTree,
 			config,

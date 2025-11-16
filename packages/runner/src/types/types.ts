@@ -56,7 +56,7 @@ export type ICEConfig = {
 }
 
 export type ICEEnvironment = {
-    config: ICEConfig
+    config: Partial<ICEConfig>
     tasks: TaskTree
 }
 
@@ -170,15 +170,10 @@ export type ICEGlobalArgs = {
 	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 }
-// TODO: fix
 export type ICEConfigFile = {
-	default:
-		| Partial<ICEConfig>
-		| ((
-				globalArgs: ICEGlobalArgs,
-		  ) => Promise<Partial<ICEConfig>> | Partial<ICEConfig>)
-} & {
-	[key: string]: TaskTreeNode
+	default: (
+		globalArgs: ICEGlobalArgs,
+	) => Promise<ICEEnvironment> | ICEEnvironment
 }
 
 // export type ScopeEval = {

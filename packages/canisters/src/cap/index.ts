@@ -213,8 +213,8 @@ export const CapRouter = (
 
 // export type CapRouterTestActor = import("@dfinity/agent").ActorSubclass<import("./cap-router-test/types")._SERVICE>
 
-export const Cap = scope(ctx => ({
+export const Cap = scope({
   // bucket: CapBucket(),
   // root: CapRoot(),
   router: CapRouter().make(),
-}))
+})

@@ -1,20 +1,7 @@
 // import { customCanister } from "./builders/custom.js"
 // import { motokoCanister } from "./builders/motoko.js"
 import { SignIdentity } from "@icp-sdk/core/agent"
-import {
-	motokoCanister,
-	createMotokoCanister,
-	createRustCanister,
-	createRemoteCanister,
-	createScope,
-	createTask,
-	// customCanister,
-	createCustomCanister,
-	task,
-	scope,
-} from "./builders/index.js"
-import { makeCliRuntime } from "./cli/index.js"
-import type { ICEConfig, ICEGlobalArgs } from "./types/types.js"
+import type { ICEConfig, ICEGlobalArgs, ICEEnvironment } from "./types/types.js"
 import type { Scope, TaskTree } from "./types/types.js"
 import { TaskCtx } from "./services/taskRuntime.js"
 export { Opt } from "./types/types.js"
@@ -26,33 +13,45 @@ export type { InstallModes } from "./services/replica.js"
 export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
 
-export const Ice = <T extends Partial<ICEConfig>>(
-	configOrFn: T | ((ctx: ICEGlobalArgs) => Promise<T>),
-): {
-	config: T | ((ctx: ICEGlobalArgs) => Promise<T>)
-	canister: {
-		custom: ReturnType<typeof createCustomCanister<TaskCtx<{}, T>>>
-		motoko: ReturnType<typeof createMotokoCanister<TaskCtx<{}, T>>>
-		rust: ReturnType<typeof createRustCanister<TaskCtx<{}, T>>>
-		remote: ReturnType<typeof createRemoteCanister<TaskCtx<{}, T>>>
+// Export additional types for user configs
+export type { ICEConfig, ICEGlobalArgs, ICEEnvironment, TaskTree, Scope, Task } from "./types/types.js"
+
+class IceBuilder<C extends Partial<ICEConfig>> {
+	#configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C
+	#tasksFn?: (env: C & ICEGlobalArgs) => TaskTree
+
+	constructor(configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C) {
+		this.#configFn = configFn
 	}
-	task: ReturnType<typeof createTask<TaskCtx<{}, T>>>
-	scope: ReturnType<typeof createScope<TaskCtx<{}, T>>>
-} => {
-	// TODO: return canister builders with types also
-	return {
-		// TODO: pass T to builders
-		config: configOrFn,
-		task: createTask<TaskCtx<{}, T>>(),
-		// task: task,
-		scope: createScope<TaskCtx<{}, T>>(),
-		canister: {
-			custom: createCustomCanister<TaskCtx<{}, T>>(),
-			motoko: createMotokoCanister<TaskCtx<{}, T>>(),
-			rust: createRustCanister<TaskCtx<{}, T>>(),
-			remote: createRemoteCanister<TaskCtx<{}, T>>(),
-		},
+
+	tasks(tasksFn: (env: C & ICEGlobalArgs) => TaskTree): IceBuilder<C> {
+		this.#tasksFn = tasksFn
+		return this
 	}
+
+	make(): (globalArgs: ICEGlobalArgs) => Promise<ICEEnvironment> {
+		return async (globalArgs: ICEGlobalArgs): Promise<ICEEnvironment> => {
+			// Resolve config (handles both sync and async)
+			const configResult = this.#configFn(globalArgs)
+			const config = configResult instanceof Promise 
+				? await configResult 
+				: configResult
+
+			// Create env by merging config and globalArgs
+			const env = { ...config, ...globalArgs } as C & ICEGlobalArgs
+
+			// Resolve tasks
+			const tasks = this.#tasksFn ? this.#tasksFn(env) : {}
+
+			return { config, tasks }
+		}
+	}
+}
+
+export const Ice = <C extends Partial<ICEConfig>>(
+	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C
+): IceBuilder<C> => {
+	return new IceBuilder(configFn)
 }
 // const ice = Ice({
 // 	users: {
