@@ -4,7 +4,7 @@ import * as url from "node:url"
 import * as path from "node:path"
 import * as fs from "node:fs/promises"
 import { Principal } from "@icp-sdk/core/principal"
-import { type SignIdentity } from "@icp-sdk/core/agent"
+import { type Identity } from "@icp-sdk/core/agent"
 import {
 	CreateInstanceOptions,
 	IcpConfigFlag,
@@ -229,7 +229,7 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 	}
 
-	private async getMgmt(identity: SignIdentity) {
+	private async getMgmt(identity: Identity) {
 		assertStarted(this.client, "PICReplica.getMgmt")
 		const Mgmt = createActorClass<ManagementActor>(
 			idlFactory,
@@ -244,7 +244,7 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async getCanisterStatus(params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<CanisterStatus> {
 		const { canisterId, identity } = params
 		const mgmt = await this.getMgmt(identity)
@@ -272,7 +272,7 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async getCanisterInfo(params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<CanisterInfo> {
 		const { canisterId, identity } = params
 		const mgmt = await this.getMgmt(identity)
@@ -309,7 +309,7 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async createCanister(params: {
 		canisterId: string | undefined
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<string> {
 		assertStarted(this.pic, "PICReplica.createCanister")
 		const { canisterId, identity } = params
@@ -388,7 +388,7 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async stopCanister(params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<void> {
 		const mgmt = await this.getMgmt(params.identity)
 		try {
@@ -404,7 +404,7 @@ export class PICReplica implements ReplicaServiceClass {
 
 	async removeCanister(params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<void> {
 		const mgmt = await this.getMgmt(params.identity)
 		try {
@@ -422,7 +422,7 @@ export class PICReplica implements ReplicaServiceClass {
 		canisterId: string
 		wasm: Uint8Array
 		encodedArgs: Uint8Array
-		identity: SignIdentity
+		identity: Identity
 		mode: "install" | "upgrade" | "reinstall"
 	}): Promise<void> {
 		assertStarted(this.pic, "PICReplica.installCode")
@@ -622,7 +622,7 @@ export class PICReplica implements ReplicaServiceClass {
 	async createActor<_SERVICE>(params: {
 		canisterId: string
 		canisterDID: any
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<ActorSubclass<_SERVICE>> {
 		assertStarted(this.client, "PICReplica.createActor")
 		const actor = this.pic!.createActor(

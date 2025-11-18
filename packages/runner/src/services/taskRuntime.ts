@@ -55,7 +55,6 @@ import { Deployment, DeploymentsService } from "./deployments.js"
 // import { DfxReplica } from "./dfx.js"
 import { ClackLoggingLive } from "./logger.js"
 import { PromptsService } from "./prompts.js"
-import { SignIdentity } from "@dfinity/agent"
 import { ConfirmOptions } from "@clack/prompts"
 import { ICEConfig } from "../types/types.js"
 

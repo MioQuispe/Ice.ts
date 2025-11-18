@@ -1,4 +1,4 @@
-import type { ActorSubclass, SignIdentity } from "@icp-sdk/core/agent"
+import { ActorSubclass, SignIdentity as SignIdentityType } from "@icp-sdk/core/agent"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { ConfigError } from "effect"
 import { ICEConfigError } from "../services/iceConfig.js"
@@ -23,6 +23,16 @@ import { DeploymentError } from "../canister.js"
 import { Schema as S } from "effect"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { LogLevel } from "effect/LogLevel"
+// import type { SignIdentity } from "@icp-sdk/core/agent"
+import { type Identity } from "../index.js"
+
+// TODO:.....
+// type SignIdentity = {
+//     getPublicKey: () => unknown;
+//     sign: (blob: Uint8Array<ArrayBufferLike>) => Promise<unknown>;
+//     getPrincipal: () => unknown;
+//     transformRequest: (request: unknown) => Promise<unknown>;
+// }
 
 export type ReplicaConfig = {
 	// TODO: use pocket-ic subnet config
@@ -33,8 +43,10 @@ export type ReplicaConfig = {
 	type: "pocketic" | "dfx"
 }
 
+// const t = Identity
+
 export type ICEUser = {
-	identity: SignIdentity
+	identity: Identity
 	principal: string
 	accountId: string
 	// agent: Agent

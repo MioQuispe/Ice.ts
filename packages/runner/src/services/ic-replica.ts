@@ -4,7 +4,7 @@ import { Principal } from "@icp-sdk/core/principal"
 import {
 	Actor,
 	HttpAgent,
-	type SignIdentity,
+    type Identity,
 	type ActorSubclass,
 } from "@icp-sdk/core/agent"
 import { sha256 } from "js-sha256"
@@ -129,7 +129,7 @@ export class ICReplica implements ReplicaServiceClass {
 		this.manual = opts.manual ?? true
 	}
 
-	private async getAgent(identity: SignIdentity): Promise<HttpAgent> {
+	private async getAgent(identity: Identity): Promise<HttpAgent> {
 		try {
 			const agent = await HttpAgent.create({
 				identity,
@@ -146,7 +146,7 @@ export class ICReplica implements ReplicaServiceClass {
 		}
 	}
 
-	private async getMgmt(identity: SignIdentity): Promise<ManagementActor> {
+	private async getMgmt(identity: Identity): Promise<ManagementActor> {
 		const agent = await this.getAgent(identity)
 		const mgmt = Actor.createActor<ManagementActor>(idlFactory, {
 			canisterId: "aaaaa-aa",
@@ -160,7 +160,7 @@ export class ICReplica implements ReplicaServiceClass {
 		identity,
 	}: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<CanisterStatus> {
 		try {
 			const mgmt = await this.getMgmt(identity)
@@ -197,7 +197,7 @@ export class ICReplica implements ReplicaServiceClass {
 		identity,
 	}: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<CanisterInfo> {
 		try {
 			const mgmt = await this.getMgmt(identity)
@@ -232,7 +232,7 @@ export class ICReplica implements ReplicaServiceClass {
 		canisterId: string
 		wasm: Uint8Array
 		encodedArgs: Uint8Array
-		identity: SignIdentity
+		identity: Identity
 		mode: InstallModes
 	}): Promise<void> {
 		try {
@@ -330,7 +330,7 @@ export class ICReplica implements ReplicaServiceClass {
 		identity,
 	}: {
 		canisterId: string | undefined
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<string> {
 		try {
 			const mgmt = await this.getMgmt(identity)
@@ -375,7 +375,7 @@ export class ICReplica implements ReplicaServiceClass {
 		identity,
 	}: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<void> {
 		try {
 			const mgmt = await this.getMgmt(identity)
@@ -394,7 +394,7 @@ export class ICReplica implements ReplicaServiceClass {
 		identity,
 	}: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<void> {
 		try {
 			const mgmt = await this.getMgmt(identity)
@@ -415,7 +415,7 @@ export class ICReplica implements ReplicaServiceClass {
 	}: {
 		canisterId: string
 		canisterDID: any
-		identity: SignIdentity
+		identity: Identity
 	}): Promise<ActorSubclass<_SERVICE>> {
 		console.log("getting agent....")
 		const agent = await this.getAgent(identity)

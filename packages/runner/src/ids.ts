@@ -1,11 +1,6 @@
 import { Effect, Layer, Context, Data, Config, ManagedRuntime } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
-import type { Principal } from "@icp-sdk/core/principal"
-import { Actor, HttpAgent, type SignIdentity } from "@icp-sdk/core/agent"
-import { IDL } from "@icp-sdk/core/candid"
-import find from "find-process"
-import { idlFactory } from "./canisters/management_latest/management.did.js"
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import os from "node:os"
 import psList from "ps-list"
@@ -13,12 +8,6 @@ import psList from "ps-list"
 export class IdsError extends Data.TaggedError("IdsError")<{
 	message: string
 }> {}
-
-type User = {
-	accountId: string
-	principal: Principal
-	identity: SignIdentity
-}
 
 const parseEd25519PrivateKey = (pem: string) => {
 	const cleanedPem = pem

@@ -19,6 +19,7 @@
 		"moduleResolution": "NodeNext",
 		"resolveJsonModule": true,
 		"isolatedModules": true,
+        "declarationMap": true,
 		"baseUrl": ".",
 
 		"noUncheckedIndexedAccess": true,

@@ -1,6 +1,6 @@
 // import { customCanister } from "./builders/custom.js"
 // import { motokoCanister } from "./builders/motoko.js"
-import { SignIdentity } from "@icp-sdk/core/agent"
+// import { SignIdentity } from "@icp-sdk/core/agent"
 import type {
 	ICEConfig,
 	ICEGlobalArgs,
@@ -19,6 +19,7 @@ export type { InstallModes } from "./services/replica.js"
 export type { TaskCtxExtension } from "./services/taskRuntime.js"
 export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
+export type { Identity } from "@icp-sdk/core/agent"
 
 // Export additional types for user configs
 export type {
@@ -29,10 +30,11 @@ export type {
 	TaskTree,
 	Scope,
 	Task,
-    InferIceConfig,
+	InferIceConfig,
+	ICEUser,
 } from "./types/types.js"
 
-class IceBuilder<C extends Partial<ICEConfig>> {
+export class IceBuilder<C extends Partial<ICEConfig>> {
 	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
 	#plugins: ICEPlugin[] = []
 

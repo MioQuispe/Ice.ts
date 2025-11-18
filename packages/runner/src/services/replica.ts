@@ -2,7 +2,7 @@ import { Effect, Context, Data, Layer } from "effect"
 import type {
 	ActorSubclass,
 	HttpAgent,
-	SignIdentity,
+    Identity,
 } from "@icp-sdk/core/agent"
 import type { canister_status_result } from "src/canisters/management_latest/management.types.js"
 import { Principal } from "@icp-sdk/core/principal"
@@ -261,34 +261,34 @@ export type ReplicaServiceClass = {
 		canisterId: string
 		wasm: Uint8Array
 		encodedArgs: Uint8Array
-		identity: SignIdentity
+		identity: Identity
 		mode: InstallModes
 		// TODO: progress callback?
 	}) => Promise<void>
 	getCanisterStatus: (params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<CanisterStatus>
 	getCanisterInfo: (params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<CanisterInfo>
 	stopCanister: (params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<void>
 	removeCanister: (params: {
 		canisterId: string
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<void>
 	createCanister: (params: {
 		canisterId: string | undefined
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<string> // returns canister id
 	createActor: <_SERVICE>(params: {
 		canisterId: string
 		canisterDID: any
-		identity: SignIdentity
+		identity: Identity
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
 	start: (ctx: ICEGlobalArgs) => Promise<void>

@@ -4,7 +4,7 @@
 	"description": "Helper extension for ICE task runner",
 	"publisher": "MioQuispe",
 	"repository": "https://github.com/MioQuispe/ICE",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"categories": ["Other"],
 	"activationEvents": [
 		"onCommand:extension.runIceTask",
