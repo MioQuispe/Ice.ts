@@ -9,12 +9,12 @@ const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 const canisterName = "icrc1_registry"
 
 type NFIDIcrc1RegistryInitArgs = {
-  canisterId?: string
+	canisterId?: string
 }
 // const Conf = IDL.Record({ 'im_canister' : IDL.Opt(IDL.Text) });
 // return [Conf];
 type InitArgs = {
-  im_canister: Opt<string>
+	im_canister: Opt<string>
 }
 
 /**
@@ -23,35 +23,50 @@ type InitArgs = {
  * @returns A canister instance.
  */
 export const NFIDIcrc1Registry = (
-  initArgsOrFn?:
-    | NFIDIcrc1RegistryInitArgs
-    | ((args: { ctx: TaskCtx }) => NFIDIcrc1RegistryInitArgs),
+	initArgsOrFn?:
+		| NFIDIcrc1RegistryInitArgs
+		| ((args: { ctx: TaskCtx }) => NFIDIcrc1RegistryInitArgs),
 ) =>
-  canister.custom<_SERVICE, [InitArgs]>(({ ctx }) => {
-    const initArgs =
-      typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-    return {
-      canisterId: initArgs?.canisterId,
-      wasm: path.resolve(
-        __dirname,
-        `./nfid/${canisterName}/${canisterName}.wasm.gz`,
-      ),
-      candid: path.resolve(
-        __dirname,
-        `./nfid/${canisterName}/${canisterName}.did`,
-      ),
-    }
-  })
-    .dependsOn({ NFIDIdentityManager: NFIDIdentityManager.provides })
-    .installArgs(async ({ ctx, deps }) => {
-      // TODO: Add installation logic if needed.
-      const initArgs =
-        typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-      return [
-        {
-          im_canister: Opt<string>(
-            deps.NFIDIdentityManager.canisterId,
-          ),
-        },
-      ]
-    })
+	canister
+		.custom<_SERVICE, [InitArgs]>(({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: initArgs?.canisterId,
+				wasm: path.resolve(
+					__dirname,
+					`./nfid/${canisterName}/${canisterName}.wasm.gz`,
+				),
+				candid: path.resolve(
+					__dirname,
+					`./nfid/${canisterName}/${canisterName}.did`,
+				),
+			}
+		})
+		.dependsOn({ NFIDIdentityManager: NFIDIdentityManager.provides })
+		.installArgs(async ({ ctx, deps }) => {
+			// TODO: Add installation logic if needed.
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return [
+				{
+					im_canister: Opt<string>(
+						deps.NFIDIdentityManager.canisterId,
+					),
+				},
+			]
+		})
+
+NFIDIcrc1Registry.remote = (canisterId: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId,
+		candid: path.resolve(
+			__dirname,
+			`./nfid/${canisterName}/${canisterName}.did`,
+		),
+	})
+}

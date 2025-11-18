@@ -25,6 +25,7 @@ import {
 	ValidProvidedDeps,
 	baseLayer,
 	type BuilderLayer,
+	makeLoggerLayer,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -228,7 +229,13 @@ export const makeRustDeployTask = <_SERVICE>(
 
 					yield* Effect.logDebug("Canister deployed successfully")
 					return taskResult
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		description: "Deploy canister code",
 		tags: [Tags.CANISTER, Tags.DEPLOY, Tags.RUST],
@@ -321,7 +328,13 @@ export const makeRustBindingsTask = (
 						didJSPath,
 						didTSPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -342,19 +355,37 @@ export const makeRustBindingsTask = (
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Generate bindings for Rust canister",
@@ -452,7 +483,8 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						appDir,
 						canisterConfig.src,
 					)
-					const cargoTomlPath = yield* getCargoPath(cargoTomlOrDirPath)
+					const cargoTomlPath =
+						yield* getCargoPath(cargoTomlOrDirPath)
 					// const cargoTomlPath = ""
 
 					const cargoTomlContent =
@@ -581,7 +613,15 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						wasmPath: outWasmPath,
 						candidPath: outCandidPath,
 					}
-				}).pipe(Effect.withSpan("task_effect"), Effect.scoped),
+				}).pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+					Effect.withSpan("task_effect"),
+					Effect.scoped,
+				),
 			),
 		computeCacheKey: (input) => {
 			const buildInput = {
@@ -616,7 +656,8 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						taskCtx.appDir,
 						canisterConfig.src,
 					)
-					const cargoTomlPath = yield* getCargoPath(cargoTomlOrDirPath)
+					const cargoTomlPath =
+						yield* getCargoPath(cargoTomlOrDirPath)
 					const srcDir = path.join(path.dirname(cargoTomlPath), "src")
 
 					// Hash Cargo.toml
@@ -648,19 +689,37 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Build Rust canister",
@@ -965,8 +1024,18 @@ export class RustCanisterBuilder<
 		TCtx
 	> {
 		const finalDeps = normalizeDepsMap(providedDeps) as NP
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, D, NP, TCtx>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, D, NP, TCtx>
+		const installArgs = this.#installArgs as unknown as ArgsFields<
+			I,
+			D,
+			NP,
+			TCtx
+		>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<
+			U,
+			D,
+			NP,
+			TCtx
+		>
 		const install_args = {
 			...this.#scope.children.install_args,
 			dependencies: finalDeps,
@@ -1003,8 +1072,18 @@ export class RustCanisterBuilder<
 		TCtx
 	> {
 		const updatedDependsOn = normalizeDepsMap(dependencies) as ND
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, ND, P, TCtx>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, ND, P, TCtx>
+		const installArgs = this.#installArgs as unknown as ArgsFields<
+			I,
+			ND,
+			P,
+			TCtx
+		>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<
+			U,
+			ND,
+			P,
+			TCtx
+		>
 		const updatedChildren = {
 			...this.#scope.children,
 			install_args: {

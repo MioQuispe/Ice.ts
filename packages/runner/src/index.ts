@@ -1,55 +1,73 @@
 // import { customCanister } from "./builders/custom.js"
 // import { motokoCanister } from "./builders/motoko.js"
 import { SignIdentity } from "@icp-sdk/core/agent"
-import type { ICEConfig, ICEGlobalArgs, ICEEnvironment } from "./types/types.js"
+import type {
+	ICEConfig,
+	ICEGlobalArgs,
+	ICEEnvironment,
+	ICEConfigFile,
+	ICEPlugin,
+} from "./types/types.js"
 import type { Scope, TaskTree } from "./types/types.js"
-import { TaskCtx } from "./services/taskRuntime.js"
+import { TaskCtx, TaskCtxExtension } from "./services/taskRuntime.js"
 export { Opt } from "./types/types.js"
 export * from "./builders/index.js"
 export type { CanisterScopeSimple } from "./builders/lib.js"
 export type { CustomCanisterScope } from "./builders/custom.js"
 export * from "./ids.js"
 export type { InstallModes } from "./services/replica.js"
+export type { TaskCtxExtension } from "./services/taskRuntime.js"
 export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
 
 // Export additional types for user configs
-export type { ICEConfig, ICEGlobalArgs, ICEEnvironment, TaskTree, Scope, Task } from "./types/types.js"
+export type {
+	ICEConfig,
+	ICEGlobalArgs,
+	ICEEnvironment,
+	ICEPlugin,
+	TaskTree,
+	Scope,
+	Task,
+} from "./types/types.js"
 
 class IceBuilder<C extends Partial<ICEConfig>> {
-	#configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C
-	#tasksFn?: (env: C & ICEGlobalArgs) => TaskTree
+	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
+	#plugins: ICEPlugin[] = []
 
-	constructor(configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C) {
-		this.#configFn = configFn
+	constructor(config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C) {
+		this.#config = config
 	}
 
-	tasks(tasksFn: (env: C & ICEGlobalArgs) => TaskTree): IceBuilder<C> {
-		this.#tasksFn = tasksFn
+	extendEnv(
+		plugin: (
+			env: ICEEnvironment & { args: ICEGlobalArgs },
+		) => Promise<ICEEnvironment> | ICEEnvironment,
+	): IceBuilder<C> {
+		this.#plugins.push(plugin)
 		return this
 	}
 
-	make(): (globalArgs: ICEGlobalArgs) => Promise<ICEEnvironment> {
-		return async (globalArgs: ICEGlobalArgs): Promise<ICEEnvironment> => {
-			// Resolve config (handles both sync and async)
-			const configResult = this.#configFn(globalArgs)
-			const config = configResult instanceof Promise 
-				? await configResult 
-				: configResult
+	make(): (
+		globalArgs: ICEGlobalArgs,
+	) => Promise<{ config: C; plugins: ICEPlugin[] }> {
+		return async (globalArgs: ICEGlobalArgs) => {
+			const configResult =
+				typeof this.#config === "function"
+					? this.#config(globalArgs)
+					: this.#config
+			const config =
+				configResult instanceof Promise
+					? await configResult
+					: configResult
 
-			// Create env by merging config and globalArgs
-			const env = { ...config, ...globalArgs } as C & ICEGlobalArgs
-
-			// Resolve tasks
-			const tasks = this.#tasksFn ? this.#tasksFn(env) : {}
-
-			return { config, tasks }
+			return { config, plugins: this.#plugins }
 		}
 	}
 }
 
 export const Ice = <C extends Partial<ICEConfig>>(
-	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C
+	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
 ): IceBuilder<C> => {
 	return new IceBuilder(configFn)
 }

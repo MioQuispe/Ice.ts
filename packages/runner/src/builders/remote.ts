@@ -11,6 +11,8 @@ import {
 	baseLayer,
 	type BuilderLayer,
 	ConfigTask,
+	makeLoggerLayer,
+	CanisterDidModule,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath, ResolvedParamsToArgs } from "../tasks/lib.js"
@@ -127,7 +129,7 @@ export const makeRemoteDeployTask = <_SERVICE>(
 
 					yield* Effect.logDebug("Running bindings task")
 					// Generate bindings
-					yield* Effect.tryPromise({
+					const { didJSPath, didTSPath } = yield* Effect.tryPromise({
 						try: () =>
 							runTask(parentScope.children.bindings, {
 								candid: candidPath,
@@ -147,9 +149,23 @@ export const makeRemoteDeployTask = <_SERVICE>(
 					// Create actor for remote canister
 					const { replica } = taskCtx
 					const identity = taskCtx.roles.deployer.identity
-					const path = yield* Path.Path
-					const canisterDID = path.resolve(taskCtx.appDir, candidPath)
-					
+					const canisterDID = yield* Effect.tryPromise({
+						try: () =>
+							import(didJSPath) as Promise<CanisterDidModule>,
+						catch: (e) => {
+							return new TaskError({
+								message: "Failed to load canisterDID",
+							})
+						},
+					})
+					yield* Effect.logDebug(
+						"Creating actor for remote canister",
+						{
+							canisterId,
+							canisterDID,
+							identity,
+						},
+					)
 					const actor = yield* Effect.tryPromise({
 						try: () =>
 							replica.createActor<_SERVICE>({
@@ -163,13 +179,39 @@ export const makeRemoteDeployTask = <_SERVICE>(
 							}),
 					})
 
+					yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.canisterIds.setCanisterId({
+								canisterName,
+								network: taskCtx.network,
+								canisterId,
+							}),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+
+					yield* Effect.logDebug(
+						"Remote canister deployed successfully",
+						{
+							canisterId,
+							canisterName,
+							actor,
+							mode: "install" as InstallModes,
+						},
+					)
+
 					return {
 						canisterId,
 						canisterName,
 						actor,
+						// TODO: how to handle?
 						mode: "install" as InstallModes,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Connect to remote canister",
 		tags: [Tags.CANISTER, Tags.DEPLOY, Tags.REMOTE],
@@ -243,7 +285,10 @@ export const makeRemoteBindingsTask = (
 						didJSPath,
 						didTSPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -264,19 +309,28 @@ export const makeRemoteBindingsTask = (
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".input"),
+				),
 			),
 		encode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
+				),
 			),
 		decode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
+				),
 			),
 		encodingFormat: "string",
 		description: "Generate bindings for remote canister",

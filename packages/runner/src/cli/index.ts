@@ -102,7 +102,8 @@ export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
 	const argsMap = yield* resolveCliArgsMap(task, cliTaskArgs)
 	yield* Effect.logDebug("Task found", taskPath)
 	return yield* runTask(task, argsMap, progressCb).pipe(
-		Effect.withConcurrency("unbounded"),
+		Effect.withConcurrency(1),
+		// Effect.withConcurrency("unbounded"),
 	)
 })
 
@@ -250,7 +251,7 @@ export const makeCliRuntime = ({
 	// TODO: use staging & ic urls
 	const stagingReplicaLayer = layerFromAsyncReplica(
 		new ICReplica({
-			host: "0.0.0.0",
+			host: "http://0.0.0.0",
 			port: 8080,
 		}),
 		{
@@ -263,8 +264,10 @@ export const makeCliRuntime = ({
 	)
 	const icReplicaLayer = layerFromAsyncReplica(
 		new ICReplica({
-			host: "0.0.0.0",
-			port: 8080,
+			// host: "0.0.0.0",
+			// port: 8080,
+			host: "https://icp-api.io",
+			port: 80,
 		}),
 		{
 			iceDirPath: iceDirName,
@@ -278,10 +281,10 @@ export const makeCliRuntime = ({
 		// local: picReplicaLayer,
 		local: picReplicaLayer,
 		staging: stagingReplicaLayer,
-		ic: icReplicaLayer,
+		ic: picReplicaLayer,
 	}
 
-	// TODO: clean up
+	// TODO: provide them all??
 	//@ts-ignore
 	const ReplicaService = replicas[globalArgs.network] as typeof replicas.local
 
@@ -329,6 +332,7 @@ export const makeCliRuntime = ({
 		TaskRuntimeLayer.pipe(
 			Layer.provide(
 				Layer.mergeAll(
+                    ClackLoggingLive,
 					NodeContext.layer,
 					KVStorageLayer,
 					ICEConfigLayer,

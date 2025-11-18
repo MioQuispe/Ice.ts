@@ -10,61 +10,76 @@ import { Principal } from "@dfinity/principal"
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
 type NFIDDelegationFactoryInitArgs = {
-  canisterId?: string
+	canisterId?: string
 }
 
 // TODO:
 type InitArgs = {
-  im_canister: Principal
+	im_canister: Principal
 }
 
 const canisterName = "delegation_factory"
 
 export const NFIDDelegationFactory = (
-  initArgsOrFn?:
-    | NFIDDelegationFactoryInitArgs
-    | ((args: { ctx: TaskCtx }) => NFIDDelegationFactoryInitArgs),
+	initArgsOrFn?:
+		| NFIDDelegationFactoryInitArgs
+		| ((args: { ctx: TaskCtx }) => NFIDDelegationFactoryInitArgs),
 ) => {
-  //   return customCanister<[Opt<InitArgs>], _SERVICE>((ctx) => {
-  return canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
-    const initArgs =
-      typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-    return {
-      canisterId: initArgs?.canisterId,
-      wasm: path.resolve(
-        __dirname,
-        `./nfid/${canisterName}/${canisterName}.wasm.gz`,
-      ),
-      candid: path.resolve(
-        __dirname,
-        `./nfid/${canisterName}/${canisterName}.did`,
-      ),
-    }
-  })
-    .dependsOn({
-      NFIDIdentityManager: NFIDIdentityManager.provides,
-    })
-    .installArgs(async ({ ctx, deps }) => {
-      // TODO: optional cap canister?
-      // dependencies: [...providers],
-      const initArgs =
-        typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-      // TODO: proper types
-      return [
-        // [{}]
-        // {}
-        Opt<InitArgs>({
-          im_canister: Principal.fromText(
-            deps.NFIDIdentityManager.canisterId,
-          ),
-        }),
-      ]
-      //   return [[{
-      //     // im_canister: [Principal.fromText(
-      //     //   ctx.dependencies.NFIDIdentityManager.canisterId,
-      //     // )],
-      //     // im_canister: []
-      //     // im_canister: ctx.dependencies.NFIDIdentityManager.canisterId,
-      //   }]]
-    })
+	//   return customCanister<[Opt<InitArgs>], _SERVICE>((ctx) => {
+	return canister
+		.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: initArgs?.canisterId,
+				wasm: path.resolve(
+					__dirname,
+					`./nfid/${canisterName}/${canisterName}.wasm.gz`,
+				),
+				candid: path.resolve(
+					__dirname,
+					`./nfid/${canisterName}/${canisterName}.did`,
+				),
+			}
+		})
+		.dependsOn({
+			NFIDIdentityManager: NFIDIdentityManager.provides,
+		})
+		.installArgs(async ({ ctx, deps }) => {
+			// TODO: optional cap canister?
+			// dependencies: [...providers],
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? initArgsOrFn({ ctx })
+					: initArgsOrFn
+			// TODO: proper types
+			return [
+				// [{}]
+				// {}
+				Opt<InitArgs>({
+					im_canister: Principal.fromText(
+						deps.NFIDIdentityManager.canisterId,
+					),
+				}),
+			]
+			//   return [[{
+			//     // im_canister: [Principal.fromText(
+			//     //   ctx.dependencies.NFIDIdentityManager.canisterId,
+			//     // )],
+			//     // im_canister: []
+			//     // im_canister: ctx.dependencies.NFIDIdentityManager.canisterId,
+			//   }]]
+		})
+}
+
+NFIDDelegationFactory.remote = (canisterId: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId,
+		candid: path.resolve(
+			__dirname,
+			`./nfid/${canisterName}/${canisterName}.did`,
+		),
+	})
 }

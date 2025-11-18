@@ -84,6 +84,16 @@ export const ICRC1Ledger = (
 	})
 }
 
+ICRC1Ledger.remote = (canisterId: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId,
+		candid: path.resolve(
+			__dirname,
+			`./${canisterName}/${canisterName}.did`,
+		),
+	})
+}
+
 ICRC1Ledger.makeUpgradeArgs = (): [LedgerArg] => [
 	{
 		Upgrade: [],

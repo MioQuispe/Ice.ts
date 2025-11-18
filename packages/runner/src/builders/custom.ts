@@ -28,6 +28,7 @@ import {
 	type BuilderLayer,
 	InstallArgsTask,
 	ConfigTask,
+	makeLoggerLayer,
 } from "./lib.js"
 import {
 	getNodeByPath,
@@ -213,15 +214,26 @@ export const makeCustomDeployTask = <_SERVICE>(
 					const result = yield* Effect.all(
 						[
 							Effect.gen(function* () {
+								const startTime = performance.now()
 								yield* Effect.logDebug(
 									"Now running create task",
+									{ startTime },
+								)
+								yield* Effect.logDebug(
+									"About to call runTask for create",
+									{ elapsed: performance.now() - startTime },
 								)
 								const canisterId = yield* Effect.tryPromise({
-									try: () =>
-										runTask(
+									try: () => {
+										const beforeRunTask = performance.now()
+										console.log(
+											`[TIMING] Before runTask (create): ${beforeRunTask - startTime}ms elapsed`,
+										)
+										return runTask(
 											parentScope.children.create,
 											{},
-										),
+										)
+									},
 									catch: (error) => {
 										return new TaskError({
 											message: String(error),
@@ -305,7 +317,13 @@ export const makeCustomDeployTask = <_SERVICE>(
 					})
 					yield* Effect.logDebug("Canister deployed successfully")
 					return taskResult
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		description: "Deploy canister code",
 		tags: [Tags.CANISTER, Tags.DEPLOY, Tags.CUSTOM],
@@ -354,7 +372,13 @@ export const makeBindingsTask = (
 						didJSPath,
 						didTSPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -376,19 +400,37 @@ export const makeBindingsTask = (
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Generate bindings for custom canister",
@@ -508,7 +550,13 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 						wasmPath: outWasmPath,
 						candidPath: outCandidPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		computeCacheKey: (input) => {
 			// TODO: pocket-ic could be restarted?
@@ -532,8 +580,6 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 						depResults,
 						(dep) => dep.cacheKey,
 					)
-					const path = yield* Path.Path
-					const { appDir, iceDir } = taskCtx
 					// TODO...? might be problematic if user does lots of async
 					const canisterConfig = depResults["config"]
 						?.result as CustomCanisterConfig
@@ -568,19 +614,37 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Build custom canister",
@@ -778,7 +842,7 @@ export class CustomCanisterBuilder<
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
 			this.#builderLayer,
-            // TODO: fix later. no any
+			// TODO: fix later. no any
 			this.#installArgs as any,
 			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies,
@@ -1051,7 +1115,7 @@ export const makeCustomCanister = <
 	_SERVICE,
 	TCtx
 > => {
-    // TODO: fix later. no any
+	// TODO: fix later. no any
 	const config = makeConfigTask(builderLayer, canisterConfigOrFn as any)
 	const installArgs = {
 		fn: () => [] as I,

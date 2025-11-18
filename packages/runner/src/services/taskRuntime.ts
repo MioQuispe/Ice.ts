@@ -11,6 +11,7 @@ import {
 	ConfigProvider,
 	Config,
 	Option,
+    Scope,
 } from "effect"
 import type { ICEUser, Task } from "../types/types.js"
 import { TaskParamsToArgs, TaskSuccess } from "../tasks/lib.js"
@@ -25,7 +26,7 @@ import fs, { realpathSync } from "node:fs"
 import { NodeSdk as OpenTelemetryNodeSdk } from "@effect/opentelemetry"
 import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base"
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http"
-import type { Scope, TaskTree } from "../types/types.js"
+import type { TaskTree } from "../types/types.js"
 import { TaskRegistry } from "./taskRegistry.js"
 export { Opt } from "../types/types.js"
 import { layerFileSystem, layerMemory } from "@effect/platform/KeyValueStore"
@@ -96,14 +97,17 @@ export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 export type InitializedICEConfig<I extends Partial<ICEConfig>> = {
 	users: I["users"]
 	roles: {
-        [key in keyof I["roles"]]: ICEUser
-    }
+		[key in keyof I["roles"]]: ICEUser
+	}
 	networks: {
 		[key: string]: {
 			replica: ReplicaServiceClass
 		}
 	}
 }
+
+// 👇 extension hook – empty in the library
+export interface TaskCtxExtension {} 
 
 export type TaskCtx<
 	A extends Record<string, unknown> = {},
@@ -125,6 +129,7 @@ export type TaskCtx<
 	readonly taskPath: string
 	readonly appDir: string
 	readonly iceDir: string
+	readonly logLevel: "debug" | "info" | "error"
 	readonly depResults: Record<
 		string,
 		{
@@ -173,15 +178,18 @@ export type TaskCtx<
 		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
 	}
 	readonly origin: "extension" | "cli"
-}
+} & TaskCtxExtension
 
 export type BaseTaskCtx = Omit<TaskCtx, "taskPath" | "depResults" | "args">
 
-const logLevelMap = {
+export const logLevelMap = {
 	debug: LogLevel.Debug,
 	info: LogLevel.Info,
 	error: LogLevel.Error,
 }
+
+export const makeLoggerLayer = (logLevel: "debug" | "info" | "error") =>
+	Logger.minimumLogLevel(logLevelMap[logLevel])
 
 export class TaskRuntime extends Context.Tag("TaskRuntime")<
 	TaskRuntime,
@@ -245,7 +253,11 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					catch: (e) => new TaskRuntimeError({ message: String(e) }),
 				})
 				const { path: iceDirPath } = yield* IceDir
-				const { config, globalArgs, tasks: taskTree } = yield* ICEConfigService
+				const {
+					config,
+					globalArgs,
+					tasks: taskTree,
+				} = yield* ICEConfigService
 				const currentNetwork = globalArgs.network ?? "local"
 				const currentNetworkConfig =
 					config?.networks?.[currentNetwork] ??
@@ -274,6 +286,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					}
 					initializedRoles[name] = currentUsers[user]
 				}
+                const runtimeScope = yield* Scope.make()
 				const resolvedRoles: {
 					[key: string]: ICEUser
 				} & InitializedDefaultConfig["roles"] = {
@@ -366,13 +379,27 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 						task: T,
 						args?: TaskParamsToArgs<T>,
 					): Promise<TaskSuccess<T>> => {
+						const wrapperStartTime = performance.now()
+						console.log(
+							`[TIMING] taskCtx.runTask called at ${wrapperStartTime}`,
+						)
+						const effectCreated = performance.now()
+						console.log(
+							`[TIMING] Effect created: ${effectCreated - wrapperStartTime}ms`,
+						)
 						const result = await taskRuntime.runPromise(
 							runTask(task, args, progressCb).pipe(
 								Effect.provide(ChildTaskRuntimeLayer),
 								Effect.withParentSpan(parentSpan),
-								Effect.withConcurrency("unbounded"),
-								Effect.scoped,
+								// Effect.withConcurrency("unbounded"),
+								// Effect.scopeWith(runtimeScope),
+                                // Effect.scoped,
+                                Scope.extend(runtimeScope),
 							),
+						)
+						const wrapperEndTime = performance.now()
+						console.log(
+							`[TIMING] taskCtx.runTask completed: ${wrapperEndTime - wrapperStartTime}ms total`,
 						)
 						return result
 					},
@@ -387,6 +414,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					roles: resolvedRoles,
 					appDir,
 					iceDir: iceDirPath,
+					logLevel: globalArgs.logLevel,
 					deployments: {
 						get: async (canisterName, network) => {
 							const result = await taskRuntime.runPromise(
@@ -437,6 +465,17 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					replica,
 					taskCtx,
 				})
+				const warmup = Effect.gen(function* () {
+					yield* Effect.succeed(true)
+				}).pipe(Effect.provide(ChildTaskRuntimeLayer), Effect.scoped)
+                // const startTimeMs = performance.now()
+                // console.log(`Warming up task runtime... at ${startTimeMs}ms`)
+				yield* Effect.tryPromise({
+					try: () => taskRuntime.runPromise(warmup),
+					catch: (error) =>
+						new TaskRuntimeError({ message: String(error) }),
+				})
+                // console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
 
 				return {
 					taskCtx,

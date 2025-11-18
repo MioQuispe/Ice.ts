@@ -117,7 +117,7 @@ export class DfxError extends Data.TaggedError("DfxError")<{
 }> {}
 
 export class ICReplica implements ReplicaServiceClass {
-	public readonly host: string = "0.0.0.0"
+	public readonly host: string = "http://0.0.0.0"
 	public readonly port: number = 8080
 	public readonly manual?: boolean
 	public ctx?: ICEGlobalArgs
@@ -133,9 +133,11 @@ export class ICReplica implements ReplicaServiceClass {
 		try {
 			const agent = await HttpAgent.create({
 				identity,
-				host: `http://${this.host}:${this.port}`,
+				host: `${this.host}${this.port === 80 ? "" : `:${this.port}`}`,
 			})
+			console.log("agent created", agent)
 			await agent.fetchRootKey()
+			console.log("root key fetched", agent)
 			return agent
 		} catch (error) {
 			throw new AgentError({
@@ -415,7 +417,9 @@ export class ICReplica implements ReplicaServiceClass {
 		canisterDID: any
 		identity: SignIdentity
 	}): Promise<ActorSubclass<_SERVICE>> {
+		console.log("getting agent....")
 		const agent = await this.getAgent(identity)
+		console.log("agent got", agent)
 		return Actor.createActor<_SERVICE>(canisterDID.idlFactory, {
 			agent,
 			canisterId,
@@ -472,7 +476,7 @@ const dfxReplicaImpl = Effect.gen(function* () {
 	const fs = yield* FileSystem.FileSystem
 	const path = yield* Path.Path
 	const service = new ICReplica({
-		host: "0.0.0.0",
+		host: "http://0.0.0.0",
 		port: 8080,
 	})
 	return Replica.of(service)

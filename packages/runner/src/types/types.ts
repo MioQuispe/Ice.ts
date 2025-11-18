@@ -56,8 +56,13 @@ export type ICEConfig = {
 }
 
 export type ICEEnvironment = {
-    config: Partial<ICEConfig>
-    tasks: TaskTree
+	config: Partial<ICEConfig>
+	tasks: TaskTree
+	plugins: Array<
+		(
+			env: ICEEnvironment & { args: ICEGlobalArgs },
+		) => Promise<ICEEnvironment> | ICEEnvironment
+	>
 }
 
 export interface TaskParam<T = unknown> {
@@ -170,11 +175,26 @@ export type ICEGlobalArgs = {
 	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 }
+// export type ICEConfigFile = {
+//     [key: string]: TaskTreeNode,
+// 	default: (
+// 		globalArgs: ICEGlobalArgs,
+// 	) => Promise<ICEConfig> | ICEConfig
+// }
+
+type ICEConfigFn = (globalArgs: ICEGlobalArgs) => Promise<ICEConfig>
+
 export type ICEConfigFile = {
 	default: (
 		globalArgs: ICEGlobalArgs,
-	) => Promise<ICEEnvironment> | ICEEnvironment
+	) => Promise<{ config: Partial<ICEConfig>; plugins: ICEPlugin[] }>
+} & {
+	[key: string]: TaskTreeNode
 }
+
+export type ICEPlugin = (
+	env: ICEEnvironment & { args: ICEGlobalArgs },
+) => Promise<ICEEnvironment> | ICEEnvironment
 
 // export type ScopeEval = {
 // 	_tag: "scope"

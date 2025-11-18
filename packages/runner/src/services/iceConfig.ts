@@ -3,6 +3,7 @@ import type {
 	BuilderResult,
 	ICEConfig,
 	ICEConfigFile,
+	ICEEnvironment,
 	ICEGlobalArgs,
 	Scope,
 	TaskTree,
@@ -81,15 +82,20 @@ export const removeBuilders = (
 // 	) as TaskTree
 // }
 
-const applyPlugins = (taskTree: TaskTree) =>
+const applyPlugins = (environment: ICEEnvironment) =>
 	Effect.gen(function* () {
 		yield* Effect.logDebug("Applying plugins...")
-		const transformedTaskTree = removeBuilders(taskTree) as TaskTree
+		const transformedTaskTree = removeBuilders(
+			environment.tasks,
+		) as TaskTree
 		// TODO: deploy should be included directly in the builders
 		// candid_ui as well
 		// const transformedTaskTree = deployTaskPlugin(noBuildersTree)
 		// const transformedConfig2 = yield* candidUITaskPlugin(transformedConfig)
-		return transformedTaskTree
+		return {
+			...environment,
+			tasks: transformedTaskTree,
+		}
 	})
 
 export class ICEConfigError extends Data.TaggedError("ICEConfigError")<{
@@ -140,16 +146,17 @@ const createService = (globalArgs: {
 		}
 
 		const d = mod.default
-		if (typeof d !== "function") {
-			return yield* Effect.fail(
-				new ICEConfigError({
-					message:
-						"Config file must export a default function (use Ice().tasks().make())",
-				}),
-			)
-		}
+		// if (typeof d.config !== "function") {
+		// 	return yield* Effect.fail(
+		// 		new ICEConfigError({
+		// 			message:
+		// 				"Config file must export a default function (use Ice().tasks().make())",
+		// 		}),
+		// 	)
+		// }
 
-		const environment = yield* Effect.tryPromise({
+		console.log(d)
+		const { config, plugins } = yield* Effect.tryPromise({
 			try: () => {
 				const result = d(iceGlobalArgs)
 				if (result instanceof Promise) {
@@ -165,11 +172,39 @@ const createService = (globalArgs: {
 				})
 			},
 		})
+		const tasks = Object.fromEntries(
+			Object.entries(mod).filter(([key]) => key !== "default"),
+		) as TaskTree
+		let environment: ICEEnvironment = {
+			config,
+			tasks,
+			plugins,
+		}
 
-		const transformedTasks = yield* applyPlugins(environment.tasks)
+		// Apply plugins if they exist
+		if (environment.plugins.length > 0) {
+			for (const plugin of environment.plugins) {
+				const envWithGlobalArgs = {
+					...environment,
+					args: iceGlobalArgs,
+				}
+				const result = plugin(envWithGlobalArgs)
+				const transformedEnv =
+					result instanceof Promise
+						? yield* Effect.promise(() => result)
+						: result
+				// Update environment, plugins field is not needed after transformation
+				environment = {
+					config: transformedEnv.config,
+					tasks: transformedEnv.tasks,
+					plugins: [],
+				}
+			}
+		}
+
+		const transformedEnvironment = yield* applyPlugins(environment)
 		return {
-			tasks: transformedTasks,
-			config: environment.config,
+			...transformedEnvironment,
 			globalArgs,
 		}
 	})

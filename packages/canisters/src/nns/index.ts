@@ -97,6 +97,13 @@ export const NNSDapp = (
 		})
 }
 
+NNSDapp.remote = (canisterId?: string) => {
+	return canister.remote<NNSDappService>({
+		canisterId: canisterId ?? NNSDappIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
+	})
+}
+
 NNSDapp.id = NNSDappIds
 
 /////////////////////////////////////////
@@ -207,6 +214,13 @@ export const NNSSNSWasm = (
 		})
 }
 
+NNSSNSWasm.remote = (canisterId?: string) => {
+	return canister.remote<NNSSNSWasmService>({
+		canisterId: canisterId ?? NNSSNSWasmIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-sns-wasm/nns-sns-wasm.did"),
+	})
+}
+
 NNSSNSWasm.id = NNSSNSWasmIds
 
 /////////////////////////////////////////
@@ -249,6 +263,13 @@ export const NNSRoot = (
 		.upgradeArgs(async ({ ctx }) => {
 			return []
 		})
+}
+
+NNSRoot.remote = (canisterId?: string) => {
+	return canister.remote<NNSRootService>({
+		canisterId: canisterId ?? NNSRootIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-root/nns-root.did"),
+	})
 }
 
 NNSRoot.id = NNSRootIds
@@ -520,6 +541,13 @@ export const NNSRegistry = (
 	// 		},
 	// 	]
 	// })
+}
+
+NNSRegistry.remote = (canisterId?: string) => {
+	return canister.remote<NNSRegistryService>({
+		canisterId: canisterId ?? NNSRegistryIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-registry/nns-registry.did"),
+	})
 }
 
 NNSRegistry.id = NNSRegistryIds
@@ -821,6 +849,16 @@ export const NNSGovernance = (
 		})
 }
 
+NNSGovernance.remote = (canisterId?: string) => {
+	return canister.remote<NNSGovernanceService>({
+		canisterId: canisterId ?? NNSGovernanceIds.ic,
+		candid: path.resolve(
+			__dirname,
+			"./nns/nns-governance/governance_latest.did",
+		),
+	})
+}
+
 NNSGovernance.id = NNSGovernanceIds
 
 /////////////////////////////////////////
@@ -890,6 +928,13 @@ export const NNSLedger = (
 				},
 			]
 		})
+}
+
+NNSLedger.remote = (canisterId?: string) => {
+	return canister.remote<NNSLedgerService>({
+		canisterId: canisterId ?? NNSLedgerIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-ledger/ledger-canister.did"),
+	})
 }
 
 NNSLedger.id = NNSLedgerIds
@@ -989,6 +1034,16 @@ export const NNSGenesisToken = (
 				},
 			},
 		)
+}
+
+NNSGenesisToken.remote = (canisterId?: string) => {
+	return canister.remote<NNSGenesisTokenService>({
+		canisterId: canisterId ?? NNSGenesisTokenIds.ic,
+		candid: path.resolve(
+			__dirname,
+			"./nns/nns-genesis-token/nns-genesis-token.did",
+		),
+	})
 }
 
 NNSGenesisToken.id = NNSGenesisTokenIds
@@ -1135,6 +1190,16 @@ export const NNSCyclesMinting = (
 	)
 }
 
+NNSCyclesMinting.remote = (canisterId?: string) => {
+	return canister.remote<NNSCyclesMintingService>({
+		canisterId: canisterId ?? NNSCyclesMintingIds.ic,
+		candid: path.resolve(
+			__dirname,
+			"./nns/nns-cycles-minting/nns-cycles-minting.did",
+		),
+	})
+}
+
 NNSCyclesMinting.id = NNSCyclesMintingIds
 
 /////////////////////////////////////////
@@ -1184,6 +1249,13 @@ export const NNSLifeline = (
 					: initArgsOrFn
 			return []
 		})
+}
+
+NNSLifeline.remote = (canisterId?: string) => {
+	return canister.remote<NNSLifelineService>({
+		canisterId: canisterId ?? NNSLifelineIds.ic,
+		candid: path.resolve(__dirname, "./nns/nns-lifeline/nns-lifeline.did"),
+	})
 }
 
 NNSLifeline.id = NNSLifelineIds

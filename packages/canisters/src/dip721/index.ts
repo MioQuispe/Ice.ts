@@ -6,10 +6,7 @@ import type { TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 import type { InitArgs, _SERVICE } from "./dip721.types.js"
 
-export type {
-  _SERVICE as DIP721Service,
-  InitArgs as DIP721InitArgs,
-}
+export type { _SERVICE as DIP721Service, InitArgs as DIP721InitArgs }
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -27,14 +24,19 @@ export const DIP721 = (
 	return canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
 		// TODO: support async?
 		const initArgs =
-			typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
+			typeof initArgsOrFn === "function"
+				? initArgsOrFn({ ctx })
+				: initArgsOrFn
 		return {
 			canisterId: initArgs?.canisterId,
 			wasm: path.resolve(
 				__dirname,
 				`./${canisterName}/${canisterName}.wasm.gz`,
 			),
-			candid: path.resolve(__dirname, `./${canisterName}/${canisterName}.did`),
+			candid: path.resolve(
+				__dirname,
+				`./${canisterName}/${canisterName}.did`,
+			),
 		}
 	})
 	// .installArgs(async ({ ctx, mode }) => {
@@ -60,6 +62,16 @@ type DIP721Args = {
 	name?: string
 	symbol?: string
 	canisterId?: string
+}
+
+DIP721.remote = (canisterId: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId,
+		candid: path.resolve(
+			__dirname,
+			`./${canisterName}/${canisterName}.did`,
+		),
+	})
 }
 
 DIP721.makeArgs = (args: DIP721Args) => {

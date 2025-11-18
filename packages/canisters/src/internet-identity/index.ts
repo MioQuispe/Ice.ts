@@ -42,6 +42,15 @@ export type CanisterInitArgs = [
 
 type Networks = "local" | "ic" | "staging"
 
+const candid = path.resolve(
+	__dirname,
+	"./internet-identity/internet_identity.did",
+)
+const wasm = path.resolve(
+	__dirname,
+	"./internet-identity/internet_identity.wasm.gz",
+)
+
 export const InternetIdentity = (
 	ConfigOrFn?:
 		| Partial<CustomCanisterConfig>
@@ -49,19 +58,20 @@ export const InternetIdentity = (
 ) => {
 	// const currentNetwork = "local" // TODO: how?
 	return canister.custom<_SERVICE, CanisterInitArgs>((env) => ({
-		canisterId: InternetIdentityIds[env.ctx.network as Networks],
-		candid: path.resolve(
-			__dirname,
-			"./internet-identity/internet_identity.did",
-		),
-		wasm: path.resolve(
-			__dirname,
-			"./internet-identity/internet_identity.wasm.gz",
-		),
+		canisterId: InternetIdentityIds.ic,
 		...(ConfigOrFn && typeof ConfigOrFn === "function"
 			? ConfigOrFn(env.ctx)
 			: ConfigOrFn),
+		wasm,
+		candid,
 	}))
+}
+
+InternetIdentity.remote = (canisterId?: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId: canisterId ?? InternetIdentityIds.ic,
+		candid,
+	})
 }
 
 InternetIdentity.makeArgs = (initArgs: InitArgsSimple): CanisterInitArgs => {

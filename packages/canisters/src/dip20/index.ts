@@ -45,28 +45,42 @@ const canisterName = "dip20"
 
 // type DIP20Builder = ReturnType<typeof customCanister<CanisterInitArgs, _SERVICE>>
 export const DIP20 = () => {
-	const result = canister.custom<_SERVICE, DIP20InitArgs>(async ({ ctx }) => {
-		// const initArgs =
-		// 	typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-		return {
-			// canisterId: initArgs.canisterId,
-			wasm: path.resolve(
-				__dirname,
-				`./${canisterName}/${canisterName}.wasm.gz`,
-			),
-			candid: path.resolve(__dirname, `./${canisterName}/${canisterName}.did`),
-		}
-	})
+	const result = canister
+		.custom<_SERVICE, DIP20InitArgs>(async ({ ctx }) => {
+			// const initArgs =
+			// 	typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
+			return {
+				// canisterId: initArgs.canisterId,
+				wasm: path.resolve(
+					__dirname,
+					`./${canisterName}/${canisterName}.wasm.gz`,
+				),
+				candid: path.resolve(
+					__dirname,
+					`./${canisterName}/${canisterName}.did`,
+				),
+			}
+		})
 		.dependsOn({ CapRouter: CapRouter().make() })
-		// .installArgs(async ({ ctx, mode, deps }) => {
-		// 	const { CapRouter } = deps
-		// 	const initArgs =
-		// 		typeof initArgsOrFn === "function"
-		// 			? initArgsOrFn({ ctx })
-		// 			: initArgsOrFn
-		// 	return initArgs
-		// })
+	// .installArgs(async ({ ctx, mode, deps }) => {
+	// 	const { CapRouter } = deps
+	// 	const initArgs =
+	// 		typeof initArgsOrFn === "function"
+	// 			? initArgsOrFn({ ctx })
+	// 			: initArgsOrFn
+	// 	return initArgs
+	// })
 	return result
+}
+
+DIP20.remote = (canisterId: string) => {
+	return canister.remote<_SERVICE>({
+		canisterId,
+		candid: path.resolve(
+			__dirname,
+			`./${canisterName}/${canisterName}.did`,
+		),
+	})
 }
 
 DIP20.makeArgs = (initArgs: InitArgsSimple): DIP20InitArgs => {

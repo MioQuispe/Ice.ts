@@ -219,8 +219,8 @@ export const ClackLoggingLive: Layer.Layer<never> = Logger.replace(
 			// 	(fiberId as any)?.id != null ? String((fiberId as any).id) : ""
 			// firstLine += fiberName ? ` (${fiberName})` : ""
 
-			const taskPath = HashMap.get(annotations, "taskPath")
-			firstLine += Option.isSome(taskPath) ? ` ${taskPath.value}` : ""
+			const path = HashMap.get(annotations, "path")
+			firstLine += Option.isSome(path) ? ` ${path.value}` : ""
 
 			if (List.isCons(spans)) {
 				// const now = (date ?? new Date()).getTime()

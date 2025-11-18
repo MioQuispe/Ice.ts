@@ -27,6 +27,7 @@ import {
 	ValidProvidedDeps,
 	baseLayer,
 	type BuilderLayer,
+	makeLoggerLayer,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -302,7 +303,13 @@ export const makeMotokoDeployTask = <_SERVICE>(
 
 					yield* Effect.logDebug("Canister deployed successfully")
 					return taskResult
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		description: "Deploy canister code",
 		tags: [Tags.CANISTER, Tags.DEPLOY, Tags.MOTOKO],
@@ -427,7 +434,13 @@ export const makeMotokoBindingsTask = (
 						didJSPath,
 						didTSPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -448,19 +461,37 @@ export const makeMotokoBindingsTask = (
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Generate bindings for Motoko canister",
@@ -558,7 +589,13 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 						wasmPath: outWasmPath,
 						candidPath: outCandidPath,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".effect",
+					),
+				),
 			),
 		computeCacheKey: (input) => {
 			// TODO: pocket-ic could be restarted?
@@ -606,19 +643,37 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 						depCacheKeys,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".input",
+					),
+				),
 			),
 		encode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".encode",
+					),
+				),
 			),
 		decode: (taskCtx, value) =>
 			builderRuntime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".decode",
+					),
+				),
 			),
 		encodingFormat: "string",
 		description: "Build Motoko canister",
@@ -923,8 +978,18 @@ export class MotokoCanisterBuilder<
 		TCtx
 	> {
 		const finalDeps = normalizeDepsMap(providedDeps) as NP
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, D, NP, TCtx>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, D, NP, TCtx>
+		const installArgs = this.#installArgs as unknown as ArgsFields<
+			I,
+			D,
+			NP,
+			TCtx
+		>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<
+			U,
+			D,
+			NP,
+			TCtx
+		>
 		const install_args = {
 			...this.#scope.children.install_args,
 			dependencies: finalDeps,
@@ -961,8 +1026,18 @@ export class MotokoCanisterBuilder<
 		TCtx
 	> {
 		const updatedDependsOn = normalizeDepsMap(dependencies) as ND
-		const installArgs = this.#installArgs as unknown as ArgsFields<I, ND, P, TCtx>
-		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<U, ND, P, TCtx>
+		const installArgs = this.#installArgs as unknown as ArgsFields<
+			I,
+			ND,
+			P,
+			TCtx
+		>
+		const upgradeArgs = this.#upgradeArgs as unknown as ArgsFields<
+			U,
+			ND,
+			P,
+			TCtx
+		>
 		const updatedChildren = {
 			...this.#scope.children,
 			install_args: {

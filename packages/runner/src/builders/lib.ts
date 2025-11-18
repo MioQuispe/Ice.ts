@@ -46,7 +46,9 @@ import type { CachedTask, Task } from "../types/types.js"
 import { proxyActor } from "../utils/extension.js"
 import { CustomCanisterConfig, deployParams } from "./custom.js"
 import { Moc, MocError } from "../services/moc.js"
-import { type TaskCtx } from "../services/taskRuntime.js"
+import { type TaskCtx, makeLoggerLayer } from "../services/taskRuntime.js"
+
+export { makeLoggerLayer }
 import { IceDir } from "../services/iceDir.js"
 import { ConfigError } from "effect/ConfigError"
 import { PlatformError } from "@effect/platform/Error"
@@ -61,12 +63,8 @@ import { ClackLoggingLive } from "../services/logger.js"
 export const baseLayer = Layer.mergeAll(
 	NodeContext.layer,
 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-	// TODO: ??
-	// telemetryLayer,
 	ClackLoggingLive,
-	// Logger.pretty,
-	// TODO: get logLevel
-	Logger.minimumLogLevel(LogLevel.Debug),
+	// Note: Logger.minimumLogLevel is provided at runtime via taskCtx.logLevel
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
 export type BuilderLayer = typeof baseLayer
@@ -171,7 +169,10 @@ export const makeConfigTask = <
 						return configResult
 					}
 					return configOrFn
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		id: Symbol("canister/config"),
 		input: (taskCtx) =>
@@ -185,20 +186,29 @@ export const makeConfigTask = <
 					return {
 						depCacheKeys,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".input"),
+				),
 			),
 		encode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
+				),
 			),
 		encodingFormat: "string",
 		decode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
+				),
 			),
 		computeCacheKey: (input) => {
 			return hashJson({
@@ -474,19 +484,28 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					const outDir = path.join(iceDir, "canisters", canisterName)
 					yield* fs.makeDirectory(outDir, { recursive: true })
 					return canisterId
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		encode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
 					return JSON.stringify(value)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
+				),
 			),
 		decode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_decode")(function* () {
 					return JSON.parse(value as string)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
+				),
 			),
 		encodingFormat: "string",
 		computeCacheKey: (input) => {
@@ -514,7 +533,10 @@ export const makeCreateTask = <Config extends CreateConfig>(
 						network: taskCtx.network,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".input"),
+				),
 			),
 		revalidate: (taskCtx, { input }) =>
 			runtime.runPromise(
@@ -581,7 +603,13 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					}
 
 					return false
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".revalidate",
+					),
+				),
 			),
 		description: "Create custom canister",
 		// TODO: caching? now task handles it already
@@ -714,7 +742,12 @@ export function hashConfig(config: Function | object): string {
 	let txt =
 		typeof config === "function"
 			? config.toString()
-			: JSON.stringify(config)
+			: JSON.stringify(config, (_, value) => {
+					if (typeof value === "bigint") {
+						return { __type__: "bigint", value: value.toString() }
+					}
+					return value
+				})
 
 	// 2. normalise line-endings and strip leading WS
 	txt = txt
@@ -1237,7 +1270,10 @@ export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
 								: new AgentError({ message: String(e) }),
 					})
 					yield* Effect.logDebug(`Stopped canister ${canisterName}`)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Stop canister",
 		// TODO: no tag custom
@@ -1305,7 +1341,10 @@ export const makeRemoveTask = (builderLayer: BuilderLayer): RemoveTask => {
 					})
 					// yield* canisterIdsService.removeCanisterId(canisterName)
 					yield* Effect.logDebug(`Removed canister ${canisterName}`)
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Remove canister",
 		// TODO: no tag custom
@@ -1392,7 +1431,10 @@ export const makeCanisterStatusTask = (
 						status,
 						info: canisterInfo,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Get canister status",
 		tags: [Tags.CANISTER, Tags.STATUS, ...tags],
@@ -1464,8 +1506,7 @@ export const resolveMode = (
 
 		const lastDeployment = Option.fromNullable(
 			yield* Effect.tryPromise({
-				try: () =>
-					taskCtx.deployments.get(canisterName, network),
+				try: () => taskCtx.deployments.get(canisterName, network),
 				catch: (error) => {
 					return new TaskError({ message: String(error) })
 				},
@@ -1797,71 +1838,71 @@ export const makeInstallArgsTask = <
 						`${canisterName}.did.js`,
 					)
 
-				// TODO: should it catch errors?
-				// TODO: handle different modes
-				const deps = Record.map(
-					depResults,
-					(dep) => dep.result,
-				) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
+					// TODO: should it catch errors?
+					// TODO: handle different modes
+					const deps = Record.map(
+						depResults,
+						(dep) => dep.result,
+					) as ExtractScopeSuccesses<D> & ExtractScopeSuccesses<P>
 
-				const installFnResult =
-					typeof installArgs.fn === "function"
-						? installArgs.fn({
-								ctx: taskCtx,
-								deps,
-						  })
-						: installArgs.fn
-				let installArgsResult = [] as unknown as I
-				if (installFnResult instanceof Promise) {
-					installArgsResult = yield* Effect.tryPromise<
-						I,
-						TaskError
-					>({
-						try: () => installFnResult,
-						catch: (e) =>
-							new TaskError({
-								message: `Install args function failed for: ${canisterName},
+					const installFnResult =
+						typeof installArgs.fn === "function"
+							? installArgs.fn({
+									ctx: taskCtx,
+									deps,
+								})
+							: installArgs.fn
+					let installArgsResult = [] as unknown as I
+					if (installFnResult instanceof Promise) {
+						installArgsResult = yield* Effect.tryPromise<
+							I,
+							TaskError
+						>({
+							try: () => installFnResult,
+							catch: (e) =>
+								new TaskError({
+									message: `Install args function failed for: ${canisterName},
 						typeof installArgsFn: ${typeof installArgs.fn},
 						 typeof installResult: ${typeof installFnResult}
 						 error: ${e},
 						 installArgsFn: ${installArgs.fn},
 						 installResult: ${installFnResult},
 						 `,
-							}),
-					})
-				} else {
-					installArgsResult = installFnResult
-				}
+								}),
+						})
+					} else {
+						installArgsResult = installFnResult
+					}
 
-				const upgradeFnResult =
-					typeof upgradeArgs.fn === "function"
-						? upgradeArgs.fn({
-								ctx: taskCtx,
-								deps,
-						  })
-						: upgradeArgs.fn
+					const upgradeFnResult =
+						typeof upgradeArgs.fn === "function"
+							? upgradeArgs.fn({
+									ctx: taskCtx,
+									deps,
+								})
+							: upgradeArgs.fn
 
-				let upgradeArgsResult = [] as unknown as U
-				if (upgradeFnResult instanceof Promise) {
-					upgradeArgsResult = yield* Effect.tryPromise<
-						U,
-						TaskError
-					>({
-						try: () => upgradeFnResult,
-						catch: (e) =>
-							new TaskError({
-								message: `Install args function failed for: ${canisterName},
+					let upgradeArgsResult = [] as unknown as U
+					if (upgradeFnResult instanceof Promise) {
+						upgradeArgsResult = yield* Effect.tryPromise<
+							U,
+							TaskError
+						>({
+							try: () => upgradeFnResult,
+							catch: (e) =>
+								new TaskError({
+									message: `Install args function failed for: ${canisterName},
 						typeof installArgsFn: ${typeof upgradeArgs.fn},
 						 typeof installResult: ${typeof upgradeFnResult}
 						 error: ${e},
 						 installArgsFn: ${upgradeArgs.fn},
 						 installResult: ${upgradeFnResult},
 						 `,
-							}),
-					})
-				} else {
-					upgradeArgsResult = upgradeFnResult
-				}
+								}),
+						})
+					} else {
+						upgradeArgsResult = upgradeFnResult
+					}
 
 					yield* Effect.logDebug(
 						"Install args generated",
@@ -1941,7 +1982,10 @@ export const makeInstallArgsTask = <
 						// mode,
 						canisterName,
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Generate install args for canister",
 		tags: [Tags.CANISTER, Tags.INSTALL_ARGS],
@@ -1997,7 +2041,10 @@ export const makeInstallArgsTask = <
 						upgradeArgsFn: upgradeArgs.fn,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".input"),
+				),
 			),
 		encodingFormat: "string",
 
@@ -2023,7 +2070,10 @@ export const makeInstallArgsTask = <
 							),
 						},
 					})
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
+				),
 			),
 		decode: (taskCtx, value, input) =>
 			runtime.runPromise(
@@ -2078,7 +2128,10 @@ export const makeInstallArgsTask = <
 						},
 					}
 					return decoded
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
+				),
 			),
 	} satisfies InstallArgsTask<_SERVICE, I, U, D, P>
 }
@@ -2302,7 +2355,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						// TODO: plugin which transforms install tasks?
 						// actor: proxyActor(canisterName, actor),
 					}
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".effect"),
+				),
 			),
 		description: "Install canister code",
 		tags: [Tags.CANISTER, Tags.CUSTOM, Tags.INSTALL],
@@ -2331,7 +2387,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 				mode: input.computedMode,
 				argsDigest,
 			}
-            const cacheKey = hashJson(keyInput)
+			const cacheKey = hashJson(keyInput)
 			return cacheKey
 			// return `${input.canisterId}:${input.computedMode}:${argsDigest}`
 		},
@@ -2405,10 +2461,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 					const resolvedMode = yield* resolveMode(taskCtx, canisterId)
 					const deployment = yield* Effect.tryPromise({
 						try: () =>
-							taskCtx.deployments.get(
-								canisterName,
-								network,
-							),
+							taskCtx.deployments.get(canisterName, network),
 						catch: (error) => {
 							return new TaskError({ message: String(error) })
 						},
@@ -2455,7 +2508,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						// deploymentId,
 					}
 					return input
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".input"),
+				),
 			),
 		revalidate: (taskCtx, { input }) =>
 			runtime.runPromise(
@@ -2526,7 +2582,13 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						return true
 					}
 					return false
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs(
+						"path",
+						taskCtx.taskPath + ".revalidate",
+					),
+				),
 			),
 		encodingFormat: "string",
 
@@ -2544,7 +2606,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						encodedArgs: uint8ArrayToJsonString(result.encodedArgs),
 						args: result.args,
 					})
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
+				),
 			),
 		decode: (taskCtx, value, input) =>
 			runtime.runPromise(
@@ -2616,7 +2681,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						args: initArgs,
 					}
 					return decoded
-				})(),
+				})().pipe(
+					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
+					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
+				),
 			),
 	} satisfies InstallTask<_SERVICE, I, U>
 }

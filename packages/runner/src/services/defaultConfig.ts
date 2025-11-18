@@ -48,6 +48,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 			// })
 
             const defaultReplica = yield* Replica
+            // const icReplica = yield* ICReplica
 			const defaultUser = yield* Effect.tryPromise({
 				try: () => Ids.fromDfx("default"),
 				catch: () => new TaskRuntimeError({ message: "Failed to get default user" }),

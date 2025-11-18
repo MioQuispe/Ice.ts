@@ -24,9 +24,18 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	args?: TaskParamsToArgs<T>,
 	progressCb: (update: ProgressUpdate<unknown>) => void = () => {},
 ) {
+	const runTaskStartTime = performance.now()
+	console.log(
+		`[TIMING] runTask effect started at ${runTaskStartTime}`,
+	)
 	// TODO:
 	// yield* Effect.logDebug("Getting task path...", task.description)
+	const beforeGetPath = performance.now()
 	const taskPath = yield* getTaskPathById(task.id)
+	const afterGetPath = performance.now()
+	console.log(
+		`[TIMING] getTaskPathById took ${afterGetPath - beforeGetPath}ms`,
+	)
 	// yield* Effect.annotateCurrentSpan({
 	// 	taskPath: path,
 	// })
@@ -55,9 +64,15 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	})
 	yield* Effect.logDebug("Sorted tasks")
 	yield* Effect.logDebug("Executing tasks...")
+	const beforeMakeEffects = performance.now()
 	const taskEffects = yield* makeTaskEffects(sortedTasks, progressCb)
+	const afterMakeEffects = performance.now()
+	console.log(
+		`[TIMING] makeTaskEffects took ${afterMakeEffects - beforeMakeEffects}ms`,
+	)
 	const results = yield* Effect.all(taskEffects, {
-		concurrency: "inherit",
+		// concurrency: "inherit",
+		concurrency: 1,
 	}).pipe(
 		// Effect.mapError((error) => {
 		// 	return new TaskRuntimeError({
@@ -66,6 +81,7 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 		// 	})
 		// }),
 		Effect.annotateLogs("taskPath", taskPath),
+		Effect.annotateLogs("path", "runtime:" + taskPath),
 	)
 	yield* Effect.logDebug("Tasks executed")
 	// TODO: get all input task results
@@ -110,7 +126,8 @@ export const runTasks = Effect.fn("run_tasks")(function* <T extends Task>(
 	yield* Effect.logDebug("Executing tasks...")
 	const taskEffects = yield* makeTaskEffects(sortedTasks, progressCb)
 	const results = yield* Effect.all(taskEffects, {
-		concurrency: "inherit",
+		// concurrency: "inherit",
+		concurrency: 1,
 	})
     const taskDuration = performance.now() - taskStartTime
 	yield* Effect.logDebug(`Tasks executed in ${taskDuration}ms`)

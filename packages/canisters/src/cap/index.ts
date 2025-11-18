@@ -9,12 +9,12 @@ import type { _SERVICE as CAP_ROOT_SERVICE } from "./cap-root/types.js"
 import type { _SERVICE as CAP_BUCKET_SERVICE } from "./cap-bucket/types.js"
 
 export type {
-  CAP_ROUTER_SERVICE,
-  CAP_ROOT_SERVICE,
-  CAP_BUCKET_SERVICE,
-  CapRootInitArgs,
-  CapRouterInitArgs,
-  CapBucketInitArgs,
+	CAP_ROUTER_SERVICE,
+	CAP_ROOT_SERVICE,
+	CAP_BUCKET_SERVICE,
+	CapRootInitArgs,
+	CapRouterInitArgs,
+	CapBucketInitArgs,
 }
 
 import { Principal } from "@dfinity/principal"
@@ -25,49 +25,69 @@ const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 type Networks = "local" | "ic" | "staging"
 
 const CapBucketIds = {
-  local: "r7inp-6aaaa-aaaaa-aaabq-cai",
-  ic: "r7inp-6aaaa-aaaaa-aaabq-cai",
-  staging: "r7inp-6aaaa-aaaaa-aaabq-cai",
+	local: "r7inp-6aaaa-aaaaa-aaabq-cai",
+	ic: "r7inp-6aaaa-aaaaa-aaabq-cai",
+	staging: "r7inp-6aaaa-aaaaa-aaabq-cai",
 }
 
 export type CapBucketActor = import("@dfinity/agent").ActorSubclass<
-  import("./cap-bucket/types")._SERVICE
+	import("./cap-bucket/types")._SERVICE
 >
 
 type CapBucketInitArgs = {
-  // offset: number
-  // next_canisters: Array<number>
-  // contract: Principal
-  canisterId?: string
+	// offset: number
+	// next_canisters: Array<number>
+	// contract: Principal
+	canisterId?: string
 }
 
 export const CapBucket = (
-  initArgsOrFn?: CapBucketInitArgs | ((args: { ctx: TaskCtx }) => CapBucketInitArgs),
+	initArgsOrFn?:
+		| CapBucketInitArgs
+		| ((args: { ctx: TaskCtx }) => CapBucketInitArgs),
 ) => {
-  // const {
-  //   contract,  // Id   // Principal probably?
-  //   offset = 0, // u64,
-  //   next_canisters = [0], // Vec<BucketId>,
-  // } = args
-  return canister.custom<CAP_BUCKET_SERVICE, []>(({ ctx }) => {
-    const initArgs =
-      typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-    return {
-      candid: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.did"),
-      wasm: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.wasm.gz"),
-      canisterId: CapBucketIds[ctx.network as Networks],
-    }
-  }).installArgs(async ({ ctx }) => {
-    return [
-      // args: [{
-      //   contract, // TokenContractId,
-      //   offset, // u64
-      //   next_canisters, // Vec<BucketId>
-      // }],
-    ]
-  }).upgradeArgs(async ({ ctx }) => {
-    return []
-  })
+	// const {
+	//   contract,  // Id   // Principal probably?
+	//   offset = 0, // u64,
+	//   next_canisters = [0], // Vec<BucketId>,
+	// } = args
+	return canister
+		.custom<CAP_BUCKET_SERVICE, []>(({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				candid: path.resolve(
+					__dirname,
+					"./cap/cap-bucket/cap-bucket.did",
+				),
+				wasm: path.resolve(
+					__dirname,
+					"./cap/cap-bucket/cap-bucket.wasm.gz",
+				),
+				canisterId: CapBucketIds[ctx.network as Networks],
+			}
+		})
+		.installArgs(async ({ ctx }) => {
+			return [
+				// args: [{
+				//   contract, // TokenContractId,
+				//   offset, // u64
+				//   next_canisters, // Vec<BucketId>
+				// }],
+			]
+		})
+		.upgradeArgs(async ({ ctx }) => {
+			return []
+		})
+}
+
+CapBucket.remote = (canisterId?: string) => {
+	return canister.remote<CAP_BUCKET_SERVICE>({
+		canisterId: canisterId ?? CapBucketIds.ic,
+		candid: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.did"),
+	})
 }
 
 CapBucket.id = CapBucketIds
@@ -79,46 +99,57 @@ CapBucket.scripts = {}
 ///////////////////////
 
 const CapRootIds = {
-  local: "rrkah-fqaaa-aaaaa-aaaaq-cai",
-  ic: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+	local: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+	ic: "rrkah-fqaaa-aaaaa-aaaaq-cai",
 }
 
 export type CapRootActor = import("@dfinity/agent").ActorSubclass<
-  import("./cap-root/types")._SERVICE
+	import("./cap-root/types")._SERVICE
 >
 
 type CapRootInitArgs = {
-  // contract: Principal
-  // writers: Array<Principal>
-  canisterId?: string
+	// contract: Principal
+	// writers: Array<Principal>
+	canisterId?: string
 }
 
 export const CapRoot = (
-  initArgsOrFn?: CapRootInitArgs | ((args: { ctx: TaskCtx }) => CapRootInitArgs),
+	initArgsOrFn?:
+		| CapRootInitArgs
+		| ((args: { ctx: TaskCtx }) => CapRootInitArgs),
 ) => {
-  // const {
-  //   contract,
-  //   writers,
-  // } = args
-  return canister.custom<CAP_ROOT_SERVICE, []>(({ ctx }) => {
-    const initArgs =
-      typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-    return {
-      candid: path.resolve(__dirname, "./cap/cap-root/cap-root.did"),
-      wasm: path.resolve(__dirname, "./cap/cap-root/cap-root.wasm.gz"),
-      canisterId: initArgs?.canisterId ?? CapRootIds.local,
-    }
-  })
-  // .installArgs(async ({ ctx, mode }) => {
-  //   const initArgs =
-  //     typeof initArgsOrFn === "function" ? initArgsOrFn(ctx) : initArgsOrFn
-  //   return [
-  //     // args: [
-  //     //   contract, // Principal,
-  //     //   writers, // BTreeSet<Principal>
-  //     // ],
-  //   ]
-  // })
+	// const {
+	//   contract,
+	//   writers,
+	// } = args
+	return canister.custom<CAP_ROOT_SERVICE, []>(({ ctx }) => {
+		const initArgs =
+			typeof initArgsOrFn === "function"
+				? initArgsOrFn({ ctx })
+				: initArgsOrFn
+		return {
+			candid: path.resolve(__dirname, "./cap/cap-root/cap-root.did"),
+			wasm: path.resolve(__dirname, "./cap/cap-root/cap-root.wasm.gz"),
+			canisterId: initArgs?.canisterId ?? CapRootIds.local,
+		}
+	})
+	// .installArgs(async ({ ctx, mode }) => {
+	//   const initArgs =
+	//     typeof initArgsOrFn === "function" ? initArgsOrFn(ctx) : initArgsOrFn
+	//   return [
+	//     // args: [
+	//     //   contract, // Principal,
+	//     //   writers, // BTreeSet<Principal>
+	//     // ],
+	//   ]
+	// })
+}
+
+CapRoot.remote = (canisterId?: string) => {
+	return canister.remote<CAP_ROOT_SERVICE>({
+		canisterId: canisterId ?? CapRootIds.ic,
+		candid: path.resolve(__dirname, "./cap/cap-root/cap-root.did"),
+	})
 }
 
 CapRoot.id = CapRootIds
@@ -130,49 +161,60 @@ CapRoot.scripts = {}
 ///////////////////////////////
 
 const CapRouterIds = {
-  local: "lj532-6iaaa-aaaah-qcc7a-cai",
-  ic: "lj532-6iaaa-aaaah-qcc7a-cai",
+	local: "lj532-6iaaa-aaaah-qcc7a-cai",
+	ic: "lj532-6iaaa-aaaah-qcc7a-cai",
 }
 export type CapRouterActor = import("@dfinity/agent").ActorSubclass<
-  import("./cap-router/types")._SERVICE
+	import("./cap-router/types")._SERVICE
 >
 
 type CapRouterInitArgs = {
-  canisterId?: string
+	canisterId?: string
 }
 
 // Here we create the shape
 const capRouter = canister.custom<CAP_ROUTER_SERVICE, []>(({ ctx }) => ({
-  candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
-  wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
-  canisterId: CapRouterIds.local,
+	candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
+	wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
+	canisterId: CapRouterIds.local,
 }))
 
 export const CapRouter = (
-  initArgsOrFn?: CapRouterInitArgs | ((args: { ctx: TaskCtx }) => CapRouterInitArgs),
+	initArgsOrFn?:
+		| CapRouterInitArgs
+		| ((args: { ctx: TaskCtx }) => CapRouterInitArgs),
 ) => {
-  return capRouter
-    .create(({ ctx }) => {
-      const initArgs =
-        typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
-      return {
-        candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
-        wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
-        // subnetType: "application",
-        canisterId: initArgs?.canisterId ?? CapRouterIds.local,
-      }
-    })
-    // .installArgs(async ({ ctx, mode }) => {
-    //   const initArgs =
-    //     typeof initArgsOrFn === "function" ? initArgsOrFn(ctx) : initArgsOrFn
-    //   return []
-    // })
+	return capRouter.create(({ ctx }) => {
+		const initArgs =
+			typeof initArgsOrFn === "function"
+				? initArgsOrFn({ ctx })
+				: initArgsOrFn
+		return {
+			candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
+			wasm: path.resolve(
+				__dirname,
+				"./cap/cap-router/cap-router.wasm.gz",
+			),
+			// subnetType: "application",
+			canisterId: initArgs?.canisterId ?? CapRouterIds.local,
+		}
+	})
+	// .installArgs(async ({ ctx, mode }) => {
+	//   const initArgs =
+	//     typeof initArgsOrFn === "function" ? initArgsOrFn(ctx) : initArgsOrFn
+	//   return []
+	// })
 }
-
 
 // export type CapRouterBuilder = ReturnType<typeof customCanister<[], CAP_ROUTER_SERVICE>>
 // CapRouter.provides = capRouter.make().children.install
 
+CapRouter.remote = (canisterId?: string) => {
+	return canister.remote<CAP_ROUTER_SERVICE>({
+		canisterId: canisterId ?? CapRouterIds.ic,
+		candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
+	})
+}
 
 // CapRouter.id = CapRouterIds
 
@@ -214,7 +256,7 @@ export const CapRouter = (
 // export type CapRouterTestActor = import("@dfinity/agent").ActorSubclass<import("./cap-router-test/types")._SERVICE>
 
 export const Cap = scope({
-  // bucket: CapBucket(),
-  // root: CapRoot(),
-  router: CapRouter().make(),
+	// bucket: CapBucket(),
+	// root: CapRoot(),
+	router: CapRouter().make(),
 })
