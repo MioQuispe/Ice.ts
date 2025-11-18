@@ -108,44 +108,36 @@ export interface CanisterDidModule {
 	init: (args: { IDL: typeof IDL }) => IDL.Type[]
 }
 
-export const encodeArgs = (args: unknown[], canisterDID: CanisterDidModule) =>
-	Effect.gen(function* () {
-		return yield* Effect.try({
-			try: () => {
-				const encodedArgs = args
-					? new Uint8Array(
-							IDL.encode(canisterDID.init({ IDL }), args),
-						)
-					: new Uint8Array()
-				return encodedArgs
-			},
-			catch: (error) => {
-				// TODO: change error type
-				return new DeploymentError({
-					message: `Failed to encode args: ${error instanceof Error ? error.message : String(error)}, with args: ${args}`,
-				})
-			},
+export const encodeArgs = async (args: unknown[], canisterDID: CanisterDidModule): Promise<Uint8Array> => {
+	try {
+		const encodedArgs = args
+			? new Uint8Array(
+					IDL.encode(canisterDID.init({ IDL }), args),
+				)
+			: new Uint8Array()
+		return encodedArgs
+	} catch (error) {
+		// TODO: change error type
+		throw new DeploymentError({
+			message: `Failed to encode args: ${error instanceof Error ? error.message : String(error)}, with args: ${args}`,
 		})
-	})
-export const encodeUpgradeArgs = (
+	}
+}
+export const encodeUpgradeArgs = async (
 	args: unknown[],
 	canisterDID: CanisterDidModule,
-) =>
-	Effect.gen(function* () {
-		return yield* Effect.try({
-			try: () => {
-				const encodedArgs = args
-					? new Uint8Array(
-							IDL.encode(canisterDID.init({ IDL }), args),
-						)
-					: new Uint8Array()
-				return encodedArgs
-			},
-			catch: (error) => {
-				// TODO: change error type
-				return new DeploymentError({
-					message: `Failed to encode args: ${error instanceof Error ? error.message : String(error)}, with args: ${args}`,
-				})
-			},
+): Promise<Uint8Array> => {
+	try {
+		const encodedArgs = args
+			? new Uint8Array(
+					IDL.encode(canisterDID.init({ IDL }), args),
+				)
+			: new Uint8Array()
+		return encodedArgs
+	} catch (error) {
+		// TODO: change error type
+		throw new DeploymentError({
+			message: `Failed to encode args: ${error instanceof Error ? error.message : String(error)}, with args: ${args}`,
 		})
-	})
+	}
+}
