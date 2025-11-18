@@ -209,3 +209,10 @@ export type ICEPlugin = (
 
 // export type TaskTreeNodeEval = Task | Scope | BuilderResult
 // export type TaskTreeEval = Record<string, TaskTreeNodeEval>
+
+// Helper to grab the config type from an Ice instance
+
+type ICEDefault<C extends Partial<ICEConfig>> = (
+    globalArgs: ICEGlobalArgs,
+) => Promise<{ config: C; plugins: ICEPlugin[] }>
+export type InferIceConfig<T> = T extends ICEDefault<infer I> ? I : never

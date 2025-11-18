@@ -29,6 +29,7 @@ export type {
 	TaskTree,
 	Scope,
 	Task,
+    InferIceConfig,
 } from "./types/types.js"
 
 class IceBuilder<C extends Partial<ICEConfig>> {
