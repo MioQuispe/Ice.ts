@@ -1,7 +1,6 @@
 import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
-import { customCanister } from "@ice.ts/runner"
 import type { TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 import type { _SERVICE } from "./identity_manager.types.js"

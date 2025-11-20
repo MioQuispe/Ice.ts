@@ -1,7 +1,6 @@
 import { canister, Opt } from "@ice.ts/runner"
 import * as url from "node:url"
 import path from "node:path"
-import { customCanister } from "@ice.ts/runner"
 import type { TaskCtx } from "@ice.ts/runner"
 import type { _SERVICE } from "./delegation_factory.types"
 import { NFIDIdentityManager } from "../identity_manager/index.js"

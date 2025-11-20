@@ -19,10 +19,7 @@ export class PromptsService extends Context.Tag("PromptsService")<
 		Spinner: () => Effect.Effect<
 			{
 				start: (msg?: string) => void
-				stop: (
-					msg?: string,
-					code?: number,
-				) => void
+				stop: (msg?: string, code?: number) => void
 				message: (msg?: string) => void
 			},
 			never
@@ -38,12 +35,10 @@ export class PromptsService extends Context.Tag("PromptsService")<
 				Spinner: () =>
 					Effect.gen(function* () {
 						return {
-							start: (msg?: string) =>
-								() => uiSpinnerStart(msg),
+							start: (msg?: string) => uiSpinnerStart(msg),
 							stop: (msg?: string, code?: number) =>
-								() => uiSpinnerStop(msg, code),
-							message: (msg?: string) =>
-								() => uiSpinnerMessage(msg),
+								uiSpinnerStop(msg, code),
+							message: (msg?: string) => uiSpinnerMessage(msg),
 						}
 					}),
 				confirm: (confirmOptions: ConfirmOptions) =>

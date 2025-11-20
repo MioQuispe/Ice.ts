@@ -5,6 +5,7 @@ import type {
 	ICEConfigFile,
 	ICEEnvironment,
 	ICEGlobalArgs,
+	ICEPlugin,
 	Scope,
 	TaskTree,
 	TaskTreeNode,
@@ -116,10 +117,8 @@ const createService = (globalArgs: {
 		const appDirectory = yield* fs.realPath(process.cwd())
 		// TODO: make this configurable if needed
 		const configPath = "ice.config.ts"
-		yield* Effect.logDebug("Loading config...", {
-			configPath,
-			appDirectory,
-		})
+		const startTime = performance.now()
+		yield* Effect.logDebug("Loading config...", { startTime })
 		const { path: iceDirPath } = yield* IceDir
 
 		// Wrap tsImport in a console.log monkey patch.
@@ -146,18 +145,18 @@ const createService = (globalArgs: {
 		}
 
 		const d = mod.default
-		// if (typeof d.config !== "function") {
-		// 	return yield* Effect.fail(
-		// 		new ICEConfigError({
-		// 			message:
-		// 				"Config file must export a default function (use Ice().tasks().make())",
-		// 		}),
-		// 	)
-		// }
 
-		console.log(d)
 		const { config, plugins } = yield* Effect.tryPromise({
 			try: () => {
+				if (typeof d !== "function") {
+					return Promise.resolve({
+						config: {},
+						plugins: [],
+					} as {
+						config: Partial<ICEConfig>
+						plugins: ICEPlugin[]
+					})
+				}
 				const result = d(iceGlobalArgs)
 				if (result instanceof Promise) {
 					return result
@@ -202,7 +201,16 @@ const createService = (globalArgs: {
 			}
 		}
 
+		const afterLoadConfig = performance.now()
+		yield* Effect.logDebug(
+			`Finished loading config. [TIMING] loadConfig took ${afterLoadConfig - startTime}ms`,
+		)
+
+		const beforeApplyPlugins = performance.now()
 		const transformedEnvironment = yield* applyPlugins(environment)
+		yield* Effect.logDebug(
+			`Finished applying plugins. [TIMING] applyPlugins took ${performance.now() - beforeApplyPlugins}ms`,
+		)
 		return {
 			...transformedEnvironment,
 			globalArgs,

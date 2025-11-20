@@ -60,14 +60,14 @@ import { ClackLoggingLive } from "../services/logger.js"
 
 // Schema.TaggedError
 
-export const baseLayer = Layer.mergeAll(
+const baseLayer = Layer.mergeAll(
 	NodeContext.layer,
 	Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 	ClackLoggingLive,
 	// Note: Logger.minimumLogLevel is provided at runtime via taskCtx.logLevel
 )
 export const defaultBuilderRuntime = ManagedRuntime.make(baseLayer)
-export type BuilderLayer = typeof baseLayer
+type BuilderLayer = typeof baseLayer
 
 export class TaskError extends Data.TaggedError("TaskError")<{
 	message?: string
@@ -132,13 +132,12 @@ export const makeConfigTask = <
 	D extends Record<string, Task> = {},
 	P extends Record<string, Task> = {},
 >(
-	builderLayer: BuilderLayer,
 	configOrFn:
 		| ((args: { ctx: TaskCtx }) => Promise<Config>)
 		| ((args: { ctx: TaskCtx }) => Config)
 		| Config,
 ) => {
-	const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		description: "Config task",
@@ -250,12 +249,11 @@ export type CreateConfig = {
 }
 
 export const makeCreateTask = <Config extends CreateConfig>(
-	builderLayer: BuilderLayer,
 	configTask: ConfigTask<Config>,
 	tags: string[] = [],
 ): CreateTask => {
 	const id = Symbol("canister/create")
-	const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id,
@@ -1199,8 +1197,8 @@ export function normalizeDepsMap(
 	)
 }
 
-export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
-	const runtime = ManagedRuntime.make(builderLayer)
+export const makeStopTask = (): StopTask => {
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/stop"),
@@ -1284,8 +1282,8 @@ export const makeStopTask = (builderLayer: BuilderLayer): StopTask => {
 	} satisfies Task<void>
 }
 
-export const makeRemoveTask = (builderLayer: BuilderLayer): RemoveTask => {
-	const runtime = ManagedRuntime.make(builderLayer)
+export const makeRemoveTask = (): RemoveTask => {
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/remove"),
@@ -1356,10 +1354,9 @@ export const makeRemoveTask = (builderLayer: BuilderLayer): RemoveTask => {
 }
 
 export const makeCanisterStatusTask = (
-	builderLayer: BuilderLayer,
 	tags: string[],
 ): StatusTask => {
-	const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		// TODO: change
@@ -1760,7 +1757,6 @@ export const makeInstallArgsTask = <
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
 >(
-	builderLayer: BuilderLayer,
 	installArgs: {
 		fn: (args: {
 			ctx: TaskCtx
@@ -1787,7 +1783,7 @@ export const makeInstallArgsTask = <
 	},
 	dependencies: P,
 ): InstallArgsTask<_SERVICE, I, U, D, P> => {
-	const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/install_args"),
@@ -2137,11 +2133,10 @@ export const makeInstallArgsTask = <
 }
 
 export const makeInstallTask = <_SERVICE, I, U>(
-	builderLayer: BuilderLayer,
 	installArgsTask: InstallArgsTask<_SERVICE, I, U>,
 ): InstallTask<_SERVICE, I, U> => {
 	// TODO: canister installed, but cache deleted. should use reinstall, not install
-	const runtime = ManagedRuntime.make(builderLayer)
+	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("customCanister/install"),

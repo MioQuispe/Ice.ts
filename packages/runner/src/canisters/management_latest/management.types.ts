@@ -1,4 +1,4 @@
-import type { Principal } from '@icp-sdk/core/principal';
+import type { Principal } from "@icp-sdk/core/principal";
 export type bitcoin_address = string;
 export type bitcoin_block_hash = Array<number>;
 export type bitcoin_block_header = Array<number>;

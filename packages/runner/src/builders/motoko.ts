@@ -25,9 +25,8 @@ import {
 	StatusTask,
 	StopTask,
 	ValidProvidedDeps,
-	baseLayer,
-	type BuilderLayer,
 	makeLoggerLayer,
+	defaultBuilderRuntime,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -170,13 +169,12 @@ export type MotokoDeployTaskArgs = ResolvedParamsToArgs<
 >
 
 export const makeMotokoDeployTask = <_SERVICE>(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>)
 		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
 		| MotokoCanisterConfig,
 ): MotokoDeployTask<_SERVICE> => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		// TODO: change
@@ -351,10 +349,8 @@ export type MotokoBindingsTask = Omit<
 	namedParams: typeof motokoBindingsParams
 }
 
-export const makeMotokoBindingsTask = (
-	builderLayer: BuilderLayer,
-): MotokoBindingsTask => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+export const makeMotokoBindingsTask = (): MotokoBindingsTask => {
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("motokoCanister/bindings"),
@@ -514,10 +510,9 @@ export type MotokoBuildTask = CachedTask<
 >
 
 export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
-	builderLayer: BuilderLayer,
 	configTask: ConfigTask<C>,
 ): MotokoBuildTask => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("motokoCanister/build"),
@@ -712,16 +707,13 @@ export class MotokoCanisterBuilder<
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > {
 	#scope: S
-	#builderLayer: BuilderLayer
 	#installArgs: ArgsFields<I, D, P, TCtx>
 	#upgradeArgs: ArgsFields<U, D, P, TCtx>
 	constructor(
-		builderLayer: BuilderLayer,
 		scope: S,
 		installArgs: ArgsFields<I, D, P, TCtx>,
 		upgradeArgs: ArgsFields<U, D, P, TCtx>,
 	) {
-		this.#builderLayer = builderLayer
 		this.#scope = scope
 		this.#installArgs = installArgs
 		this.#upgradeArgs = upgradeArgs
@@ -742,7 +734,6 @@ export class MotokoCanisterBuilder<
 		TCtx
 	> {
 		const config = makeConfigTask<Config>(
-			this.#builderLayer,
 			canisterConfigOrFn as any,
 		)
 		const updatedScope = {
@@ -750,14 +741,13 @@ export class MotokoCanisterBuilder<
 			children: {
 				...this.#scope.children,
 				config,
-				create: makeCreateTask<Config>(this.#builderLayer, config, [
+				create: makeCreateTask<Config>(config, [
 					Tags.MOTOKO,
 				]),
-				build: makeMotokoBuildTask(this.#builderLayer, config),
+				build: makeMotokoBuildTask(config),
 			},
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, D, P>
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -776,7 +766,6 @@ export class MotokoCanisterBuilder<
 	> {
 		// no-op; build is derived from config
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			this.#scope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -851,7 +840,6 @@ export class MotokoCanisterBuilder<
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
-			this.#builderLayer,
 			this.#installArgs as any,
 			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
@@ -861,7 +849,6 @@ export class MotokoCanisterBuilder<
 			children: {
 				...this.#scope.children,
 				install: makeInstallTask<_SERVICE, I, U>(
-					this.#builderLayer,
 					install_args,
 				),
 				install_args,
@@ -869,7 +856,6 @@ export class MotokoCanisterBuilder<
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, D, P>
 
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -944,7 +930,6 @@ export class MotokoCanisterBuilder<
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
-			this.#builderLayer,
 			this.#installArgs as any,
 			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
@@ -958,7 +943,6 @@ export class MotokoCanisterBuilder<
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, D, P>
 
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -1003,7 +987,6 @@ export class MotokoCanisterBuilder<
 			children: updatedChildren,
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, D, NP>
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			installArgs,
 			upgradeArgs,
@@ -1050,7 +1033,6 @@ export class MotokoCanisterBuilder<
 			children: updatedChildren,
 		} satisfies MotokoCanisterScope<_SERVICE, I, U, ND, P>
 		return new MotokoCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			installArgs,
 			upgradeArgs,
@@ -1087,22 +1069,20 @@ export class MotokoCanisterBuilder<
 	}
 }
 
-export const makeMotokoCanister = <
+export const motokoCanister = <
 	_SERVICE = unknown,
 	I = unknown,
 	U = unknown,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 >(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| MotokoCanisterConfig
 		| ((args: { ctx: TCtx }) => MotokoCanisterConfig)
 		| ((args: { ctx: TCtx }) => Promise<MotokoCanisterConfig>),
 ) => {
-	const config = makeConfigTask(builderLayer, canisterConfigOrFn as any)
+	const config = makeConfigTask(canisterConfigOrFn as any)
 
 	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
-		builderLayer,
 		{ fn: () => [] as I, customEncode: undefined },
 		{ fn: () => [] as U, customEncode: undefined },
 		{} as {},
@@ -1115,21 +1095,19 @@ export const makeMotokoCanister = <
 		defaultTask: "deploy",
 		children: {
 			config,
-			create: makeCreateTask(builderLayer, config, [Tags.MOTOKO]),
-			build: makeMotokoBuildTask(builderLayer, config),
-			bindings: makeMotokoBindingsTask(builderLayer),
-			stop: makeStopTask(builderLayer),
-			remove: makeRemoveTask(builderLayer),
+			create: makeCreateTask(config, [Tags.MOTOKO]),
+			build: makeMotokoBuildTask(config),
+			bindings: makeMotokoBindingsTask(),
+			stop: makeStopTask(),
+			remove: makeRemoveTask(),
 			install_args,
 			install: makeInstallTask<_SERVICE, I, U>(
-				builderLayer,
 				install_args,
 			),
 			deploy: makeMotokoDeployTask<_SERVICE>(
-				builderLayer,
 				canisterConfigOrFn as any,
 			),
-			status: makeCanisterStatusTask(builderLayer, [Tags.MOTOKO]),
+			status: makeCanisterStatusTask([Tags.MOTOKO]),
 		},
 	} satisfies MotokoCanisterScope<_SERVICE, I, U, {}, {}>
 
@@ -1144,21 +1122,5 @@ export const makeMotokoCanister = <
 		MotokoCanisterConfig,
 		_SERVICE,
 		TCtx
-	>(builderLayer, initialScope, installArgs, upgradeArgs)
-}
-
-export const motokoCanister = <
-	_SERVICE = unknown,
-	I extends unknown[] = unknown[],
-	U extends unknown[] = unknown[],
->(
-	canisterConfigOrFn:
-		| MotokoCanisterConfig
-		| ((args: { ctx: TaskCtx }) => MotokoCanisterConfig)
-		| ((args: { ctx: TaskCtx }) => Promise<MotokoCanisterConfig>),
-) => {
-	return makeMotokoCanister<_SERVICE, I, U>(
-		baseLayer as BuilderLayer,
-		canisterConfigOrFn,
-	)
+	>(initialScope, installArgs, upgradeArgs)
 }

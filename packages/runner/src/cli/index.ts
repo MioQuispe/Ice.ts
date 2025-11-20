@@ -82,6 +82,7 @@ import { TaskRuntime } from "../services/taskRuntime.js"
 import { NodeSdk } from "@effect/opentelemetry"
 import { ICReplica } from "../services/ic-replica.js"
 import { FileSystem } from "@effect/platform"
+import { Identity } from "@icp-sdk/core/agent"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -281,7 +282,7 @@ export const makeCliRuntime = ({
 		// local: picReplicaLayer,
 		local: picReplicaLayer,
 		staging: stagingReplicaLayer,
-		ic: picReplicaLayer,
+		ic: icReplicaLayer,
 	}
 
 	// TODO: provide them all??
@@ -313,12 +314,12 @@ export const makeCliRuntime = ({
 			Layer.provide(NodeContext.layer),
 			Layer.provide(KVStorageLayer),
 		),
-		PromptsService.Live,
 		DeploymentsLayer,
 		InFlightLayer,
 		IceDirLayer,
 		// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 		ClackLoggingLive,
+		PromptsService.Live,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
 		CanisterIdsLayer,
 		KVStorageLayer,
@@ -332,7 +333,7 @@ export const makeCliRuntime = ({
 		TaskRuntimeLayer.pipe(
 			Layer.provide(
 				Layer.mergeAll(
-                    ClackLoggingLive,
+					ClackLoggingLive,
 					NodeContext.layer,
 					KVStorageLayer,
 					ICEConfigLayer,
@@ -1034,7 +1035,7 @@ const cleanCommand = defineCommand({
 			const Prompts = yield* PromptsService
 			const s = yield* Prompts.Spinner()
 
-            // TODO: more granular clean options
+			// TODO: more granular clean options
 			s.start("Starting clean")
 			yield* Effect.logDebug("Running clean")
 			const iceDir = yield* IceDir
@@ -1186,7 +1187,8 @@ const canistersStatusCommand = defineCommand({
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
 				})
-				const identity = Ed25519KeyIdentity.generate()
+				const identity =
+					Ed25519KeyIdentity.generate() as unknown as Identity
 				const canisterStatusesEffects = Object.keys(canisterIdsMap).map(
 					(canisterName) =>
 						Effect.either(

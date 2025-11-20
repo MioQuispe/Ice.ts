@@ -25,7 +25,7 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	progressCb: (update: ProgressUpdate<unknown>) => void = () => {},
 ) {
 	const runTaskStartTime = performance.now()
-	console.log(
+	yield* Effect.logDebug(
 		`[TIMING] runTask effect started at ${runTaskStartTime}`,
 	)
 	// TODO:
@@ -33,7 +33,7 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	const beforeGetPath = performance.now()
 	const taskPath = yield* getTaskPathById(task.id)
 	const afterGetPath = performance.now()
-	console.log(
+	yield* Effect.logDebug(
 		`[TIMING] getTaskPathById took ${afterGetPath - beforeGetPath}ms`,
 	)
 	// yield* Effect.annotateCurrentSpan({
@@ -67,7 +67,7 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 	const beforeMakeEffects = performance.now()
 	const taskEffects = yield* makeTaskEffects(sortedTasks, progressCb)
 	const afterMakeEffects = performance.now()
-	console.log(
+	yield* Effect.logDebug(
 		`[TIMING] makeTaskEffects took ${afterMakeEffects - beforeMakeEffects}ms`,
 	)
 	const results = yield* Effect.all(taskEffects, {

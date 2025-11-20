@@ -8,11 +8,10 @@ import {
 	DependencyMismatchError,
 	IsValid,
 	StatusTask,
-	baseLayer,
-	type BuilderLayer,
 	ConfigTask,
 	makeLoggerLayer,
 	CanisterDidModule,
+	defaultBuilderRuntime,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath, ResolvedParamsToArgs } from "../tasks/lib.js"
@@ -85,13 +84,12 @@ export type RemoteDeployTaskArgs = ResolvedParamsToArgs<
 >
 
 export const makeRemoteDeployTask = <_SERVICE>(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| ((args: { ctx: TaskCtx }) => Promise<RemoteCanisterConfig>)
 		| ((args: { ctx: TaskCtx }) => RemoteCanisterConfig)
 		| RemoteCanisterConfig,
 ): RemoteDeployTask<_SERVICE> => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("canister/deploy"),
@@ -234,10 +232,8 @@ export type RemoteBindingsTaskArgs = ResolvedParamsToArgs<
 	typeof remoteBindingsParams
 >
 
-export const makeRemoteBindingsTask = (
-	builderLayer: BuilderLayer,
-): BindingsTask => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+export const makeRemoteBindingsTask = (): BindingsTask => {
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("remoteCanister/bindings"),
@@ -344,13 +340,10 @@ export class RemoteCanisterBuilder<
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > {
 	#scope: RemoteCanisterScope<_SERVICE>
-	#builderLayer: BuilderLayer
 
 	constructor(
-		builderLayer: BuilderLayer,
 		scope: RemoteCanisterScope<_SERVICE>,
 	) {
-		this.#builderLayer = builderLayer
 		this.#scope = scope
 	}
 
@@ -366,17 +359,16 @@ export class RemoteCanisterBuilder<
 	}
 }
 
-export const makeRemoteCanister = <
+export const remoteCanister = <
 	_SERVICE = unknown,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 >(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| RemoteCanisterConfig
 		| ((args: { ctx: TCtx }) => RemoteCanisterConfig)
 		| ((args: { ctx: TCtx }) => Promise<RemoteCanisterConfig>),
 ) => {
-	const config = makeConfigTask(builderLayer, canisterConfigOrFn as any)
+	const config = makeConfigTask(canisterConfigOrFn as any)
 
 	const initialScope = {
 		_tag: "scope",
@@ -386,29 +378,15 @@ export const makeRemoteCanister = <
 		defaultTask: "deploy",
 		children: {
 			config,
-			bindings: makeRemoteBindingsTask(builderLayer),
+			bindings: makeRemoteBindingsTask(),
 			deploy: makeRemoteDeployTask<_SERVICE>(
-				builderLayer,
 				canisterConfigOrFn as any,
 			),
-			status: makeCanisterStatusTask(builderLayer, [Tags.REMOTE]),
+			status: makeCanisterStatusTask([Tags.REMOTE]),
 		},
 	} satisfies RemoteCanisterScope<_SERVICE>
 
 	return new RemoteCanisterBuilder<_SERVICE, RemoteCanisterConfig, TCtx>(
-		builderLayer,
 		initialScope,
-	)
-}
-
-export const remoteCanister = <_SERVICE = unknown>(
-	canisterConfigOrFn:
-		| RemoteCanisterConfig
-		| ((args: { ctx: TaskCtx }) => RemoteCanisterConfig)
-		| ((args: { ctx: TaskCtx }) => Promise<RemoteCanisterConfig>),
-) => {
-	return makeRemoteCanister<_SERVICE>(
-		baseLayer as BuilderLayer,
-		canisterConfigOrFn,
 	)
 }

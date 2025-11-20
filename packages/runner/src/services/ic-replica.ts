@@ -37,7 +37,7 @@ import {
 import { Opt } from "../canister.js"
 import type * as ActorTypes from "../types/actor.js"
 import type { SubnetTopology } from "@dfinity/pic"
-import { spawn, type ChildProcess } from "node:child_process"
+import * as nodeChildProcess from "node:child_process"
 
 export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
 	import("../canisters/management_latest/management.types.js")._SERVICE
@@ -121,7 +121,7 @@ export class ICReplica implements ReplicaServiceClass {
 	public readonly port: number = 8080
 	public readonly manual?: boolean
 	public ctx?: ICEGlobalArgs
-	public proc?: ChildProcess
+	public proc?: nodeChildProcess.ChildProcess
 
 	constructor(opts: { host: string; port: number; manual?: boolean }) {
 		this.host = opts.host
@@ -135,9 +135,7 @@ export class ICReplica implements ReplicaServiceClass {
 				identity,
 				host: `${this.host}${this.port === 80 ? "" : `:${this.port}`}`,
 			})
-			console.log("agent created", agent)
 			await agent.fetchRootKey()
-			console.log("root key fetched", agent)
 			return agent
 		} catch (error) {
 			throw new AgentError({
@@ -417,9 +415,7 @@ export class ICReplica implements ReplicaServiceClass {
 		canisterDID: any
 		identity: Identity
 	}): Promise<ActorSubclass<_SERVICE>> {
-		console.log("getting agent....")
 		const agent = await this.getAgent(identity)
-		console.log("agent got", agent)
 		return Actor.createActor<_SERVICE>(canisterDID.idlFactory, {
 			agent,
 			canisterId,

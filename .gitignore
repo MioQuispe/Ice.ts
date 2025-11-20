@@ -17,6 +17,7 @@ cursor/**
 **/.vscode
 **/.ice
 **/.ice_test*
+**/tsup/**
 
 **/.cursorrules
 **/.cursorignore

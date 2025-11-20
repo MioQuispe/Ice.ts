@@ -8,8 +8,7 @@ import { DeploymentsService } from "../../src/services/deployments.js"
 import { Option } from "effect"
 import {
 	CustomCanisterScope,
-	// customCanister,
-	makeCustomCanister,
+	customCanister,
 } from "../../src/builders/custom.js"
 import { PICReplica } from "../../src/services/pic/pic.js"
 import { CachedTask, Task } from "../../src/types/types.js"
@@ -21,7 +20,6 @@ import { ICEConfig } from "../../src/types/types.js"
 import { KeyValueStore } from "@effect/platform"
 import { CanisterIdsService } from "../../src/services/canisterIds.js"
 import { IcpConfigFlag } from "@dfinity/pic"
-import { customCanister } from "../../src/builders/index.js"
 import { spawn } from "node:child_process"
 import { pocketIcPath } from "@ice.ts/pocket-ic"
 

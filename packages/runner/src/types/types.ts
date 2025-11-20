@@ -1,4 +1,3 @@
-import { ActorSubclass, SignIdentity as SignIdentityType } from "@icp-sdk/core/agent"
 import type { StandardSchemaV1 } from "@standard-schema/spec"
 import type { ConfigError } from "effect"
 import { ICEConfigError } from "../services/iceConfig.js"
@@ -24,7 +23,7 @@ import { Schema as S } from "effect"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { LogLevel } from "effect/LogLevel"
 // import type { SignIdentity } from "@icp-sdk/core/agent"
-import { type Identity } from "../index.js"
+import type { Identity } from "@icp-sdk/core/agent"
 
 // TODO:.....
 // type SignIdentity = {
@@ -225,6 +224,6 @@ export type ICEPlugin = (
 // Helper to grab the config type from an Ice instance
 
 type ICEDefault<C extends Partial<ICEConfig>> = (
-    globalArgs: ICEGlobalArgs,
+	globalArgs: ICEGlobalArgs,
 ) => Promise<{ config: C; plugins: ICEPlugin[] }>
 export type InferIceConfig<T> = T extends ICEDefault<infer I> ? I : never

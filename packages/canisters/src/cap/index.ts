@@ -3,7 +3,7 @@ import { idlFactory as capBucketIdlFactory } from "./cap-bucket/cap-bucket.did.j
 import { idlFactory as capRootIdlFactory } from "./cap-root/cap-root.did.js"
 import { idlFactory as capRouterIdlFactory } from "./cap-router/cap-router.did.js"
 import { idlFactory as capRouterTestIdlFactory } from "./cap-router-test/cap-router-test.did.js"
-import { canister, customCanister, type TaskCtx, scope } from "@ice.ts/runner"
+import { canister, type TaskCtx, scope } from "@ice.ts/runner"
 import type { _SERVICE as CAP_ROUTER_SERVICE } from "./cap-router/types.js"
 import type { _SERVICE as CAP_ROOT_SERVICE } from "./cap-root/types.js"
 import type { _SERVICE as CAP_BUCKET_SERVICE } from "./cap-bucket/types.js"

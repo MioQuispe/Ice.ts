@@ -7,13 +7,20 @@ export default defineConfig([
 		entry: {
 			index: "src/index.ts",
 		},
-		outDir: "dist",
+		// entry: ["src/index.ts", "src/**/*.ts"],
+        // {
+		// 	index: "src/index.ts",
+		// },
+		outDir: "tsup",
 		format: ["esm"],
 		bundle: true,
-		splitting: true,
+		splitting: false,
+        target: "esnext",
+        tsconfig: "tsconfig.json",
+        platform: "node",
 		sourcemap: true,
 		clean: true,
-		dts: true, // normal API d.ts
+		dts: true,
 		esbuildOptions(options) {
 			options.loader = {
 				...options.loader,
@@ -21,21 +28,4 @@ export default defineConfig([
 			}
 		},
 	},
-
-	// types-only bundle for Identity
-	//   {
-	//     entry: {
-	//       identity: "src/identity-entry.ts",
-	//     },
-	//     outDir: "dist/types",
-	//     format: ["esm"],
-	//     bundle: false, // doesn’t matter much, but we only care about d.ts here
-	//     dts: {
-	//       entry: "src/identity-entry.ts",
-	//       // tsup will emit dist/types/identity.d.ts as a flattened definition
-	//     },
-	//     clean: false,
-	//     sourcemap: false,
-	//     // no js output needed; tsup will still create a tiny .js, you can ignore it
-	//   },
 ])

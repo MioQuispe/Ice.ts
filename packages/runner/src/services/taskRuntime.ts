@@ -379,13 +379,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 						args?: TaskParamsToArgs<T>,
 					): Promise<TaskSuccess<T>> => {
 						const wrapperStartTime = performance.now()
-						console.log(
-							`[TIMING] taskCtx.runTask called at ${wrapperStartTime}`,
-						)
-						const effectCreated = performance.now()
-						console.log(
-							`[TIMING] Effect created: ${effectCreated - wrapperStartTime}ms`,
-						)
 						const result = await taskRuntime.runPromise(
 							runTask(task, args, progressCb).pipe(
 								Effect.provide(ChildTaskRuntimeLayer),
@@ -395,10 +388,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
                                 // Effect.scoped,
                                 Scope.extend(runtimeScope),
 							),
-						)
-						const wrapperEndTime = performance.now()
-						console.log(
-							`[TIMING] taskCtx.runTask completed: ${wrapperEndTime - wrapperStartTime}ms total`,
 						)
 						return result
 					},

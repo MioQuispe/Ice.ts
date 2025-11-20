@@ -1,7 +1,7 @@
 import * as url from "node:url"
 import path from "node:path"
 import { Principal } from "@dfinity/principal"
-import { canister, customCanister, type TaskCtx } from "@ice.ts/runner"
+import { canister, type TaskCtx } from "@ice.ts/runner"
 import { CapRouter } from "../cap"
 import type { _SERVICE } from "./dip20.types.js"
 

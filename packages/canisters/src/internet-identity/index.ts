@@ -9,11 +9,9 @@ import type {
 } from "./internet_identity.types.js"
 import {
 	canister,
-	customCanister,
 	CustomCanisterConfig,
-	type TaskCtxShape,
+	type TaskCtx,
 } from "@ice.ts/runner"
-import { TaskCtx } from "@ice.ts/runner/dist/services/taskRuntime"
 // TODO: make subtasks easily overrideable. maybe helpers like withInstall(). or just let users keep chaining the builder api
 type InitArgsSimple = {
 	owner: string

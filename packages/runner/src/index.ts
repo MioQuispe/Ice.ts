@@ -9,17 +9,36 @@ import type {
 	ICEPlugin,
 } from "./types/types.js"
 import type { Scope, TaskTree } from "./types/types.js"
-import { TaskCtx, TaskCtxExtension } from "./services/taskRuntime.js"
+// import { TaskCtx, TaskCtxExtension } from "./services/taskRuntime.js"
+// import { Principal } from "./external.js"
 export { Opt } from "./types/types.js"
-export * from "./builders/index.js"
+export { canister, task, scope } from "./builders/index.js"
 export type { CanisterScopeSimple } from "./builders/lib.js"
-export type { CustomCanisterScope } from "./builders/custom.js"
-export * from "./ids.js"
+export type {
+	CustomCanisterScope,
+	CustomCanisterConfig,
+	CustomCanisterBuilder,
+} from "./builders/custom.js"
+export type {
+	MotokoCanisterBuilder,
+	MotokoCanisterConfig,
+	MotokoCanisterScope,
+} from "./builders/motoko.js"
+export type {
+	RemoteCanisterScope,
+	RemoteCanisterConfig,
+	RemoteCanisterBuilder,
+} from "./builders/remote.js"
+export type {
+	RustCanisterBuilder,
+	RustCanisterConfig,
+	RustCanisterScope,
+} from "./builders/rust.js"
+export { Ids } from "./ids.js"
 export type { InstallModes } from "./services/replica.js"
 export type { TaskCtxExtension } from "./services/taskRuntime.js"
 export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
-export type { Identity } from "@icp-sdk/core/agent"
 
 // Export additional types for user configs
 export type {
@@ -33,6 +52,9 @@ export type {
 	InferIceConfig,
 	ICEUser,
 } from "./types/types.js"
+
+export type { Principal } from "@dfinity/principal"
+export type { Identity } from "@dfinity/agent"
 
 export class IceBuilder<C extends Partial<ICEConfig>> {
 	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
@@ -112,4 +134,4 @@ export const Ice = <C extends Partial<ICEConfig>>(
 // }
 
 export { runCli } from "./cli/index.js"
-export type { TaskCtx as TaskCtxShape } from "./services/taskRuntime.js"
+export type { TaskCtx } from "./services/taskRuntime.js"

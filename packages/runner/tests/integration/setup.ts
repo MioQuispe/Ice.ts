@@ -25,13 +25,6 @@ import { TaskRegistry } from "../../src/services/taskRegistry.js"
 import { CachedTask, ICEConfig, Task, TaskTree } from "../../src/types/types.js"
 import { NodeSdk as OpenTelemetryNodeSdk } from "@effect/opentelemetry"
 import {
-	customCanister,
-	CustomCanisterConfig,
-	makeCustomCanister,
-	makeMotokoCanister,
-	motokoCanister,
-} from "../../src/builders/index.js"
-import {
 	InMemorySpanExporter,
 	BatchSpanProcessor,
 	SimpleSpanProcessor,
@@ -45,7 +38,6 @@ import fs, { realpathSync } from "node:fs"
 import { IceDir } from "../../src/services/iceDir.js"
 import { InFlight } from "../../src/services/inFlight.js"
 import { DeploymentsService } from "../../src/services/deployments.js"
-import { BuilderLayer } from "../../src/builders/lib.js"
 import { PromptsService } from "../../src/services/prompts.js"
 import { logLevelMap } from "../../src/cli/index.js"
 import { TaskRuntime } from "../../src/services/taskRuntime.js"
@@ -202,44 +194,10 @@ export const makeTestEnvEffect = (
 		),
 	)
 
-	const builderLayer = Layer.mergeAll(
-		Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		Logger.pretty,
-		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
-		NodeContext.layer,
-		telemetryConfigLayer,
-		telemetryLayer,
-	)
-	const builderRuntime = ManagedRuntime.make(builderLayer)
-
-	const custom = ((config: Parameters<typeof customCanister>[0]) =>
-		makeCustomCanister(
-			builderLayer,
-			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-			// 	unknown,
-			// 	unknown
-			// >,
-			config,
-		)) as unknown as typeof customCanister
-	const motoko = ((config: Parameters<typeof motokoCanister>[0]) =>
-		makeMotokoCanister(
-			builderLayer,
-			// builderRuntime as unknown as ManagedRuntime.ManagedRuntime<
-			// 	unknown,
-			// 	unknown
-			// >,
-			config,
-		)) as unknown as typeof motokoCanister
-
 	return {
 		runtime: ManagedRuntime.make(testLayer),
 		layer: testLayer,
 		telemetryExporter,
-		customCanister: custom,
-		motokoCanister: motoko,
-		// testLayer,
-		// builderLayer,
-		// sharedLayer,
 	}
 }
 // TODO: add to builder instead

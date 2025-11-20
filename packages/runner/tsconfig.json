@@ -3,7 +3,7 @@
 		"jsx": "react-jsx",
 		"target": "esnext",
 		"lib": ["DOM", "DOM.Iterable", "ESNext"],
-		"types": ["vite/client", "vitest/globals"],
+		"types": ["vite/client", "node"],
 		"outDir": "dist",
 		"allowJs": true,
 		"skipLibCheck": true,
@@ -19,7 +19,7 @@
 		"moduleResolution": "NodeNext",
 		"resolveJsonModule": true,
 		"isolatedModules": true,
-        "declarationMap": true,
+		"declarationMap": true,
 		"baseUrl": ".",
 
 		"noUncheckedIndexedAccess": true,
@@ -33,9 +33,14 @@
 			{
 				"name": "@effect/language-service"
 			}
-		]
+		],
+		"paths": {
+		}
 	},
-	"include": ["src/index.ts"],
+	"include": [
+		"src/index.ts"
+	],
+	"exclude": ["node_modules"],
 	"ts-node": {
 		"transpileOnly": true,
 		"transpiler": "ts-node/transpilers/swc-experimental"

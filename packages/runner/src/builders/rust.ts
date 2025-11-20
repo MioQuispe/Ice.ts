@@ -23,9 +23,8 @@ import {
 	StatusTask,
 	StopTask,
 	ValidProvidedDeps,
-	baseLayer,
-	type BuilderLayer,
 	makeLoggerLayer,
+	defaultBuilderRuntime,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -102,13 +101,12 @@ export type RustDeployTask<_SERVICE = unknown> = Omit<
 export type RustDeployTaskArgs = ResolvedParamsToArgs<typeof rustDeployParams>
 
 export const makeRustDeployTask = <_SERVICE>(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| ((args: { ctx: TaskCtx }) => Promise<RustCanisterConfig>)
 		| ((args: { ctx: TaskCtx }) => RustCanisterConfig)
 		| RustCanisterConfig,
 ): RustDeployTask<_SERVICE> => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("canister/deploy"),
@@ -276,10 +274,8 @@ export type RustBindingsTask = Omit<
 	namedParams: typeof rustBindingsParams
 }
 
-export const makeRustBindingsTask = (
-	builderLayer: BuilderLayer,
-): RustBindingsTask => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+export const makeRustBindingsTask = (): RustBindingsTask => {
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("rustCanister/bindings"),
@@ -447,10 +443,9 @@ const getCargoPath = (cargoTomlOrDirPath: string) =>
 	})
 
 export const makeRustBuildTask = <C extends RustCanisterConfig>(
-	builderLayer: BuilderLayer,
 	configTask: ConfigTask<C>,
 ): RustBuildTask => {
-	const builderRuntime = ManagedRuntime.make(builderLayer)
+	const builderRuntime = defaultBuilderRuntime
 	return {
 		_tag: "task",
 		id: Symbol("rustCanister/build"),
@@ -758,16 +753,13 @@ export class RustCanisterBuilder<
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 > {
 	#scope: S
-	#builderLayer: BuilderLayer
 	#installArgs: ArgsFields<I, D, P, TCtx>
 	#upgradeArgs: ArgsFields<U, D, P, TCtx>
 	constructor(
-		builderLayer: BuilderLayer,
 		scope: S,
 		installArgs: ArgsFields<I, D, P, TCtx>,
 		upgradeArgs: ArgsFields<U, D, P, TCtx>,
 	) {
-		this.#builderLayer = builderLayer
 		this.#scope = scope
 		this.#installArgs = installArgs
 		this.#upgradeArgs = upgradeArgs
@@ -788,7 +780,6 @@ export class RustCanisterBuilder<
 		TCtx
 	> {
 		const config = makeConfigTask<Config>(
-			this.#builderLayer,
 			canisterConfigOrFn as any,
 		)
 		const updatedScope = {
@@ -796,14 +787,13 @@ export class RustCanisterBuilder<
 			children: {
 				...this.#scope.children,
 				config,
-				create: makeCreateTask<Config>(this.#builderLayer, config, [
+				create: makeCreateTask<Config>(config, [
 					Tags.RUST,
 				]),
-				build: makeRustBuildTask(this.#builderLayer, config),
+				build: makeRustBuildTask(config),
 			},
 		} satisfies RustCanisterScope<_SERVICE, I, U, D, P>
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -822,7 +812,6 @@ export class RustCanisterBuilder<
 	> {
 		// no-op; build is derived from config
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			this.#scope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -897,7 +886,6 @@ export class RustCanisterBuilder<
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
-			this.#builderLayer,
 			this.#installArgs as any,
 			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
@@ -907,7 +895,6 @@ export class RustCanisterBuilder<
 			children: {
 				...this.#scope.children,
 				install: makeInstallTask<_SERVICE, I, U>(
-					this.#builderLayer,
 					install_args,
 				),
 				install_args,
@@ -915,7 +902,6 @@ export class RustCanisterBuilder<
 		} satisfies RustCanisterScope<_SERVICE, I, U, D, P>
 
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -990,7 +976,6 @@ export class RustCanisterBuilder<
 			customEncode,
 		}
 		const install_args = makeInstallArgsTask<_SERVICE, I, U, D, P>(
-			this.#builderLayer,
 			this.#installArgs as any,
 			this.#upgradeArgs as any,
 			this.#scope.children.install_args.dependencies as P,
@@ -1004,7 +989,6 @@ export class RustCanisterBuilder<
 		} satisfies RustCanisterScope<_SERVICE, I, U, D, P>
 
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			this.#installArgs,
 			this.#upgradeArgs,
@@ -1049,7 +1033,6 @@ export class RustCanisterBuilder<
 			children: updatedChildren,
 		} satisfies RustCanisterScope<_SERVICE, I, U, D, NP>
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			installArgs,
 			upgradeArgs,
@@ -1096,7 +1079,6 @@ export class RustCanisterBuilder<
 			children: updatedChildren,
 		} satisfies RustCanisterScope<_SERVICE, I, U, ND, P>
 		return new RustCanisterBuilder(
-			this.#builderLayer,
 			updatedScope,
 			installArgs,
 			upgradeArgs,
@@ -1130,21 +1112,19 @@ export class RustCanisterBuilder<
 	}
 }
 
-export const makeRustCanister = <
+export const rustCanister = <
 	_SERVICE = unknown,
 	I = unknown,
 	U = unknown,
 	TCtx extends TaskCtx<any, any> = TaskCtx,
 >(
-	builderLayer: BuilderLayer,
 	canisterConfigOrFn:
 		| RustCanisterConfig
 		| ((args: { ctx: TCtx }) => RustCanisterConfig)
 		| ((args: { ctx: TCtx }) => Promise<RustCanisterConfig>),
 ) => {
-	const config = makeConfigTask(builderLayer, canisterConfigOrFn as any)
+	const config = makeConfigTask(canisterConfigOrFn as any)
 	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
-		builderLayer,
 		{ fn: () => [] as I, customEncode: undefined },
 		{ fn: () => [] as U, customEncode: undefined },
 		{} as {},
@@ -1157,21 +1137,19 @@ export const makeRustCanister = <
 		defaultTask: "deploy",
 		children: {
 			config,
-			create: makeCreateTask(builderLayer, config, [Tags.RUST]),
-			build: makeRustBuildTask(builderLayer, config),
-			bindings: makeRustBindingsTask(builderLayer),
-			stop: makeStopTask(builderLayer),
-			remove: makeRemoveTask(builderLayer),
+			create: makeCreateTask(config, [Tags.RUST]),
+			build: makeRustBuildTask(config),
+			bindings: makeRustBindingsTask(),
+			stop: makeStopTask(),
+			remove: makeRemoveTask(),
 			install_args,
 			install: makeInstallTask<_SERVICE, I, U>(
-				builderLayer,
 				install_args,
 			),
 			deploy: makeRustDeployTask<_SERVICE>(
-				builderLayer,
 				canisterConfigOrFn as any,
 			),
-			status: makeCanisterStatusTask(builderLayer, [Tags.RUST]),
+			status: makeCanisterStatusTask([Tags.RUST]),
 		},
 	} satisfies RustCanisterScope<_SERVICE, I, U, {}, {}>
 
@@ -1186,21 +1164,5 @@ export const makeRustCanister = <
 		RustCanisterConfig,
 		_SERVICE,
 		TCtx
-	>(builderLayer, initialScope, installArgs, upgradeArgs)
-}
-
-export const rustCanister = <
-	_SERVICE = unknown,
-	I extends unknown[] = unknown[],
-	U extends unknown[] = unknown[],
->(
-	canisterConfigOrFn:
-		| RustCanisterConfig
-		| ((args: { ctx: TaskCtx }) => RustCanisterConfig)
-		| ((args: { ctx: TaskCtx }) => Promise<RustCanisterConfig>),
-) => {
-	return makeRustCanister<_SERVICE, I, U>(
-		baseLayer as BuilderLayer,
-		canisterConfigOrFn,
-	)
+	>(initialScope, installArgs, upgradeArgs)
 }

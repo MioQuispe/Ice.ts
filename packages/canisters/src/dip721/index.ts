@@ -1,7 +1,7 @@
 import { Opt } from "../types"
 import * as url from "node:url"
 import path from "node:path"
-import { canister, customCanister } from "@ice.ts/runner"
+import { canister } from "@ice.ts/runner"
 import type { TaskCtx } from "@ice.ts/runner"
 import { Principal } from "@dfinity/principal"
 import type { InitArgs, _SERVICE } from "./dip721.types.js"
