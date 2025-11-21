@@ -49,12 +49,17 @@ export class CanisterIdsService extends Context.Tag("CanisterIdsService")<
 	static readonly Live = Layer.scoped(
 		CanisterIdsService,
 		Effect.gen(function* () {
+			yield* Effect.logInfo("[TIMING] CanisterIdsService.Live started")
+			const start = performance.now()
 			// Initialize the state from disk
 			const initialIds = yield* readInitialCanisterIds
+			yield* Effect.logInfo(
+				`[TIMING] CanisterIdsService readInitialCanisterIds took ${performance.now() - start}ms`,
+			)
 			const ref = yield* Ref.make(initialIds)
 			const fs = yield* FileSystem.FileSystem
 			const path = yield* Path.Path
-            const {path: iceDirPath} = yield* IceDir
+			const { path: iceDirPath } = yield* IceDir
 
 			/**
 			 * Flushes in-memory canister IDs to disk only if there are changes.

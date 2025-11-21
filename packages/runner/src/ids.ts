@@ -4,6 +4,7 @@ import { NodeContext } from "@effect/platform-node"
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import os from "node:os"
 import psList from "ps-list"
+import { principalToAccountId } from "./utils/utils.js"
 
 export class IdsError extends Data.TaggedError("IdsError")<{
 	message: string
@@ -29,18 +30,7 @@ const parseEd25519PrivateKey = (pem: string) => {
 }
 
 const getAccountId = (principal: string) =>
-	// TODO: get straight from ledger canister?
-	Effect.gen(function* () {
-		const command = Command.make(
-			"dfx",
-			"ledger",
-			"account-id",
-			"--of-principal",
-			principal,
-		)
-		const result = yield* Command.string(command)
-		return result.trim()
-	})
+	Effect.sync(() => principalToAccountId(principal))
 
 const getCurrentIdentity = Effect.gen(function* () {
 	const command = Command.make("dfx", "identity", "whoami")

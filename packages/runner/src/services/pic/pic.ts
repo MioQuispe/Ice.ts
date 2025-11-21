@@ -97,11 +97,14 @@ export class PICReplica implements ReplicaServiceClass {
 	}
 
 	async start(ctx: ICEGlobalArgs): Promise<void> {
+		console.log("[TIMING] PICReplica.start started")
+		const start = performance.now()
 		this.ctx = ctx
 
 		try {
 			let releaseSpawnLock
 			if (!this.manual) {
+				const startMonitor = performance.now()
 				const monitor = new Monitor({
 					background: ctx.background,
 					policy: ctx.policy,
@@ -119,6 +122,9 @@ export class PICReplica implements ReplicaServiceClass {
 				// spawn fresh
 				releaseSpawnLock = await acquireSpawnLock(spawnLockPath)
 				await monitor.start()
+				console.log(
+					`[TIMING] PICReplica monitor start took ${performance.now() - startMonitor}ms`,
+				)
 				this.monitor = monitor
 				this.host = monitor.host
 				this.port = monitor.port
@@ -162,9 +168,13 @@ export class PICReplica implements ReplicaServiceClass {
 				? { ...fixedPicConfig, ...baseRequest }
 				: { ...baseRequest }
 
+			const startClient = performance.now()
 			this.client = await CustomPocketIcClient.create(
 				baseUrl,
 				createRequest,
+			)
+			console.log(
+				`[TIMING] PICReplica client create took ${performance.now() - startClient}ms`,
 			)
 			// @ts-ignore
 			this.pic = new PocketIc(this.client)
@@ -172,6 +182,9 @@ export class PICReplica implements ReplicaServiceClass {
 			if (!this.manual && releaseSpawnLock) {
 				await releaseSpawnLock()
 			}
+			console.log(
+				`[TIMING] PICReplica.start finished in ${performance.now() - start}ms`,
+			)
 			return
 		} catch (err) {
 			this.ctx = undefined

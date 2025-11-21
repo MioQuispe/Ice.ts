@@ -11,11 +11,12 @@ import type {
 	TaskTreeNode,
 } from "../types/types.js"
 import { Path, FileSystem } from "@effect/platform"
-import { tsImport } from "tsx/esm/api"
+import { createJiti } from "jiti"
 import { InstallModes, ReplicaStartError } from "./replica.js"
 import { LogLevel } from "effect/LogLevel"
 import { IceDir } from "./iceDir.js"
 import { TaskCtx } from "./taskRuntime.js"
+import { pathToFileURL } from "node:url"
 
 export const removeBuilders = (
 	taskTree: TaskTree | TaskTreeNode | BuilderResult,
@@ -121,13 +122,24 @@ const createService = (globalArgs: {
 		yield* Effect.logDebug("Loading config...", { startTime })
 		const { path: iceDirPath } = yield* IceDir
 
-		// Wrap tsImport in a console.log monkey patch.
+		yield* Effect.logInfo(`[TIMING] ICEConfig, loading started`)
+		const beforeImportConfig = performance.now()
+		
+		const configFullPath = path.resolve(appDirectory, configPath)
+		
 		const mod = yield* Effect.tryPromise({
-			try: () =>
-				tsImport(
-					path.resolve(appDirectory, configPath),
-					import.meta.url,
-				) as Promise<ICEConfigFile>,
+			try: async () => {
+				// Use jiti for fast TypeScript loading with built-in caching
+				// jiti is used by Nuxt and has zero dependencies
+				const jiti = createJiti(import.meta.url, {
+					interopDefault: true,
+					cache: true,
+					requireCache: false,
+				})
+				
+				const result = (await jiti.import(configFullPath)) as ICEConfigFile
+				return result
+			},
 			catch: (error) =>
 				new ICEConfigError({
 					message: `Failed to get ICE config: ${
@@ -135,7 +147,12 @@ const createService = (globalArgs: {
 					}`,
 				}),
 		})
+		const afterImportConfig = performance.now()
+		yield* Effect.logInfo(
+			`[TIMING] ICEConfig, loading finished in ${afterImportConfig - beforeImportConfig}ms`,
+		)
 
+        const beforeGlobalArgs = performance.now()
 		const iceGlobalArgs: ICEGlobalArgs = {
 			network: globalArgs.network,
 			iceDirPath,
@@ -146,6 +163,7 @@ const createService = (globalArgs: {
 
 		const d = mod.default
 
+        const beforeTryPromise = performance.now()
 		const { config, plugins } = yield* Effect.tryPromise({
 			try: () => {
 				if (typeof d !== "function") {
@@ -171,6 +189,8 @@ const createService = (globalArgs: {
 				})
 			},
 		})
+        const afterTryPromise = performance.now()
+        yield* Effect.logInfo(`[TIMING] ICEConfig, tryPromise finished in ${afterTryPromise - beforeTryPromise}ms`)
 		const tasks = Object.fromEntries(
 			Object.entries(mod).filter(([key]) => key !== "default"),
 		) as TaskTree
@@ -180,6 +200,8 @@ const createService = (globalArgs: {
 			plugins,
 		}
 
+        const beforeEnvPlugins = performance.now()
+        yield* Effect.logInfo(`[TIMING] ICEConfig, environment plugins started`)
 		// Apply plugins if they exist
 		if (environment.plugins.length > 0) {
 			for (const plugin of environment.plugins) {
@@ -201,10 +223,8 @@ const createService = (globalArgs: {
 			}
 		}
 
-		const afterLoadConfig = performance.now()
-		yield* Effect.logDebug(
-			`Finished loading config. [TIMING] loadConfig took ${afterLoadConfig - startTime}ms`,
-		)
+		const afterEnvPlugins = performance.now()
+		yield* Effect.logInfo(`[TIMING] ICEConfig, environment plugins finished in ${afterEnvPlugins - beforeEnvPlugins}ms`)
 
 		const beforeApplyPlugins = performance.now()
 		const transformedEnvironment = yield* applyPlugins(environment)

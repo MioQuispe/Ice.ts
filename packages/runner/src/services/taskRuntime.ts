@@ -324,18 +324,32 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 		Layer.effect(
 			TaskRuntime,
 			Effect.gen(function* () {
+				yield* Effect.logInfo("[TIMING] TaskRuntime.Live started")
+				const startTaskRuntime = performance.now()
 				const parentSpan = yield* Effect.currentSpan
+
+				const startDefaultConfig = performance.now()
 				const defaultConfig = yield* DefaultConfig
+				yield* Effect.logInfo(
+					`[TIMING] DefaultConfig acquired in ${performance.now() - startDefaultConfig}ms`,
+				)
+
 				const appDir = yield* Effect.try({
 					try: () => realpathSync(process.cwd()),
 					catch: (e) => new TaskRuntimeError({ message: String(e) }),
 				})
 				const { path: iceDirPath } = yield* IceDir
+
+				const startICEConfig = performance.now()
 				const {
 					config,
 					globalArgs,
 					tasks: taskTree,
 				} = yield* ICEConfigService
+				yield* Effect.logInfo(
+					`[TIMING] ICEConfigService acquired in ${performance.now() - startICEConfig}ms`,
+				)
+
 				const currentNetwork = globalArgs.network ?? "local"
 				const currentNetworkConfig =
 					config?.networks?.[currentNetwork] ??
@@ -422,13 +436,15 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const replica = configReplica ?? defaultReplica
 
 				const ReplicaService = Layer.succeed(Replica, replica)
+                const DefaultConfigService = Layer.succeed(DefaultConfig, defaultConfig)
 
 				const taskLayer = Layer.mergeAll(
 					telemetryLayer,
 					NodeContext.layer,
 					TaskRegistryLayer,
 					ReplicaService,
-					DefaultConfig.Live.pipe(Layer.provide(ReplicaService)),
+					DefaultConfigService,
+					// DefaultConfig is already provided from parent layer, no need to recreate it
 					Moc.Live.pipe(Layer.provide(NodeContext.layer)),
 					CanisterIdsLayer,
 					// DevTools.layerWebSocket().pipe(
@@ -537,12 +553,20 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				}).pipe(Effect.provide(ChildTaskRuntimeLayer), Effect.scoped)
 				// const startTimeMs = performance.now()
 				// console.log(`Warming up task runtime... at ${startTimeMs}ms`)
+				const startWarmup = performance.now()
 				yield* Effect.tryPromise({
 					try: () => taskRuntime.runPromise(warmup),
 					catch: (error) =>
 						new TaskRuntimeError({ message: String(error) }),
 				})
+				yield* Effect.logInfo(
+					`[TIMING] TaskRuntime warmup finished in ${performance.now() - startWarmup}ms`,
+				)
 				// console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
+
+				yield* Effect.logInfo(
+					`[TIMING] TaskRuntime.Live finished in ${performance.now() - startTaskRuntime}ms`,
+				)
 
 				return {
 					taskCtx,

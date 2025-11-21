@@ -36,25 +36,34 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 	static readonly Live = Layer.effect(
 		DefaultConfig,
 		Effect.gen(function* () {
+			yield* Effect.logInfo("[TIMING] DefaultConfig.Live started")
+			const start = performance.now()
 			// const defaultReplica = new PICReplica({
 			// 	host: "0.0.0.0",
 			// 	port: 8081,
 			// 	ttlSeconds: 9_999_999_999,
-            //     picConfig: {
-            //         icpConfig: {
-            //             betaFeatures: IcpConfigFlag.Enabled,
-            //         },
-            //     },
+			//     picConfig: {
+			//         icpConfig: {
+			//             betaFeatures: IcpConfigFlag.Enabled,
+			//         },
+			//     },
 			// })
 
-            const defaultReplica = yield* Replica
-            // const icReplica = yield* ICReplica
+			const defaultReplica = yield* Replica
+			// const icReplica = yield* ICReplica
+			const startIdentity = performance.now()
 			const defaultUser = yield* Effect.tryPromise({
 				try: () => Ids.fromDfx("default"),
-				catch: () => new TaskRuntimeError({ message: "Failed to get default user" }),
+				catch: () =>
+					new TaskRuntimeError({
+						message: "Failed to get default user",
+					}),
 			})
+			yield* Effect.logInfo(
+				`[TIMING] DefaultConfig identity loaded in ${performance.now() - startIdentity}ms`,
+			)
 
-            // TODO: dont export all networks. just the current network.
+			// TODO: dont export all networks. just the current network.
 			const defaultNetworks = {
 				local: {
 					replica: defaultReplica,
@@ -82,10 +91,14 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 				treasury: defaultUsers.default,
 			}
 
+			yield* Effect.logInfo(
+				`[TIMING] DefaultConfig.Live finished in ${performance.now() - start}ms`,
+			)
+
 			return {
 				users: defaultUsers,
 				roles: defaultRoles,
-                networks: defaultNetworks,
+				networks: defaultNetworks,
 			}
 		}),
 	)
