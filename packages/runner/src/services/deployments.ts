@@ -9,6 +9,9 @@ export type Deployment = {
 	installArgsHash: string
 	upgradeArgsHash: string
 	wasmHash: string
+	wasmMtimeMs: number
+	candidHash?: string
+	candidMtimeMs?: number
 	updatedAt: number
 	id: number
 }

@@ -324,15 +324,11 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 		Layer.effect(
 			TaskRuntime,
 			Effect.gen(function* () {
-				yield* Effect.logInfo("[TIMING] TaskRuntime.Live started")
 				const startTaskRuntime = performance.now()
 				const parentSpan = yield* Effect.currentSpan
 
 				const startDefaultConfig = performance.now()
 				const defaultConfig = yield* DefaultConfig
-				yield* Effect.logInfo(
-					`[TIMING] DefaultConfig acquired in ${performance.now() - startDefaultConfig}ms`,
-				)
 
 				const appDir = yield* Effect.try({
 					try: () => realpathSync(process.cwd()),
@@ -346,9 +342,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					globalArgs,
 					tasks: taskTree,
 				} = yield* ICEConfigService
-				yield* Effect.logInfo(
-					`[TIMING] ICEConfigService acquired in ${performance.now() - startICEConfig}ms`,
-				)
 
 				const currentNetwork = globalArgs.network ?? "local"
 				const currentNetworkConfig =
@@ -559,12 +552,12 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					catch: (error) =>
 						new TaskRuntimeError({ message: String(error) }),
 				})
-				yield* Effect.logInfo(
+				yield* Effect.logDebug(
 					`[TIMING] TaskRuntime warmup finished in ${performance.now() - startWarmup}ms`,
 				)
 				// console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
 
-				yield* Effect.logInfo(
+				yield* Effect.logDebug(
 					`[TIMING] TaskRuntime.Live finished in ${performance.now() - startTaskRuntime}ms`,
 				)
 

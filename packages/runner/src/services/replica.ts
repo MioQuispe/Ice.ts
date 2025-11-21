@@ -292,7 +292,7 @@ export type ReplicaServiceClass = {
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
 	start: (ctx: ICEGlobalArgs) => Promise<void>
-	stop: (args?: { scope: "background" | "foreground" }) => Promise<void>
+	stop: (args?: { scope: "background" | "foreground" }, ctx?: ICEGlobalArgs) => Promise<void>
 }
 
 export class Replica extends Context.Tag("Replica")<

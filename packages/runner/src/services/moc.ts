@@ -22,14 +22,10 @@ export class Moc extends Context.Tag("Moc")<
 	static Live = Layer.effect(
 		Moc,
 		Effect.gen(function* () {
-			yield* Effect.logInfo("[TIMING] Moc.Live started")
 			const start = performance.now()
 			const moc = Motoko.default.default
 			const fs = yield* FileSystem.FileSystem
 
-			yield* Effect.logInfo(
-				`[TIMING] Moc.Live finished in ${performance.now() - start}ms`,
-			)
 			return Moc.of({
 				version: moc.version,
 				compile: (src, outWasmPath, outCandidPath) =>
@@ -49,26 +45,18 @@ export class Moc extends Context.Tag("Moc")<
 	static Dfx = Layer.effect(
 		Moc,
 		Effect.gen(function* () {
-			yield* Effect.logInfo("[TIMING] Moc.Dfx started")
 			const start = performance.now()
 			const commandExecutor = yield* CommandExecutor.CommandExecutor
 			const fs = yield* FileSystem.FileSystem
 			const path = yield* Path.Path
 			const mocPath = process.env["DFX_MOC_PATH"]
-			const startDfxCache = performance.now()
 			const command = Command.make("dfx", "cache", "show")
 			const dfxCachePath = `${(yield* commandExecutor.string(command)).trim()}/moc`
-			yield* Effect.logInfo(
-				`[TIMING] Moc dfx cache show finished in ${performance.now() - startDfxCache}ms`,
-			)
 			const resolvedMocPath = mocPath || dfxCachePath || "moc"
 
 			const startVersion = performance.now()
 			const versionCommand = Command.make(resolvedMocPath, "--version")
 			const version = yield* commandExecutor.string(versionCommand)
-			yield* Effect.logInfo(
-				`[TIMING] Moc version check finished in ${performance.now() - startVersion}ms`,
-			)
 
 			if (!resolvedMocPath) {
 				return yield* Effect.fail(
@@ -77,10 +65,6 @@ export class Moc extends Context.Tag("Moc")<
 					}),
 				)
 			}
-
-			yield* Effect.logInfo(
-				`[TIMING] Moc.Dfx finished in ${performance.now() - start}ms`,
-			)
 
 			return Moc.of({
 				version,

@@ -49,11 +49,11 @@ export class CanisterIdsService extends Context.Tag("CanisterIdsService")<
 	static readonly Live = Layer.scoped(
 		CanisterIdsService,
 		Effect.gen(function* () {
-			yield* Effect.logInfo("[TIMING] CanisterIdsService.Live started")
+			yield* Effect.logDebug("[TIMING] CanisterIdsService.Live started")
 			const start = performance.now()
 			// Initialize the state from disk
 			const initialIds = yield* readInitialCanisterIds
-			yield* Effect.logInfo(
+			yield* Effect.logDebug(
 				`[TIMING] CanisterIdsService readInitialCanisterIds took ${performance.now() - start}ms`,
 			)
 			const ref = yield* Ref.make(initialIds)

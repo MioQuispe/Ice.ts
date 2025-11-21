@@ -36,7 +36,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 	static readonly Live = Layer.effect(
 		DefaultConfig,
 		Effect.gen(function* () {
-			yield* Effect.logInfo("[TIMING] DefaultConfig.Live started")
+			yield* Effect.logDebug("[TIMING] DefaultConfig.Live started")
 			const start = performance.now()
 			// const defaultReplica = new PICReplica({
 			// 	host: "0.0.0.0",
@@ -59,7 +59,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 						message: "Failed to get default user",
 					}),
 			})
-			yield* Effect.logInfo(
+			yield* Effect.logDebug(
 				`[TIMING] DefaultConfig identity loaded in ${performance.now() - startIdentity}ms`,
 			)
 
@@ -91,7 +91,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 				treasury: defaultUsers.default,
 			}
 
-			yield* Effect.logInfo(
+			yield* Effect.logDebug(
 				`[TIMING] DefaultConfig.Live finished in ${performance.now() - start}ms`,
 			)
 

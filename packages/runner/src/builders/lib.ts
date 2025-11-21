@@ -2305,6 +2305,47 @@ export const makeInstallTask = <_SERVICE, I, U>(
 								? e
 								: new AgentError({ message: String(e) }),
 					})
+					// Get previous deployment to use cached digests for fast path
+					const maybePrevDeployment = yield* Effect.tryPromise({
+						try: () =>
+							taskCtx.deployments.get(canisterName, taskCtx.network),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					
+					// Extract previous digests if available
+					const prevWasmDigest = maybePrevDeployment?.wasmHash &&
+						maybePrevDeployment.wasmMtimeMs
+						? {
+								path: wasmPath,
+								mtimeMs: maybePrevDeployment.wasmMtimeMs,
+								sha256: maybePrevDeployment.wasmHash,
+							}
+						: undefined
+					
+					const prevCandidDigest =
+						maybePrevDeployment?.candidHash &&
+						maybePrevDeployment.candidMtimeMs &&
+						candid
+							? {
+									path: candid,
+									mtimeMs: maybePrevDeployment.candidMtimeMs,
+									sha256: maybePrevDeployment.candidHash,
+								}
+							: undefined
+					
+					// Get digests using cached fast path
+					const { digest: wasmDigest } = yield* isArtifactCachedEffect(
+						wasmPath,
+						prevWasmDigest,
+					)
+					
+					const candidDigest = candid
+						? (yield* isArtifactCachedEffect(candid, prevCandidDigest))
+								.digest
+						: undefined
+					
 					// const Deployments = yield* DeploymentsService
 					yield* Effect.tryPromise({
 						try: () =>
@@ -2314,7 +2355,14 @@ export const makeInstallTask = <_SERVICE, I, U>(
 								deployment: {
 									installArgsHash: hashConfig(installArgs.fn),
 									upgradeArgsHash: hashConfig(upgradeArgs.fn),
-									wasmHash: hashUint8(wasm),
+									wasmHash: wasmDigest.sha256,
+									wasmMtimeMs: wasmDigest.mtimeMs,
+									...(candidDigest
+										? {
+												candidHash: candidDigest.sha256,
+												candidMtimeMs: candidDigest.mtimeMs,
+											}
+										: {}),
 									mode,
 									updatedAt: Date.now(),
 								},
@@ -2444,23 +2492,55 @@ export const makeInstallTask = <_SERVICE, I, U>(
 
 					const installArgsDigest = hashConfig(installArgs.fn)
 					const upgradeArgsDigest = hashConfig(upgradeArgs.fn)
-					const wasmDigest = yield* digestFileEffect(taskArgs.wasm)
+					
+					// Get previous deployment to use cached digests for fast path
+					const maybeDeployment = yield* Effect.tryPromise({
+						try: () => taskCtx.deployments.get(canisterName, network),
+						catch: (error) => {
+							return new TaskError({ message: String(error) })
+						},
+					})
+					
+					// Extract previous digests if available
+					const prevWasmDigest =
+						maybeDeployment?.wasmHash && maybeDeployment.wasmMtimeMs
+							? {
+									path: taskArgs.wasm,
+									mtimeMs: maybeDeployment.wasmMtimeMs,
+									sha256: maybeDeployment.wasmHash,
+								}
+							: undefined
+					
+					const prevCandidDigest =
+						maybeDeployment?.candidHash &&
+						maybeDeployment.candidMtimeMs &&
+						taskArgs.candid
+							? {
+									path: taskArgs.candid,
+									mtimeMs: maybeDeployment.candidMtimeMs,
+									sha256: maybeDeployment.candidHash,
+								}
+							: undefined
+					
+					// Use isArtifactCachedEffect with previous digests for fast path
+					const { digest: wasmDigest } = yield* isArtifactCachedEffect(
+						taskArgs.wasm,
+						prevWasmDigest,
+					)
+					
 					// TODO: customEncoding?
 					const candidDigest = taskArgs.candid
-						? yield* digestFileEffect(taskArgs.candid)
+						? (yield* isArtifactCachedEffect(
+								taskArgs.candid,
+								prevCandidDigest,
+							)).digest
 						: {
 								path: "",
 								mtimeMs: 0,
 								sha256: "",
 							}
+					
 					const resolvedMode = yield* resolveMode(taskCtx, canisterId)
-					const deployment = yield* Effect.tryPromise({
-						try: () =>
-							taskCtx.deployments.get(canisterName, network),
-						catch: (error) => {
-							return new TaskError({ message: String(error) })
-						},
-					})
 					// const deploymentId = deployment?.updatedAt ?? Date.now()
 					if (
 						resolvedMode === "reinstall" &&

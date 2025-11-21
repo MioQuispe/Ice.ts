@@ -122,7 +122,7 @@ const createService = (globalArgs: {
 		yield* Effect.logDebug("Loading config...", { startTime })
 		const { path: iceDirPath } = yield* IceDir
 
-		yield* Effect.logInfo(`[TIMING] ICEConfig, loading started`)
+		yield* Effect.logDebug(`[TIMING] ICEConfig, loading started`)
 		const beforeImportConfig = performance.now()
 		
 		const configFullPath = path.resolve(appDirectory, configPath)
@@ -148,7 +148,7 @@ const createService = (globalArgs: {
 				}),
 		})
 		const afterImportConfig = performance.now()
-		yield* Effect.logInfo(
+		yield* Effect.logDebug(
 			`[TIMING] ICEConfig, loading finished in ${afterImportConfig - beforeImportConfig}ms`,
 		)
 
@@ -190,7 +190,7 @@ const createService = (globalArgs: {
 			},
 		})
         const afterTryPromise = performance.now()
-        yield* Effect.logInfo(`[TIMING] ICEConfig, tryPromise finished in ${afterTryPromise - beforeTryPromise}ms`)
+        yield* Effect.logDebug(`[TIMING] ICEConfig, tryPromise finished in ${afterTryPromise - beforeTryPromise}ms`)
 		const tasks = Object.fromEntries(
 			Object.entries(mod).filter(([key]) => key !== "default"),
 		) as TaskTree
@@ -201,7 +201,7 @@ const createService = (globalArgs: {
 		}
 
         const beforeEnvPlugins = performance.now()
-        yield* Effect.logInfo(`[TIMING] ICEConfig, environment plugins started`)
+        yield* Effect.logDebug(`[TIMING] ICEConfig, environment plugins started`)
 		// Apply plugins if they exist
 		if (environment.plugins.length > 0) {
 			for (const plugin of environment.plugins) {
@@ -224,7 +224,7 @@ const createService = (globalArgs: {
 		}
 
 		const afterEnvPlugins = performance.now()
-		yield* Effect.logInfo(`[TIMING] ICEConfig, environment plugins finished in ${afterEnvPlugins - beforeEnvPlugins}ms`)
+		yield* Effect.logDebug(`[TIMING] ICEConfig, environment plugins finished in ${afterEnvPlugins - beforeEnvPlugins}ms`)
 
 		const beforeApplyPlugins = performance.now()
 		const transformedEnvironment = yield* applyPlugins(environment)

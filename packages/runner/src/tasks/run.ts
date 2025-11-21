@@ -71,8 +71,7 @@ export const runTask = Effect.fn("run_task")(function* <T extends Task>(
 		`[TIMING] makeTaskEffects took ${afterMakeEffects - beforeMakeEffects}ms`,
 	)
 	const results = yield* Effect.all(taskEffects, {
-		// concurrency: "inherit",
-		concurrency: 1,
+		concurrency: "inherit",
 	}).pipe(
 		// Effect.mapError((error) => {
 		// 	return new TaskRuntimeError({
@@ -126,8 +125,7 @@ export const runTasks = Effect.fn("run_tasks")(function* <T extends Task>(
 	yield* Effect.logDebug("Executing tasks...")
 	const taskEffects = yield* makeTaskEffects(sortedTasks, progressCb)
 	const results = yield* Effect.all(taskEffects, {
-		// concurrency: "inherit",
-		concurrency: 1,
+		concurrency: "inherit",
 	})
     const taskDuration = performance.now() - taskStartTime
 	yield* Effect.logDebug(`Tasks executed in ${taskDuration}ms`)

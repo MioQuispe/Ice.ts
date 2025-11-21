@@ -102,8 +102,7 @@ export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
 	const argsMap = yield* resolveCliArgsMap(task, cliTaskArgs)
 	yield* Effect.logDebug("Task found", taskPath)
 	return yield* runTask(task, argsMap, progressCb).pipe(
-		Effect.withConcurrency(1),
-		// Effect.withConcurrency("unbounded"),
+		Effect.withConcurrency("unbounded"),
 	)
 })
 
@@ -173,19 +172,143 @@ export const logLevelMap = {
 	error: LogLevel.Error,
 }
 
+type RuntimeArgs = {
+	network: string
+	logLevel: string
+	background: boolean
+	policy: string
+	origin: "extension" | "cli"
+}
+
 type MakeCliRuntimeArgs = {
-	globalArgs: {
-		network: string
-		logLevel: string
-		background: boolean
-		policy: string
-		origin: "extension" | "cli"
-	}
-	// fix type
+	globalArgs: RuntimeArgs
 	telemetryExporter?: SpanExporter
 }
 
-export const makeCliRuntime = ({
+/**
+ * Creates a minimal runtime with only basic services (FileSystem, Logger, IceDir, Prompts).
+ * Use for commands that don't need config or replica (e.g., clean, help).
+ */
+export const makeMinimalRuntime = ({
+	globalArgs: rawGlobalArgs,
+	telemetryExporter = new OTLPTraceExporter(),
+}: MakeCliRuntimeArgs) => {
+	const globalArgs = GlobalArgs(rawGlobalArgs)
+	if (globalArgs instanceof type.errors) {
+		throw new Error(globalArgs.summary)
+	}
+
+	const iceDirName = ".ice"
+
+	const IceDirLayer = IceDir.Live({ iceDirName }).pipe(
+		Layer.provide(NodeContext.layer),
+	)
+
+	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
+	const telemetryConfig = {
+		resource: { serviceName: "ice" },
+		spanProcessor,
+		shutdownTimeout: undefined,
+		metricReader: undefined,
+		logRecordProcessor: undefined,
+	}
+	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
+	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+
+	const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
+		Layer.provide(NodeContext.layer),
+	)
+
+	const minimalLayer = Layer.mergeAll(
+		NodeContext.layer,
+		IceDirLayer,
+		ClackLoggingLive,
+		PromptsService.Live,
+		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
+		telemetryLayer,
+		telemetryConfigLayer,
+		KVStorageLayer,
+	)
+
+	return ManagedRuntime.make(minimalLayer)
+}
+
+/**
+ * Creates a runtime with config services (includes ICEConfig, CanisterIds).
+ * Use for commands that need config but not replica (e.g., status on IC network).
+ */
+export const makeConfigRuntime = ({
+	globalArgs: rawGlobalArgs,
+	telemetryExporter = new OTLPTraceExporter(),
+}: MakeCliRuntimeArgs) => {
+	const globalArgs = GlobalArgs(rawGlobalArgs)
+	if (globalArgs instanceof type.errors) {
+		throw new Error(globalArgs.summary)
+	}
+
+	const iceDirName = ".ice"
+
+	const IceDirLayer = IceDir.Live({ iceDirName }).pipe(
+		Layer.provide(NodeContext.layer),
+	)
+
+	const ICEConfigLayer = ICEConfigService.Live({
+		network: globalArgs.network,
+		logLevel: globalArgs.logLevel,
+		background: globalArgs.background,
+		policy: globalArgs.policy,
+		origin: globalArgs.origin,
+	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
+
+	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
+	const telemetryConfig = {
+		resource: { serviceName: "ice" },
+		spanProcessor,
+		shutdownTimeout: undefined,
+		metricReader: undefined,
+		logRecordProcessor: undefined,
+	}
+	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
+	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
+
+	const KVStorageLayer = layerFileSystem(".ice/cache").pipe(
+		Layer.provide(NodeContext.layer),
+	)
+
+	const CanisterIdsLayer = CanisterIdsService.Live.pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(IceDirLayer),
+	)
+
+	const DeploymentsLayer = DeploymentsService.Live.pipe(
+		Layer.provide(KVStorageLayer),
+	)
+
+	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
+
+	const configLayer = Layer.mergeAll(
+		NodeContext.layer,
+		IceDirLayer,
+		ClackLoggingLive,
+		PromptsService.Live,
+		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
+		telemetryLayer,
+		telemetryConfigLayer,
+		KVStorageLayer,
+		ICEConfigLayer,
+		CanisterIdsLayer,
+		DeploymentsLayer,
+		InFlightLayer,
+	)
+
+	return ManagedRuntime.make(configLayer)
+}
+
+/**
+ * Creates a full runtime with all services including Replica and TaskRuntime.
+ * Use for commands that need to interact with canisters (e.g., deploy, run tasks).
+ */
+export const makeFullRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
@@ -353,6 +476,12 @@ export const makeCliRuntime = ({
 	return ManagedRuntime.make(cliLayer)
 }
 
+/**
+ * Legacy alias for makeFullRuntime. Use specific runtime constructors instead.
+ * @deprecated Use makeMinimalRuntime, makeConfigRuntime, or makeFullRuntime
+ */
+export const makeCliRuntime = makeFullRuntime
+
 function moduleHashToHexString(moduleHash: [] | [number[]]): string {
 	if (moduleHash.length === 0) {
 		return "Not Present"
@@ -444,7 +573,7 @@ const runCommand = defineCommand({
 			namedArgs,
 		}
 		const telemetryExporter = new OTLPTraceExporter()
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs,
 			telemetryExporter,
 		}).runPromise(
@@ -515,7 +644,7 @@ const stopCommand = defineCommand({
 			namedArgs,
 		}
 		const telemetryExporter = new OTLPTraceExporter()
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs,
 			telemetryExporter,
 		}).runPromise(
@@ -528,9 +657,15 @@ const stopCommand = defineCommand({
 				// TODO: replica stop needs to work without starting it
 				yield* Effect.tryPromise({
 					try: () =>
-						replica.stop({
-							scope: "background",
-						}),
+						replica.stop(
+							{
+								scope: "background",
+							},
+							{
+								...globalArgs,
+								iceDirPath: iceDir.path,
+							},
+						),
 					catch: (e) =>
 						new ReplicaError({
 							message: String(e),
@@ -749,7 +884,7 @@ const deployRun = async ({
 	// 	// TODO: Task has any as error type
 	// 	Effect.tapError(e => Effect.logError(e satisfies never)),
 	// )
-	await makeCliRuntime({
+	await makeFullRuntime({
 		globalArgs,
 		telemetryExporter,
 	}).runPromise(program)
@@ -812,7 +947,7 @@ const canistersCreateCommand = defineCommand({
 		})
 
 		// TODO: mode
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				network,
 				logLevel,
@@ -880,7 +1015,7 @@ const canistersBuildCommand = defineCommand({
 			})
 		})
 
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				network,
 				logLevel,
@@ -936,7 +1071,7 @@ const canistersBindingsCommand = defineCommand({
 			s.stop("Finished generating bindings for all canisters")
 		})
 
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				network,
 				logLevel,
@@ -1006,7 +1141,7 @@ const canistersInstallCommand = defineCommand({
 		})
 
 		// TODO: mode
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				policy,
 				network,
@@ -1043,7 +1178,7 @@ const cleanCommand = defineCommand({
 			s.stop("Cleaned cache and state")
 		})
 
-		await makeCliRuntime({
+		await makeMinimalRuntime({
 			globalArgs: {
 				network,
 				logLevel,
@@ -1140,7 +1275,7 @@ const canistersStopCommand = defineCommand({
 			})
 		})
 
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				network,
 				logLevel,
@@ -1265,7 +1400,7 @@ const canistersStatusCommand = defineCommand({
 				})
 			})
 
-			await makeCliRuntime({
+			await makeFullRuntime({
 				globalArgs: {
 					policy,
 					network,
@@ -1289,7 +1424,7 @@ const canistersRemoveCommand = defineCommand({
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("remove")
 		const { network, logLevel, background, policy, origin } = globalArgs
-		await makeCliRuntime({
+		await makeFullRuntime({
 			globalArgs: {
 				policy,
 				network,
@@ -1485,7 +1620,7 @@ const canisterCommand = defineCommand({
 				})
 			})
 
-			await makeCliRuntime({
+			await makeFullRuntime({
 				globalArgs: {
 					policy,
 					network,
@@ -1586,7 +1721,7 @@ const taskCommand = defineCommand({
 				})
 			})
 
-			await makeCliRuntime({
+			await makeFullRuntime({
 				globalArgs: {
 					policy,
 					network,
