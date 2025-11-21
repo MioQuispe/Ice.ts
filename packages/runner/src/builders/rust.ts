@@ -729,7 +729,7 @@ type ArgsFields<
 	I,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > = {
 	fn:
 		| ((args: {
@@ -750,7 +750,7 @@ export class RustCanisterBuilder<
 	P extends Record<string, Task>,
 	Config extends RustCanisterConfig,
 	_SERVICE = unknown,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: S
 	#installArgs: ArgsFields<I, D, P, TCtx>
@@ -1116,7 +1116,7 @@ export const rustCanister = <
 	_SERVICE = unknown,
 	I = unknown,
 	U = unknown,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 >(
 	canisterConfigOrFn:
 		| RustCanisterConfig

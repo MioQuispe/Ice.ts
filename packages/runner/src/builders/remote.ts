@@ -337,7 +337,7 @@ export const makeRemoteBindingsTask = (): BindingsTask => {
 export class RemoteCanisterBuilder<
 	_SERVICE = unknown,
 	Config extends RemoteCanisterConfig = RemoteCanisterConfig,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: RemoteCanisterScope<_SERVICE>
 
@@ -361,7 +361,7 @@ export class RemoteCanisterBuilder<
 
 export const remoteCanister = <
 	_SERVICE = unknown,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 >(
 	canisterConfigOrFn:
 		| RemoteCanisterConfig

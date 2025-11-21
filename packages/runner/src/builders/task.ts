@@ -117,7 +117,7 @@ const matchParam = match
 class TaskBuilder<
 	T extends Task,
 	TP extends AddNameToParams<InputParams>,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > {
 	#task: T
 	constructor(task: T) {

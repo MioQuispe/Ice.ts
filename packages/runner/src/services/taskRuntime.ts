@@ -11,9 +11,15 @@ import {
 	ConfigProvider,
 	Config,
 	Option,
-    Scope,
+	Scope,
 } from "effect"
-import type { ICEUser, Task } from "../types/types.js"
+import type {
+	ICENetworks,
+	ICERoles,
+	ICEUser,
+	ICEUsers,
+	Task,
+} from "../types/types.js"
 import { TaskParamsToArgs, TaskSuccess } from "../tasks/lib.js"
 // import { executeTasks } from "../tasks/execute"
 import { ProgressUpdate } from "../tasks/lib.js"
@@ -58,33 +64,16 @@ import { PromptsService } from "./prompts.js"
 import { ConfirmOptions } from "@clack/prompts"
 import { ICEConfig } from "../types/types.js"
 
-export type DefaultICEConfig = {
-	readonly users: {
-		[name: string]: ICEUser
-	}
-	readonly roles: {
-		deployer: string
-		minter: string
-		controller: string
-		treasury: string
-		[name: string]: string
-	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
-	}
-}
-
-export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
-
-// // TODO: rename?? duplicate type name
-// export type ICEConfig = {
-// 	users: {
-// 		[key: string]: ICEUser
+// export type DefaultICEConfig = {
+// 	readonly users: {
+// 		[name: string]: ICEUser
 // 	}
-// 	roles: {
-// 		[key: string]: ICEUser
+// 	readonly roles: {
+// 		deployer: string
+// 		minter: string
+// 		controller: string
+// 		treasury: string
+// 		[name: string]: string
 // 	}
 // 	networks: {
 // 		[key: string]: {
@@ -92,6 +81,28 @@ export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 // 		}
 // 	}
 // }
+
+export type DefaultICEConfig = ICEConfig<
+	{
+		[key: string]: ICEUser
+	},
+	{
+		// [key: string]: {
+		// }
+		deployer: string
+		minter: string
+		controller: string
+		treasury: string
+		[name: string]: string
+	},
+	{
+		[key: string]: {
+			replica: ReplicaServiceClass
+		}
+	}
+>
+
+export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 
 export type InitializedICEConfig<I extends Partial<ICEConfig>> = {
 	users: I["users"]
@@ -105,12 +116,9 @@ export type InitializedICEConfig<I extends Partial<ICEConfig>> = {
 	}
 }
 
-// 👇 extension hook – empty in the library
-export interface TaskCtxExtension {} 
-
-export type TaskCtx<
-	A extends Record<string, unknown> = {},
-	I extends Partial<ICEConfig> = DefaultICEConfig,
+export type TaskCtxBase<
+	A extends Record<string, unknown>,
+	I extends Partial<ICEConfig>,
 > = InitializedICEConfig<I> & {
 	readonly taskTree: TaskTree
 	readonly runTask: {
@@ -177,9 +185,80 @@ export type TaskCtx<
 		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
 	}
 	readonly origin: "extension" | "cli"
-} & TaskCtxExtension
+}
+
+type ResolvedConfig = 
+    TaskCtxExtension & 
+    Omit<DefaultICEConfig, keyof TaskCtxExtension>;
+
+export interface TaskCtxExtension {}
+
+// = TaskCtxBase<A, I>
+// export type TaskCtx<
+// 	A extends Record<string, unknown> = {},
+// 	I extends Partial<ICEConfig> = DefaultICEConfig,
+// > = TaskCtxExtension extends Partial<{
+// 	users: infer U extends ICEUsers
+// 	roles: infer R extends ICERoles
+// 	networks: infer N extends ICENetworks
+// }>
+// 	? TaskCtxBase<A, { users: U; roles: R; networks: N }>
+// 	: TaskCtxBase<A, DefaultICEConfig>
+
+// type test = TaskCtx<
+// 	{},
+// 	{
+// 		// users: { 
+//         //     seppo: ICEUser 
+//         //     jussi: ICEUser
+//         // }
+// 		// roles: { [key: string]: string }
+// 		// networks: { [key: string]: { replica: ReplicaServiceClass } }
+// 	}
+// >
+
+// interface TaskExtension {
+//     users: { 
+//         seppo: ICEUser 
+//         jussi: ICEUser
+//     }
+//     // roles: { [key: string]: string }
+//     // networks: { [key: string]: { replica: ReplicaServiceClass } }
+// }
+
+// type test = TaskCtx
+
+export type TaskCtx<
+	A extends Record<string, unknown> = {},
+	I extends Partial<ICEConfig> = ResolvedConfig,
+> = TaskCtxBase<A, I>
 
 export type BaseTaskCtx = Omit<TaskCtx, "taskPath" | "depResults" | "args">
+
+// export type TaskCtx<
+// 	A extends Record<string, unknown> = {},
+// 	I extends Partial<ICEConfig> = DefaultICEConfig,
+// > = TaskCtxExtension extends {
+// 	users: infer U extends ICEUsers
+// 	roles: infer R extends ICERoles
+// 	networks: infer N extends ICENetworks
+// }
+// 	? TaskCtxBase<A, ICEConfig<U, R, N>>
+// 	: TaskCtxBase<A, I>
+
+// 3. The "Runtime" Context (Used in external tasks and .extendEnv)
+// This looks at the global declaration to infer types.
+
+// export type TaskCtx<
+// 	A extends Record<string, unknown> = {},
+// 	I extends Partial<ICEConfig> = DefaultICEConfig,
+// > = TaskCtxExtension extends {
+// 	users: infer U extends ICEUsers
+// 	roles: infer R extends ICERoles
+// 	networks: infer N extends ICENetworks
+// }
+// 	? TaskCtxBase<A, ICEConfig<U, R, N>>
+// 	: TaskCtxBase<A, I>
 
 export const logLevelMap = {
 	debug: LogLevel.Debug,
@@ -285,7 +364,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					}
 					initializedRoles[name] = currentUsers[user]
 				}
-                const runtimeScope = yield* Scope.make()
+				const runtimeScope = yield* Scope.make()
 				const resolvedRoles: {
 					[key: string]: ICEUser
 				} & InitializedDefaultConfig["roles"] = {
@@ -385,8 +464,8 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 								Effect.withParentSpan(parentSpan),
 								// Effect.withConcurrency("unbounded"),
 								// Effect.scopeWith(runtimeScope),
-                                // Effect.scoped,
-                                Scope.extend(runtimeScope),
+								// Effect.scoped,
+								Scope.extend(runtimeScope),
 							),
 						)
 						return result
@@ -456,14 +535,14 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const warmup = Effect.gen(function* () {
 					yield* Effect.succeed(true)
 				}).pipe(Effect.provide(ChildTaskRuntimeLayer), Effect.scoped)
-                // const startTimeMs = performance.now()
-                // console.log(`Warming up task runtime... at ${startTimeMs}ms`)
+				// const startTimeMs = performance.now()
+				// console.log(`Warming up task runtime... at ${startTimeMs}ms`)
 				yield* Effect.tryPromise({
 					try: () => taskRuntime.runPromise(warmup),
 					catch: (error) =>
 						new TaskRuntimeError({ message: String(error) }),
 				})
-                // console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
+				// console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
 
 				return {
 					taskCtx,

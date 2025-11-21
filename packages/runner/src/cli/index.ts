@@ -1,6 +1,5 @@
 import * as p from "@clack/prompts"
 import { cancel, isCancel } from "@clack/prompts"
-import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
 import { Resolvable, createMain, defineCommand, type ArgsDef } from "citty"
 import { Console, Effect, Either, Metric, Tracer } from "effect"
 // import {
@@ -1153,6 +1152,75 @@ const canistersStopCommand = defineCommand({
 	},
 })
 
+const canistersStatusTask = task("Check status of all canisters")
+	.run(async ({ ctx }) => {
+		const canisterIdsMap = await ctx.canisterIds.getCanisterIds()
+		const identity = ctx.roles.deployer.identity
+
+		const canisterStatuses = await Promise.all(
+			Object.keys(canisterIdsMap).map(async (canisterName) => {
+				const network = ctx.network || "local"
+				const canisterInfo = canisterIdsMap[canisterName]
+				const canisterId = canisterInfo?.[network]
+
+				if (!canisterId) {
+					return {
+						canisterName,
+						error: `No canister ID found for ${canisterName} on network ${network}`,
+					}
+				}
+
+				try {
+					const status = await ctx.replica.getCanisterInfo({
+						canisterId,
+						identity,
+					})
+					return { canisterName, canisterId, status }
+				} catch (e) {
+					return { canisterName, canisterId, error: String(e) }
+				}
+			}),
+		)
+
+		const statusLog = canisterStatuses
+			.map((result) => {
+				if ("error" in result) {
+					return `Error for canister: ${result.error}`
+				}
+				const { status } = result
+
+				if (status.status === CanisterStatus.NOT_FOUND) {
+					return `Error for canister: Not Found`
+				}
+
+				let prettyStatus
+				if (status.status === CanisterStatus.STOPPED) {
+					prettyStatus = color.red(status.status)
+				} else if (status.status === CanisterStatus.STOPPING) {
+					prettyStatus = color.yellow(status.status)
+				} else if (status.status === CanisterStatus.RUNNING) {
+					prettyStatus = color.green(status.status)
+					if (status.module_hash.length === 0) {
+						prettyStatus = color.yellow("not installed")
+					}
+				}
+
+				return `
+${color.underline(result.canisterName)}
+  ID: ${result.canisterId}
+  Status: ${prettyStatus}
+  Memory Size: ${status.memory_size.toLocaleString("en-US").replace(/,/g, "_")}
+  Cycles: ${status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
+  Idle Cycles Burned Per Day: ${status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
+  Module Hash: ${moduleHashToHexString(status.module_hash)}`
+			})
+			.join("\n")
+
+		console.log(statusLog)
+		return statusLog
+	})
+	.make()
+
 const canistersStatusCommand = defineCommand({
 	meta: {
 		name: "status",
@@ -1173,9 +1241,6 @@ const canistersStatusCommand = defineCommand({
 			const { network, logLevel, background, policy, origin } = globalArgs
 
 			const program = Effect.gen(function* () {
-				const canisterIdsService = yield* CanisterIdsService
-				const canisterIdsMap =
-					yield* canisterIdsService.getCanisterIds()
 				const { replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
 				// TODO: use finalizer??
@@ -1187,82 +1252,13 @@ const canistersStatusCommand = defineCommand({
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
 				})
-				const identity =
-					Ed25519KeyIdentity.generate() as unknown as Identity
-				const canisterStatusesEffects = Object.keys(canisterIdsMap).map(
-					(canisterName) =>
-						Effect.either(
-							Effect.gen(function* () {
-								// TODO: currentNetwork
-								const network = "local"
-								const canisterInfo =
-									canisterIdsMap[canisterName]
-								const canisterId = canisterInfo?.[network]
-								if (!canisterId) {
-									return yield* Effect.fail(
-										new DeploymentError({
-											message: `No canister ID found for ${canisterName} on network ${network}`,
-										}),
-									)
-								}
-								const status = yield* Effect.tryPromise({
-									try: () =>
-										replica.getCanisterInfo({
-											canisterId,
-											identity,
-										}),
-									catch: (e) =>
-										new CanisterStatusError({
-											message: String(e),
-										}),
-								})
-								return { canisterName, canisterId, status }
-							}),
-						),
-				)
 
-				const canisterStatuses = yield* Effect.all(
-					canisterStatusesEffects,
-					{
-						concurrency: "unbounded",
-					},
-				)
+				// Inject the task into the tree so runTask can resolve its path
+				const { tasks: taskTree } = yield* ICEConfigService
+				taskTree["@@@__internal_status"] = canistersStatusTask
+				yield* runTask(canistersStatusTask)
+				delete taskTree["@@@__internal_status"]
 
-				// TODO: this needs to run as a task
-				// TODO: inline
-				const statusLog = canisterStatuses
-					.map((result) =>
-						Either.match(result, {
-							onLeft: (left) => `Error for canister: ${left}`,
-							onRight: (right) =>
-								right.status.status !== CanisterStatus.NOT_FOUND
-									? `
-${color.underline(right.canisterName)}
-  ID: ${right.canisterId}
-  Status: ${color.green(Object.keys(right.status.status)[0])}
-  Memory Size: ${right.status.memory_size.toLocaleString("en-US").replace(/,/g, "_")}
-  Cycles: ${right.status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
-  Idle Cycles Burned Per Day: ${right.status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
-  Module Hash: ${moduleHashToHexString(right.status.module_hash)}`
-									: // TODO: fix?
-										`Error for canister: ${result._tag}`,
-						}),
-					)
-					.join("\n")
-				// 							result._tag === "Right" && result.right.status.status !== CanisterStatus.NOT_FOUND
-				// 								? `
-				// ${color.underline(result.right.canisterName)}
-				//   ID: ${result.right.canisterId}
-				//   Status: ${color.green(Object.keys(result.right.status.status)[0])}
-				//   Memory Size: ${result.right.status.memory_size.toLocaleString("en-US").replace(/,/g, "_")}
-				//   Cycles: ${result.right.status.cycles.toLocaleString("en-US").replace(/,/g, "_")}
-				//   Idle Cycles Burned Per Day: ${result.right.status.idle_cycles_burned_per_day.toLocaleString("en-US").replace(/,/g, "_")}
-				//   Module Hash: ${moduleHashToHexString(result.right.status.module_hash)}`
-				// 								: `Error for canister: ${result._tag}`,
-				// 						)
-				// 						.join("\n")
-
-				yield* Effect.logInfo(statusLog)
 				yield* Effect.tryPromise({
 					try: () => replica.stop({ scope: "foreground" }),
 					catch: (e) => new ReplicaError({ message: String(e) }),

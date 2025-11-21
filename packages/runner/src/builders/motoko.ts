@@ -683,7 +683,7 @@ type ArgsFields<
 	I,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > = {
 	fn:
 		| ((args: {
@@ -704,7 +704,7 @@ export class MotokoCanisterBuilder<
 	P extends Record<string, Task>,
 	Config extends MotokoCanisterConfig,
 	_SERVICE = unknown,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: S
 	#installArgs: ArgsFields<I, D, P, TCtx>
@@ -1073,7 +1073,7 @@ export const motokoCanister = <
 	_SERVICE = unknown,
 	I = unknown,
 	U = unknown,
-	TCtx extends TaskCtx<any, any> = TaskCtx,
+	TCtx extends TaskCtx = TaskCtx,
 >(
 	canisterConfigOrFn:
 		| MotokoCanisterConfig

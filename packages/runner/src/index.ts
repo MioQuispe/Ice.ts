@@ -8,7 +8,7 @@ import type {
 	ICEConfigFile,
 	ICEPlugin,
 } from "./types/types.js"
-import type { Scope, TaskTree } from "./types/types.js"
+import type { Scope, TaskTree, Task } from "./types/types.js"
 // import { TaskCtx, TaskCtxExtension } from "./services/taskRuntime.js"
 // import { Principal } from "./external.js"
 export { Opt } from "./types/types.js"
@@ -56,26 +56,60 @@ export type {
 export type { Principal } from "@dfinity/principal"
 export type { Identity } from "@dfinity/agent"
 
+// 1. Define Structural/Safe Types that don't depend on TaskCtx
+type SafeTask = {
+	_tag: "task"
+	id: symbol
+	// We type effect as Function or generic to avoid TaskCtx dependency
+	effect: Function 
+	description: string
+	tags: Array<string | symbol>
+	dependsOn: Record<string, SafeTask>
+	dependencies: Record<string, SafeTask>
+    // Include other properties if needed for plugin logic
+    [key: string]: any
+}
+
+type SafeScope = {
+	_tag: "scope"
+	id: symbol
+	description: string
+	children: Record<string, SafeTask | SafeScope>
+    [key: string]: any
+}
+
+type SafeTaskTreeNode = SafeTask | SafeScope
+type SafeTaskTree = Record<string, SafeTaskTreeNode>
+
+// 2. Define SafeICEPlugin using SafeTaskTree
+type SafeICEPlugin<C> = (
+	env: {
+		config: C
+		tasks: SafeTaskTree
+		args: ICEGlobalArgs
+	},
+) => Promise<{ config?: Partial<C>; tasks?: SafeTaskTree }> | { config?: Partial<C>; tasks?: SafeTaskTree }
+
 export class IceBuilder<C extends Partial<ICEConfig>> {
 	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
-	#plugins: ICEPlugin[] = []
+	#plugins: SafeICEPlugin<C>[] = []
 
 	constructor(config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C) {
 		this.#config = config
 	}
 
+	// 3. Use SafeICEPlugin here
 	extendEnv(
-		plugin: (
-			env: ICEEnvironment & { args: ICEGlobalArgs },
-		) => Promise<ICEEnvironment> | ICEEnvironment,
+		plugin: SafeICEPlugin<C>,
 	): IceBuilder<C> {
 		this.#plugins.push(plugin)
 		return this
 	}
 
+    // 4. Use any[] for plugins in return type to ensure InferIceConfig doesn't trip
 	make(): (
 		globalArgs: ICEGlobalArgs,
-	) => Promise<{ config: C; plugins: ICEPlugin[] }> {
+	) => Promise<{ config: C; plugins: SafeICEPlugin<C>[] }> {
 		return async (globalArgs: ICEGlobalArgs) => {
 			const configResult =
 				typeof this.#config === "function"
@@ -90,6 +124,9 @@ export class IceBuilder<C extends Partial<ICEConfig>> {
 		}
 	}
 }
+
+
+
 
 export const Ice = <C extends Partial<ICEConfig>>(
 	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,

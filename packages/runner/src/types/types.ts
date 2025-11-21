@@ -1,37 +1,9 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { ConfigError } from "effect"
-import { ICEConfigError } from "../services/iceConfig.js"
-import { MocError } from "../services/moc.js"
-import type {
-	AgentError,
-	CanisterCreateError,
-	CanisterDeleteError,
-	CanisterInstallError,
-	CanisterStatusError,
-	CanisterStopError,
-	ReplicaServiceClass,
-} from "../services/replica.js"
-import {
-	type TaskArgsParseError,
-	type TaskNotFoundError,
-	type TaskRuntimeError,
-} from "../tasks/lib.js"
-import { TaskCancelled, TaskError } from "../builders/lib.js"
-import { PlatformError } from "@effect/platform/Error"
-import { DeploymentError } from "../canister.js"
-import { Schema as S } from "effect"
+import type { ReplicaServiceClass } from "../services/replica.js"
+import { TaskCancelled } from "../builders/lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
-import { LogLevel } from "effect/LogLevel"
-// import type { SignIdentity } from "@icp-sdk/core/agent"
 import type { Identity } from "@icp-sdk/core/agent"
-
-// TODO:.....
-// type SignIdentity = {
-//     getPublicKey: () => unknown;
-//     sign: (blob: Uint8Array<ArrayBufferLike>) => Promise<unknown>;
-//     getPrincipal: () => unknown;
-//     transformRequest: (request: unknown) => Promise<unknown>;
-// }
+import { IceBuilder } from "../index.js"
 
 export type ReplicaConfig = {
 	// TODO: use pocket-ic subnet config
@@ -51,29 +23,30 @@ export type ICEUser = {
 	// agent: Agent
 }
 
-// TODO: create service? dependencies?
-export type ICEConfig = {
-	users: {
-		[key: string]: ICEUser
+export type ICEUsers = Record<string, ICEUser>
+
+export type ICERoles<U extends ICEUsers = ICEUsers> = Record<string, keyof U> // or string, depending on how you normalize it
+
+export type ICENetworks = {
+	[key: string]: {
+		replica: ReplicaServiceClass
 	}
-	roles: {
-		[key: string]: string
-	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
-	}
+}
+
+export type ICEConfig<
+	U extends ICEUsers = ICEUsers,
+	R extends ICERoles<U> = ICERoles<U>,
+	N extends ICENetworks = ICENetworks,
+> = {
+	users: U
+	roles: R
+	networks: N
 }
 
 export type ICEEnvironment = {
 	config: Partial<ICEConfig>
 	tasks: TaskTree
-	plugins: Array<
-		(
-			env: ICEEnvironment & { args: ICEGlobalArgs },
-		) => Promise<ICEEnvironment> | ICEEnvironment
-	>
+	plugins: Array<ICEPlugin>
 }
 
 export interface TaskParam<T = unknown> {
@@ -186,14 +159,6 @@ export type ICEGlobalArgs = {
 	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 }
-// export type ICEConfigFile = {
-//     [key: string]: TaskTreeNode,
-// 	default: (
-// 		globalArgs: ICEGlobalArgs,
-// 	) => Promise<ICEConfig> | ICEConfig
-// }
-
-type ICEConfigFn = (globalArgs: ICEGlobalArgs) => Promise<ICEConfig>
 
 export type ICEConfigFile = {
 	default: (
@@ -204,26 +169,16 @@ export type ICEConfigFile = {
 }
 
 export type ICEPlugin = (
-	env: ICEEnvironment & { args: ICEGlobalArgs },
-) => Promise<ICEEnvironment> | ICEEnvironment
-
-// export type ScopeEval = {
-// 	_tag: "scope"
-// 	readonly id: symbol
-// 	// TODO: hmm do we need this?
-// 	tags: Array<string | symbol>
-// 	description: string
-// 	children: (ctx: TaskCtx) => Record<string, TaskTreeNodeEval>
-// 	// this is just the modules default export
-// 	defaultTask?: string
-// }
-
-// export type TaskTreeNodeEval = Task | Scope | BuilderResult
-// export type TaskTreeEval = Record<string, TaskTreeNodeEval>
-
-// Helper to grab the config type from an Ice instance
+	env: Omit<ICEEnvironment, "plugins"> & { args: ICEGlobalArgs },
+) => Promise<Omit<ICEEnvironment, "plugins">> | Omit<ICEEnvironment, "plugins">
 
 type ICEDefault<C extends Partial<ICEConfig>> = (
 	globalArgs: ICEGlobalArgs,
 ) => Promise<{ config: C; plugins: ICEPlugin[] }>
-export type InferIceConfig<T> = T extends ICEDefault<infer I> ? I : never
+
+type ICEDefaultOmit<C extends Partial<ICEConfig>> = (
+	globalArgs: ICEGlobalArgs,
+) => Promise<{ config: C }>
+
+export type InferIceConfig<T> = T extends IceBuilder<infer Config> ? Config : never
+// export type InferIceConfig<T> = T extends ICEDefaultOmit<infer I> ? I : never
