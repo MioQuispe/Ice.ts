@@ -42,7 +42,7 @@ describe("PocketIC persistence", () => {
 		// ensure clean state before first run
 		try {
 			fs.rmSync(
-				path.resolve(process.cwd(), iceDirName, "replica-state"),
+				path.resolve(process.cwd(), iceDirName, "networks", "local", "replica-state"),
 				{
 					recursive: true,
 					force: true,
@@ -51,7 +51,7 @@ describe("PocketIC persistence", () => {
 		} catch {}
 
 		// Run A: deploy, set state, verify, shutdown
-		const { runtime: runtimeA } = makeTestEnvEffect(iceDirName, globalArgs)
+		const { runtime: runtimeA } = makeTestEnvEffect(0, globalArgs)
 
 		const { canisterId: canisterIdA } = await runtimeA.runPromise(
 			Effect.gen(function* () {
@@ -145,7 +145,7 @@ describe("PocketIC persistence", () => {
 		await new Promise((r) => setTimeout(r, 200))
 
 		// Run B: new runtime, same iceDir, verify state is restored
-		const { runtime: runtimeB } = makeTestEnvEffect(iceDirName)
+		const { runtime: runtimeB } = makeTestEnvEffect(0, globalArgs)
 		await runtimeB.runPromise(
 			Effect.gen(function* () {
 				const replica = yield* Replica
@@ -192,7 +192,7 @@ describe("PocketIC persistence", () => {
 		// ensure clean state before first run
 		try {
 			fs.rmSync(
-				path.resolve(process.cwd(), iceDirName, "replica-state"),
+				path.resolve(process.cwd(), iceDirName, "networks", "local", "replica-state"),
 				{
 					recursive: true,
 					force: true,

@@ -123,12 +123,12 @@ export const makeTestEnvEffect = (
 	const telemetryConfigLayer = Layer.succeed(TelemetryConfig, telemetryConfig)
 	const telemetryLayer = makeTelemetryLayer(telemetryConfig)
 	// const telemetryLayerMemo = yield* Layer.memoize(telemetryLayer)
-    // TODO: fix??/
-    // const appDir = fs.realpathSync(process.cwd())
-    // const cacheDirPath = path.join(appDir, iceDirName, "cache")
+	// TODO: fix??/
+	// const appDir = fs.realpathSync(process.cwd())
+	// const cacheDirPath = path.join(appDir, iceDirName, "cache")
 	const KVStorageLayer = layerFileSystem(`${iceDirName}/cache`).pipe(
 		Layer.provide(NodeContext.layer),
-        Layer.provide(iceDirLayer),
+		Layer.provide(iceDirLayer),
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
@@ -180,9 +180,7 @@ export const makeTestEnvEffect = (
 			Layer.provide(telemetryLayer),
 			Layer.provide(telemetryConfigLayer),
 			Layer.provide(ReplicaService),
-			Layer.provide(
-				DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
-			),
+			Layer.provide(DefaultConfigLayer),
 			Layer.provide(canisterIdsLayer),
 			Layer.provide(InFlightLayer),
 			Layer.provide(iceDirLayer),

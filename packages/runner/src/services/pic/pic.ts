@@ -108,6 +108,7 @@ export class PICReplica implements ReplicaServiceClass {
 					background: ctx.background,
 					policy: ctx.policy,
 					iceDirPath: ctx.iceDirPath,
+					network: ctx.network,
 					host: this.host,
 					port: this.port,
 					isDev: ctx.network !== "ic",
@@ -115,6 +116,8 @@ export class PICReplica implements ReplicaServiceClass {
 				// spawn lock is inside here. how can we cleanest extend it?
 				const spawnLockPath = path.resolve(
 					ctx.iceDirPath,
+					"networks",
+					ctx.network,
 					"pocketic-server",
 					"spawn.lock",
 				)
@@ -129,7 +132,7 @@ export class PICReplica implements ReplicaServiceClass {
 			const baseUrl = `http://${this.host}:${this.port}`
 
 			const stateRoot = path.resolve(
-				path.join(this.ctx.iceDirPath, "replica-state"),
+				path.join(this.ctx.iceDirPath, "networks", this.ctx.network, "replica-state"),
 			)
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
@@ -201,6 +204,8 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 		const stateFilePath = path.resolve(
 			ctx.iceDirPath,
+			"networks",
+			ctx.network,
 			"pocketic-server",
 			"monitor.json",
 		)
@@ -211,6 +216,7 @@ export class PICReplica implements ReplicaServiceClass {
 				background: ctx.background,
 				policy: "reuse",
 				iceDirPath: ctx.iceDirPath,
+				network: ctx.network,
 				host: state.bind!,
 				port: state.port!,
 				isDev: ctx.network !== "ic",

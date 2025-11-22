@@ -339,6 +339,7 @@ export class Monitor {
 	private readonly mode: "foreground" | "background"
 	// private readonly ctx: ICEConfigContext
 	private readonly iceDirPath: string
+	private readonly network: string
 	private readonly policy: "reuse" | "restart"
 	private readonly isDev: boolean
 	private readonly fgLeases: string[]
@@ -350,6 +351,7 @@ export class Monitor {
 		background: boolean
 		policy: "reuse" | "restart"
 		iceDirPath: string
+		network: string
 		isDev: boolean
 	}) {
 		this.host = opts.host
@@ -357,14 +359,19 @@ export class Monitor {
 		this.mode = opts.background ? "background" : "foreground"
 		this.isDev = opts.isDev
 		this.iceDirPath = opts.iceDirPath
+		this.network = opts.network
 		this.policy = opts.policy
 		this.fgLeases = []
 		this.bgLeases = []
 	}
 
+	private getNetworkDir(): string {
+		return path.join(this.iceDirPath, "networks", this.network)
+	}
+
 	private async readMonitorState() {
 		const stateFilePath = path.resolve(
-			this.iceDirPath,
+			this.getNetworkDir(),
 			"pocketic-server",
 			"monitor.json",
 		)
@@ -373,7 +380,7 @@ export class Monitor {
 	}
 
 	private computeNormalizedConfig = async (): Promise<NormalizedConfig> => {
-		const stateDir = path.resolve(this.iceDirPath, "replica-state")
+		const stateDir = path.resolve(this.getNetworkDir(), "replica-state")
 		const incompleteState = await detectIncompleteState(stateDir)
 		return {
 			pocketIcCli: {
@@ -405,7 +412,7 @@ export class Monitor {
 		// 	})
 		// }
 		if (monitorState) {
-			const dir = path.join(this.iceDirPath, "pocketic-server", "leases")
+			const dir = path.join(this.getNetworkDir(), "pocketic-server", "leases")
 			const lease: LeaseFile = {
 				mode: args.mode,
 				pid: process.pid,
@@ -426,13 +433,13 @@ export class Monitor {
 
 	async spawn(desiredConfig: NormalizedConfig): Promise<PocketIcState> {
 		const leasesDirPath = path.resolve(
-			this.iceDirPath,
+			this.getNetworkDir(),
 			"pocketic-server",
 			"leases",
 		)
-		const logFilePath = path.resolve(this.iceDirPath, "pocket-ic.log")
+		const logFilePath = path.resolve(this.getNetworkDir(), "pocket-ic.log")
 		const stateFilePath = path.resolve(
-			this.iceDirPath,
+			this.getNetworkDir(),
 			"pocketic-server",
 			"monitor.json",
 		)
@@ -496,7 +503,7 @@ export class Monitor {
 			config: desired,
 		}
 		const stateFilePath = path.resolve(
-			this.iceDirPath,
+			this.getNetworkDir(),
 			"pocketic-server",
 			"monitor.json",
 		)
@@ -527,7 +534,7 @@ export class Monitor {
 	/** Initialize or attach to the PocketIC monitor. Single return; deduped lease creation. */
 	async start(): Promise<void> {
 		const desiredConfig = await this.computeNormalizedConfig()
-		const rootDir = path.resolve(this.iceDirPath, "pocketic-server")
+		const rootDir = path.resolve(this.getNetworkDir(), "pocketic-server")
 		const leasesDirPath = path.join(rootDir, "leases")
 		const stateFilePath = path.resolve(rootDir, "monitor.json")
 
@@ -668,7 +675,7 @@ export class Monitor {
 		args: { scope: "foreground" | "background" } = { scope: "foreground" },
 	) {
 		const leasesDirPath = path.join(
-			this.iceDirPath,
+			this.getNetworkDir(),
 			"pocketic-server",
 			"leases",
 		)

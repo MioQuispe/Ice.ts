@@ -462,7 +462,7 @@ export const makeFullRuntime = ({
 					telemetryLayer,
 					telemetryConfigLayer,
 					ReplicaService,
-					DefaultConfigLayer.pipe(Layer.provide(ReplicaService)),
+					DefaultConfigLayer,
 					CanisterIdsLayer,
 					InFlightLayer,
 					IceDirLayer,

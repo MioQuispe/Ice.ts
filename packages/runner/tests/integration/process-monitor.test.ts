@@ -135,16 +135,16 @@ function loadScenarios(): ScenarioRow[] {
 
 // ----------------------------- Public artifacts snapshot --------------------------
 
-const statePath = (iceDir: string) =>
+const statePath = (iceDir: string, network: string = "local") =>
 	Effect.gen(function* () {
 		const path = yield* Path.Path
-		return path.join(iceDir, "pocketic-server", "monitor.json")
+		return path.join(iceDir, "networks", network, "pocketic-server", "monitor.json")
 	})
 
-const leasesDir = (iceDir: string) =>
+const leasesDir = (iceDir: string, network: string = "local") =>
 	Effect.gen(function* () {
 		const path = yield* Path.Path
-		return path.join(iceDir, "pocketic-server", "leases")
+		return path.join(iceDir, "networks", network, "pocketic-server", "leases")
 	})
 
 const pidAlive = (pid?: number) =>

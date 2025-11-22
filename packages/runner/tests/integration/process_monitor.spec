@@ -15,13 +15,15 @@ Single managed instance per bind/port. Manual instances (no state) are never mod
 2) Directory Layout
 
 .ice/
-  pocketic-server/
-    monitor.json          # monitor-owned (managed only)
-    leases/             # per-task lease files (runner-owned)
-      <uuid>.json
-    spawn.lock          # best-effort mutex for spawn/adopt
-  pocket-ic.log
-  replica-state/...
+  networks/
+    {network}/           # network-specific directory (local, staging, ic)
+      pocketic-server/
+        monitor.json          # monitor-owned (managed only)
+        leases/             # per-task lease files (runner-owned)
+          <uuid>.json
+        spawn.lock          # best-effort mutex for spawn/adopt
+      pocket-ic.log
+      replica-state/...
   canisters/...
   canister_ids.json
   logs/instrumentation.json
@@ -47,14 +49,14 @@ Written on spawn/adopt; removed when the server is stopped after the last lease 
   "bind": "0.0.0.0",
   "port": 8081,
   "startedAt": 1730000000000,                    // per-instance identity token
-  "instanceRoot": "/abs/path/to/.ice/replica-state"
+  "instanceRoot": "/abs/path/to/.ice/networks/{network}/replica-state"
 }
 
 Identity token: startedAt uniquely identifies the running instance and only changes when the server is restarted.
 
 3.2 Lease files (runner-created, one per task)
 
-pocketic-server/leases/<uuid>.json
+networks/{network}/pocketic-server/leases/<uuid>.json
 
 {
   "mode": "foreground" | "background",
