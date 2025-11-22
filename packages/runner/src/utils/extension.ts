@@ -49,11 +49,19 @@ export function parseCallSite(errStack: string): { file?: string; line?: number 
     // If your user code is in "ice.config.ts" or some other file,
     // check that the line references it. Also note some stacks might say "file://..."
     if (l.includes("ice.config.ts")) {
-      // Typically looks like:
+      // Try matching with parentheses first:
       //   at Object.<anonymous> (/Users/.../ice.config.ts:30:11)
-      const match = l.match(/\(([^:]+):(\d+):(\d+)\)/)
-      // or if there's a file:// scheme, you might do:
-      // const match = l.match(/\((?:file:\/\/)?([^:]+):(\d+):(\d+)\)/)
+      //   at Object.<anonymous> (file:///Users/.../ice.config.ts:30:11)
+      let match = l.match(/\((?:file:\/\/)?([^:]+\.ts):(\d+):(\d+)\)/)
+      if (match) {
+        const file = match[1] as string
+        const line = Number.parseInt(match[2] as string)
+        return { file, line }
+      }
+      // Try matching without parentheses:
+      //   at /Users/.../ice.config.ts:333:44
+      //   at file:///Users/.../ice.config.ts:333:44
+      match = l.match(/(?:file:\/\/)?([^:]+\.ts):(\d+):(\d+)/)
       if (match) {
         const file = match[1] as string
         const line = Number.parseInt(match[2] as string)
@@ -86,8 +94,6 @@ export function proxyActor<T extends Record<string, any>>(
 
           // capture call site:
           const e = new Error()
-          // see the actual stack if needed to debug:
-          // console.log("Stack = ", e.stack)
           const trace = parseCallSite(e.stack || "")
 
           try {
@@ -127,6 +133,7 @@ export function proxyActor<T extends Record<string, any>>(
 const createLogEntry = async (e: Error, result: unknown): Promise<void> => {
 	const start = Date.now()
 	let success = true
+    // TODO: not working anymore?
 	const trace = parseCallSite(e.stack || "")
 
 	const end = Date.now()

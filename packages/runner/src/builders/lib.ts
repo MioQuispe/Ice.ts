@@ -2393,10 +2393,10 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						canisterId,
 						canisterName,
 						mode,
-						actor,
+						// actor,
 						// wasm,
 						// TODO: plugin which transforms install tasks?
-						// actor: proxyActor(canisterName, actor),
+						actor: proxyActor(canisterName, actor),
 					}
 				})().pipe(
 					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
@@ -2750,8 +2750,8 @@ export const makeInstallTask = <_SERVICE, I, U>(
 						canisterId,
 						canisterName,
 						// TODO: plugin which transforms upgrade tasks?
-						// actor: proxyActor(canisterName, actor),
-						actor,
+						actor: proxyActor(canisterName, actor),
+						// actor,
 						encodedArgs,
 						args: initArgs,
 					}
