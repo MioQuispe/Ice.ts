@@ -2,6 +2,8 @@ import { Effect, Layer, Context, Data, Config, ManagedRuntime } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { NodeContext } from "@effect/platform-node"
 import { Ed25519KeyIdentity } from "@icp-sdk/core/identity"
+import { Secp256k1KeyIdentity } from "@dfinity/identity-secp256k1"
+import crypto from "node:crypto"
 import os from "node:os"
 import psList from "ps-list"
 import { principalToAccountId } from "./utils/utils.js"
@@ -29,6 +31,62 @@ const parseEd25519PrivateKey = (pem: string) => {
 	return Ed25519KeyIdentity.fromSecretKey(new Uint8Array(secretKey.buffer))
 }
 
+const parseSecp256k1PrivateKey = (pem: string) => {
+	try {
+		// Parse the EC private key using Node.js crypto
+		const privateKeyObject = crypto.createPrivateKey(pem)
+		// Export as raw private key (32 bytes for secp256k1)
+		const privateKeyDer = privateKeyObject.export({
+			format: "der",
+			type: "pkcs8",
+		})
+		// Extract the raw private key from DER format
+		// EC private key in DER format has a specific structure
+		// We need to extract the actual 32-byte private key
+		const derHex = privateKeyDer.toString("hex")
+		// Find the private key octet string (usually starts after algorithm identifier)
+		// For secp256k1, the private key is typically at a specific offset
+		// The structure is: SEQUENCE { version, AlgorithmIdentifier, PrivateKey }
+		// We look for the octet string containing the private key (0420 indicates 32-byte octet string)
+		const octetStringMatch = derHex.match(/0420([0-9a-f]{64})/)
+		if (octetStringMatch && octetStringMatch[1]) {
+			const privateKeyHex = octetStringMatch[1]
+			const privateKeyBytes = Buffer.from(privateKeyHex, "hex")
+			return Secp256k1KeyIdentity.fromSecretKey(privateKeyBytes)
+		}
+		// Alternative: try to find the private key in ECPrivateKey format
+		// ECPrivateKey structure: SEQUENCE { version, privateKey, parameters[optional], publicKey[optional] }
+		const ecPrivateKeyMatch = derHex.match(/02010104([0-9a-f]{64})/)
+		if (ecPrivateKeyMatch && ecPrivateKeyMatch[1]) {
+			const privateKeyHex = ecPrivateKeyMatch[1]
+			const privateKeyBytes = Buffer.from(privateKeyHex, "hex")
+			return Secp256k1KeyIdentity.fromSecretKey(privateKeyBytes)
+		}
+		// Fallback: try to extract from the raw DER structure
+		// The private key might be in a different position
+		throw new Error("Could not extract secp256k1 private key from PEM")
+	} catch (error) {
+		if (error instanceof IdsError) {
+			throw error
+		}
+		throw new IdsError({
+			message: `Failed to parse secp256k1 private key: ${error instanceof Error ? error.message : String(error)}`,
+		})
+	}
+}
+
+const parseIdentityFromPem = (pem: string) => {
+	// Check if it's an EC private key (secp256k1)
+	if (
+		pem.includes("-----BEGIN EC PARAMETERS-----") ||
+		pem.includes("-----BEGIN EC PRIVATE KEY-----")
+	) {
+		return parseSecp256k1PrivateKey(pem)
+	}
+	// Otherwise, assume it's Ed25519
+	return parseEd25519PrivateKey(pem)
+}
+
 const getAccountId = (principal: string) =>
 	Effect.sync(() => principalToAccountId(principal))
 
@@ -50,6 +108,34 @@ const getIdentity = (selection?: string) =>
 			identityName,
 			"identity.pem",
 		)
+
+		// TODO: support identity.json:
+		/*
+
+┌   ICE CLI 
+Error getting identity (FiberFailure) IdsError: Identity does not exist
+    at file:///Users/user/projects/ice/packages/runner/dist/ids.js:41:35
+
+ ERROR  An error has occurred                                                                                                                                      7:32:18 PM
+
+   
+
+
+
+ ERROR  An error has occurred                 
+
+
+ format:
+
+ {
+  "hsm": null,
+  "encryption": null,
+  "keyring_identity_suffix": "plug_wallet"
+}
+
+
+        */
+
 		const exists = yield* fs.exists(identityPath)
 		if (!exists) {
 			return yield* Effect.fail(
@@ -58,13 +144,7 @@ const getIdentity = (selection?: string) =>
 		}
 
 		const pem = yield* fs.readFileString(identityPath, "utf8")
-		const cleanedPem = pem
-			.replace("-----BEGIN PRIVATE KEY-----", "")
-			.replace("-----END PRIVATE KEY-----", "")
-			.replace("\n", "")
-			.trim()
-		// TODO: support more key types?
-		const identity = parseEd25519PrivateKey(pem)
+		const identity = parseIdentityFromPem(pem)
 		const principal = identity.getPrincipal().toText()
 		const accountId = yield* getAccountId(principal)
 		return {
@@ -78,21 +158,31 @@ const runtime = ManagedRuntime.make(Layer.mergeAll(NodeContext.layer))
 
 export const Ids = {
 	fromDfx: async (name: string) => {
-		const user = await runtime.runPromise(getIdentity(name))
-		return user
+		try {
+			const user = await runtime.runPromise(getIdentity(name))
+			return user
+		} catch (error) {
+			console.error("Error getting identity", error)
+			throw error
+		}
+	},
+	fromPem: async (pem: string) => {
+		try {
+			const identity = parseIdentityFromPem(pem)
+			const principal = identity.getPrincipal().toText()
+			const accountId = await runtime.runPromise(getAccountId(principal))
+			return {
+				identity,
+				principal,
+				accountId,
+			}
+		} catch (error) {
+			console.error("Error parsing PEM identity", error)
+			throw error
+		}
 	},
 	// createLocal: async () => {
 	// }
 	// fromSeed: async (seed: string) => {
-	// }
-	// fromPem: async (pem: string) => {
-	//     const identity = parseEd25519PrivateKey(pem);
-	//     const principal = identity.getPrincipal().toText()
-	//     const accountId = await runtime.runPromise(getAccountId(principal))
-	//     return {
-	//         identity,
-	//         principal,
-	//         accountId,
-	//     }
 	// }
 }
