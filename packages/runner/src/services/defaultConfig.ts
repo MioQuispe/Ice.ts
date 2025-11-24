@@ -1,14 +1,12 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 import { Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
 import { Replica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
-import { ICReplica } from "./ic-replica.js"
 
 // const DfxReplicaService = DfxReplica.pipe(
 // 	Layer.provide(NodeContext.layer),
 // )
-
 
 export type InitializedDefaultConfig = {
 	users: {
@@ -53,12 +51,29 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 			// const icReplica = yield* ICReplica
 			const startIdentity = performance.now()
 			const defaultUser = yield* Effect.tryPromise({
+				// TODO: support identity.json
+				// TODO: very slow if no name passed in (whoami)
 				try: () => Ids.fromDfx("default"),
 				catch: () =>
 					new TaskRuntimeError({
-						message: "Failed to get default user",
+						message: "Failed to get default user from dfx",
 					}),
 			})
+            // .pipe(
+			// 	// Effect.mapError
+			// 	Effect.option,
+			// )
+            // Option.match
+			// const defaultUser = Option.match(maybeDefaultUser, {
+			// 	{
+			// 		onSome: (user) => user,
+            //         // TODO: create default user?
+			// 		onNone: () => new TaskRuntimeError({
+			// 			message: "Default user not found",
+			// 		}),
+			// 	},
+			// )
+			// TODO: handle case where identity is not found?
 			yield* Effect.logDebug(
 				`[TIMING] DefaultConfig identity loaded in ${performance.now() - startIdentity}ms`,
 			)

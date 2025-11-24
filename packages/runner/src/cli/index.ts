@@ -376,6 +376,7 @@ export const makeFullRuntime = ({
 		new ICReplica({
 			host: "http://0.0.0.0",
 			port: 8080,
+			isDev: true,
 		}),
 		{
 			iceDirPath: iceDirName,
@@ -391,6 +392,7 @@ export const makeFullRuntime = ({
 			// port: 8080,
 			host: "https://icp-api.io",
 			port: 80,
+			isDev: false,
 		}),
 		{
 			iceDirPath: iceDirName,

@@ -187,9 +187,8 @@ export type TaskCtxBase<
 	readonly origin: "extension" | "cli"
 }
 
-type ResolvedConfig = 
-    TaskCtxExtension & 
-    Omit<DefaultICEConfig, keyof TaskCtxExtension>;
+type ResolvedConfig = TaskCtxExtension &
+	Omit<DefaultICEConfig, keyof TaskCtxExtension>
 
 export interface TaskCtxExtension {}
 
@@ -208,8 +207,8 @@ export interface TaskCtxExtension {}
 // type test = TaskCtx<
 // 	{},
 // 	{
-// 		// users: { 
-//         //     seppo: ICEUser 
+// 		// users: {
+//         //     seppo: ICEUser
 //         //     jussi: ICEUser
 //         // }
 // 		// roles: { [key: string]: string }
@@ -218,8 +217,8 @@ export interface TaskCtxExtension {}
 // >
 
 // interface TaskExtension {
-//     users: { 
-//         seppo: ICEUser 
+//     users: {
+//         seppo: ICEUser
 //         jussi: ICEUser
 //     }
 //     // roles: { [key: string]: string }
@@ -344,9 +343,8 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				} = yield* ICEConfigService
 
 				const currentNetwork = globalArgs.network ?? "local"
-				const currentNetworkConfig =
-					config?.networks?.[currentNetwork] ??
-					defaultConfig.networks[currentNetwork]
+				const resolvedNetworks = config?.networks ?? defaultConfig.networks
+				const currentNetworkConfig = resolvedNetworks[currentNetwork]
 				const currentReplica = currentNetworkConfig?.replica
 				if (!currentReplica) {
 					return yield* Effect.fail(
@@ -356,7 +354,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					)
 				}
 				const currentUsers = config?.users ?? {}
-				const networks = config?.networks ?? defaultConfig.networks
 				// TODO: merge with defaultConfig.roles
 				const initializedRoles: Record<string, ICEUser> = {}
 				for (const [name, user] of Object.entries(
@@ -377,6 +374,11 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				} & InitializedDefaultConfig["roles"] = {
 					...defaultConfig.roles,
 					...initializedRoles,
+				}
+
+				const resolvedUsers = {
+					...defaultConfig.users,
+					...currentUsers,
 				}
 				const iceConfigService = yield* ICEConfigService
 				const configReplica =
@@ -429,7 +431,10 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const replica = configReplica ?? defaultReplica
 
 				const ReplicaService = Layer.succeed(Replica, replica)
-                const DefaultConfigService = Layer.succeed(DefaultConfig, defaultConfig)
+				const DefaultConfigService = Layer.succeed(
+					DefaultConfig,
+					defaultConfig,
+				)
 
 				const taskLayer = Layer.mergeAll(
 					telemetryLayer,
@@ -459,7 +464,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const taskRuntime = ManagedRuntime.make(taskLayer)
 
 				const taskCtx = {
-					...defaultConfig,
+					// ...defaultConfig,
 					// TODO: add caching options?
 					// TODO: wrap with proxy?
 					runTask: async <T extends Task>(
@@ -482,11 +487,8 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					replica,
 					taskTree,
 					network: currentNetwork,
-					networks,
-					users: {
-						...defaultConfig.users,
-						...currentUsers,
-					},
+					networks: resolvedNetworks,
+					users: resolvedUsers,
 					roles: resolvedRoles,
 					appDir,
 					iceDir: iceDirPath,

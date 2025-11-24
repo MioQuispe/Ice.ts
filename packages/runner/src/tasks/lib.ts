@@ -16,10 +16,6 @@ import {
 	pipe,
 	Schema,
 } from "effect"
-import {
-	DefaultConfig,
-	InitializedDefaultConfig,
-} from "../services/defaultConfig.js"
 import { ICEConfigService } from "../services/iceConfig.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type {

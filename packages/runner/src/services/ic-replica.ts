@@ -2,9 +2,7 @@ import { Effect, Layer, Context, Data, Config } from "effect"
 import { Command, CommandExecutor, Path, FileSystem } from "@effect/platform"
 import { Principal } from "@icp-sdk/core/principal"
 import {
-	Actor,
-	HttpAgent,
-    type Identity,
+	type Identity,
 	type ActorSubclass,
 } from "@icp-sdk/core/agent"
 import { sha256 } from "js-sha256"
@@ -13,6 +11,7 @@ import find from "find-process"
 import { idlFactory } from "../canisters/management_latest/management.did.js"
 import type {
 	canister_install_mode,
+	canister_settings,
 	canister_status_result,
 	log_visibility,
 } from "../canisters/management_latest/management.types.js"
@@ -33,13 +32,23 @@ import {
 	type ReplicaServiceClass,
 	type CanisterInfo,
 	type InstallModes,
+	getCanisterInfoFromStateTree,
 } from "./replica.js"
+import {
+	HttpAgent,
+	Actor,
+} from "@dfinity/agent"
 import { Opt } from "../canister.js"
 import type * as ActorTypes from "../types/actor.js"
 import type { SubnetTopology } from "@dfinity/pic"
 import * as nodeChildProcess from "node:child_process"
+import { idlFactory as cyclesLedgerIdlFactory } from "../canisters/cycles_ledger/cycles_ledger.did.js"
+import {
+	type _SERVICE as CyclesLedgerService,
+	CmcCreateCanisterArgs,
+} from "../canisters/cycles_ledger/cycles_ledger.types.js"
 
-export type ManagementActor = import("@icp-sdk/core/agent").ActorSubclass<
+export type ManagementActor = import("@dfinity/agent").ActorSubclass<
 	import("../canisters/management_latest/management.types.js")._SERVICE
 >
 
@@ -120,22 +129,95 @@ export class ICReplica implements ReplicaServiceClass {
 	public readonly host: string = "http://0.0.0.0"
 	public readonly port: number = 8080
 	public readonly manual?: boolean
+	public readonly isDev: boolean
 	public ctx?: ICEGlobalArgs
 	public proc?: nodeChildProcess.ChildProcess
 
-	constructor(opts: { host: string; port: number; manual?: boolean }) {
+	// Cache agents per identity to avoid expensive re-creation
+	private readonly agentCache = new Map<string, HttpAgent>()
+
+	// Cache canister info with 500ms TTL to cover runner's internal "revalidate->execute" gap
+	// 500ms is indistinguishable from network latency variance on mainnet
+	private readonly cacheTTL = 500
+
+	// The Cache: Timestamped data
+	private readonly canisterInfoCache = new Map<
+		string,
+		{ timestamp: number; data: CanisterInfo }
+	>()
+
+	// The Deduplicator: Stores pending promises so concurrent tasks share 1 network call
+	private readonly inflightRequests = new Map<string, Promise<CanisterInfo>>()
+
+	constructor(opts: {
+		host: string
+		port: number
+		manual?: boolean
+		isDev?: boolean
+	}) {
 		this.host = opts.host
 		this.port = opts.port
 		this.manual = opts.manual ?? true
+		this.isDev = opts.isDev !== undefined ? opts.isDev : true
 	}
 
+	private getIdentityKey(identity: Identity): string {
+		return identity.getPrincipal().toText()
+	}
+
+	/**
+	 * Generate a unique cache key per canister and identity.
+	 * Different users see different statuses, so identity must be part of the key.
+	 */
+	private getCacheKey(canisterId: string, identity: Identity): string {
+		return `${canisterId}:${identity.getPrincipal().toText()}`
+	}
+
+	/**
+	 * SAFETY MECHANISM - Call this whenever we write/mutate state.
+	 * Invalidates the cache for a specific canister+identity combination.
+	 */
+	private invalidateCache(canisterId: string, identity: Identity): void {
+		const key = this.getCacheKey(canisterId, identity)
+		this.canisterInfoCache.delete(key)
+	}
+
+	private getHostUrl(): string {
+		// Host may include http:// or https://, extract the protocol and hostname
+		if (
+			this.host.startsWith("http://") ||
+			this.host.startsWith("https://")
+		) {
+			return this.host
+		}
+		return `http://${this.host}`
+	}
+
+	/**
+	 * Get DfinityHttpAgent (from @dfinity/agent) - cached per identity.
+	 * This is the unified agent getter used throughout the codebase.
+	 * Returns DfinityHttpAgent which works with both Actor.createActor from @dfinity/agent
+	 * and DfinityCanisterStatus.request for state tree queries.
+	 */
 	private async getAgent(identity: Identity): Promise<HttpAgent> {
+		const identityKey = this.getIdentityKey(identity)
+		
+		// Return cached agent if available
+		const cached = this.agentCache.get(identityKey)
+		if (cached) {
+			return cached
+		}
+
 		try {
+			const hostUrl = this.getHostUrl()
 			const agent = await HttpAgent.create({
 				identity,
-				host: `${this.host}${this.port === 80 ? "" : `:${this.port}`}`,
+				host: `${hostUrl}${this.port === 80 ? "" : `:${this.port}`}`,
 			})
 			await agent.fetchRootKey()
+			
+			// Cache the agent
+			this.agentCache.set(identityKey, agent)
 			return agent
 		} catch (error) {
 			throw new AgentError({
@@ -153,6 +235,20 @@ export class ICReplica implements ReplicaServiceClass {
 		return mgmt
 	}
 
+	private async getCyclesLedger(
+		identity: Identity,
+	): Promise<CyclesLedgerService> {
+		const agent = await this.getAgent(identity)
+		const cyclesLedger = Actor.createActor<CyclesLedgerService>(
+			cyclesLedgerIdlFactory,
+			{
+				canisterId: "um5iw-rqaaa-aaaaq-qaaba-cai",
+				agent,
+			},
+		)
+		return cyclesLedger
+	}
+
 	public async getCanisterStatus({
 		canisterId,
 		identity,
@@ -161,28 +257,17 @@ export class ICReplica implements ReplicaServiceClass {
 		identity: Identity
 	}): Promise<CanisterStatus> {
 		try {
-			const mgmt = await this.getMgmt(identity)
 			if (!canisterId) {
 				return CanisterStatus.NOT_FOUND
 			}
-			try {
-				const canisterInfo = await mgmt.canister_status({
-					canister_id: Principal.fromText(canisterId),
-				})
-				const statusKey = Object.keys(canisterInfo.status)[0]
-				switch (statusKey) {
-					case CanisterStatus.NOT_FOUND:
-						return CanisterStatus.NOT_FOUND
-					case CanisterStatus.STOPPED:
-						return CanisterStatus.STOPPED
-					case CanisterStatus.RUNNING:
-						return CanisterStatus.RUNNING
-					default:
-						return CanisterStatus.NOT_FOUND
-				}
-			} catch (error) {
-				return CanisterStatus.NOT_FOUND
-			}
+			const agent = await this.getAgent(identity)
+			const info = await getCanisterInfoFromStateTree(
+				agent,
+				canisterId,
+				identity,
+				agent,
+			)
+			return info.status as CanisterStatus
 		} catch (error) {
 			throw new CanisterStatusError({
 				message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
@@ -197,27 +282,121 @@ export class ICReplica implements ReplicaServiceClass {
 		canisterId: string
 		identity: Identity
 	}): Promise<CanisterInfo> {
-		try {
-			const mgmt = await this.getMgmt(identity)
-			if (!canisterId) {
-				return { status: CanisterStatus.NOT_FOUND } as const
-			}
-			try {
-				const result = await mgmt.canister_status({
-					canister_id: Principal.fromText(canisterId),
-				})
-				return {
-					...result,
-					status: Object.keys(result.status)[0] as CanisterStatus,
-				}
-			} catch (error) {
-				return { status: CanisterStatus.NOT_FOUND } as const
-			}
-		} catch (error) {
-			throw new CanisterStatusError({
-				message: `Failed to get canister info: ${error instanceof Error ? error.message : String(error)}`,
-			})
+		if (!canisterId) {
+			return { status: CanisterStatus.NOT_FOUND } as const
 		}
+
+		const key = this.getCacheKey(canisterId, identity)
+		const now = Date.now()
+
+		// A. CHECK CACHE (Micro-Cache)
+		const cached = this.canisterInfoCache.get(key)
+		if (cached && now - cached.timestamp < this.cacheTTL) {
+			return cached.data
+		}
+
+		// B. CHECK IN-FLIGHT (Deduplication)
+		// If a request is already running (e.g. from a parallel task), join it.
+		if (this.inflightRequests.has(key)) {
+			return this.inflightRequests.get(key)!
+		}
+
+		// C. FETCH FRESH
+		const fetchPromise = (async () => {
+			try {
+				const agent = await this.getAgent(identity)
+				const stateTreeInfo = await getCanisterInfoFromStateTree(
+					agent,
+					canisterId,
+					identity,
+					agent,
+				)
+				// If canister not found, return early
+				if (stateTreeInfo.status === CanisterStatus.NOT_FOUND) {
+					return { status: CanisterStatus.NOT_FOUND } as const
+				}
+				// Try to get full info from management canister if we're a controller
+				// and status allows it (not out_of_cycles or not_controller)
+				if (
+					stateTreeInfo.status !== CanisterStatus.NOT_CONTROLLER &&
+					stateTreeInfo.status !== CanisterStatus.OUT_OF_CYCLES
+				) {
+					try {
+						const mgmt = await this.getMgmt(identity)
+						const result = await mgmt.canister_status({
+							canister_id: Principal.fromText(canisterId),
+						})
+						const fullInfo = {
+							...result,
+							status: Object.keys(result.status)[0] as CanisterStatus,
+						}
+						return fullInfo
+					} catch (error) {
+						// Fall through to return state tree info
+					}
+				}
+				// Return minimal info from state tree for cases where we can't get full info
+				const minimalInfo = {
+					status: stateTreeInfo.status as CanisterStatus,
+					memory_size: 0n,
+					cycles: 0n,
+					settings: {
+						freezing_threshold: 0n,
+						controllers: stateTreeInfo.controllers.map((c) =>
+							Principal.fromText(c),
+						),
+						reserved_cycles_limit: 0n,
+						log_visibility: { controllers: null },
+						wasm_memory_limit: 0n,
+						memory_allocation: 0n,
+						compute_allocation: 0n,
+					},
+					query_stats: {
+						response_payload_bytes_total: 0n,
+						num_instructions_total: 0n,
+						num_calls_total: 0n,
+						request_payload_bytes_total: 0n,
+					},
+					idle_cycles_burned_per_day: 0n,
+					module_hash:
+						stateTreeInfo.module_hash.length > 0
+							? [
+									Array.from(
+										Buffer.from(
+											stateTreeInfo.module_hash[0]!.replace(
+												/^0x/,
+												"",
+											),
+											"hex",
+										),
+									),
+								]
+							: [],
+					reserved_cycles: 0n,
+				} as CanisterInfo
+				return minimalInfo
+			} catch (error) {
+				throw new CanisterStatusError({
+					message: `Failed to get canister info: ${error instanceof Error ? error.message : String(error)}`,
+				})
+			} finally {
+				// Cleanup in-flight marker immediately after finish
+				this.inflightRequests.delete(key)
+			}
+		})()
+
+		// Register the promise so concurrent calls can share it
+		this.inflightRequests.set(key, fetchPromise)
+
+		const result = await fetchPromise
+
+		// Save to cache
+		this.canisterInfoCache.set(key, {
+			timestamp: Date.now(),
+			data: result,
+		})
+
+		return result
 	}
 
 	public async installCode({
@@ -237,7 +416,13 @@ export class ICReplica implements ReplicaServiceClass {
 			const maxSize = 3670016
 			const isOverSize = wasm.length > maxSize
 			const wasmModuleHash = Array.from(sha256.array(wasm))
-			const mgmt = await this.getMgmt(identity)
+			const agent = await this.getAgent(identity)
+			const mgmt = Actor.createActor<ManagementActor>(idlFactory, {
+				canisterId: "aaaaa-aa",
+				effectiveCanisterId: Principal.fromText(canisterId),
+				agent,
+			})
+			// const mgmt = await this.getMgmt(identity)
 			const enhancedModePayload = buildInstallModePayload(mode, true)
 			const fallbackModePayload =
 				mode === "upgrade"
@@ -321,6 +506,9 @@ export class ICReplica implements ReplicaServiceClass {
 			throw new CanisterInstallError({
 				message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
 			})
+		} finally {
+			// SAFE: Code installed, hash changed. Invalidate immediately.
+			this.invalidateCache(canisterId, identity)
 		}
 	}
 	public async createCanister({
@@ -330,6 +518,11 @@ export class ICReplica implements ReplicaServiceClass {
 		canisterId: string | undefined
 		identity: Identity
 	}): Promise<string> {
+		// Optimistic invalidation before we start, just in case
+		if (canisterId) {
+			this.invalidateCache(canisterId, identity)
+		}
+
 		try {
 			const mgmt = await this.getMgmt(identity)
 			const controller = identity.getPrincipal()
@@ -338,33 +531,86 @@ export class ICReplica implements ReplicaServiceClass {
 					canisterId,
 					identity,
 				})
-				if (canisterStatus !== CanisterStatus.NOT_FOUND) {
+				// Only return existing canister if it exists AND we are a controller
+				// If we're not a controller, we can't install code, so treat it as not found
+				if (
+					canisterStatus !== CanisterStatus.NOT_FOUND &&
+					canisterStatus !== CanisterStatus.NOT_CONTROLLER
+				) {
 					return canisterId
 				}
 			}
-			const createResult =
-				await (mgmt.provisional_create_canister_with_cycles({
-					settings: [
-						{
-							compute_allocation: Opt<bigint>(),
-							memory_allocation: Opt<bigint>(),
-							freezing_threshold: Opt<bigint>(),
-							controllers: Opt<Principal[]>([controller]),
-							reserved_cycles_limit: Opt<bigint>(),
-							log_visibility: Opt<log_visibility>(),
-							wasm_memory_limit: Opt<bigint>(),
-						},
-					],
-					amount: Opt<bigint>(1_000_000_000_000_000_000n),
-					specified_id: Opt<Principal>(
-						canisterId ? Principal.fromText(canisterId) : undefined,
-					),
-					sender_canister_version: Opt<bigint>(0n),
-				}) as Promise<{ canister_id: Principal }>)
-			return createResult.canister_id.toText()
+			const settings = [
+				{
+					compute_allocation: Opt<bigint>(),
+					memory_allocation: Opt<bigint>(),
+					freezing_threshold: Opt<bigint>(),
+					controllers: Opt<Principal[]>([controller]),
+					reserved_cycles_limit: Opt<bigint>(),
+					log_visibility: Opt<log_visibility>(),
+					wasm_memory_limit: Opt<bigint>(),
+				},
+			] as [canister_settings]
+			if (this.isDev) {
+				const createResult =
+					await (mgmt.provisional_create_canister_with_cycles({
+						settings,
+						amount: Opt<bigint>(1_000_000_000_000_000_000n),
+						specified_id: Opt<Principal>(
+							canisterId
+								? Principal.fromText(canisterId)
+								: undefined,
+						),
+						sender_canister_version: Opt<bigint>(0n),
+					}) as Promise<{ canister_id: Principal }>)
+				const newCanisterId = createResult.canister_id.toText()
+				// Invalidate the new ID to ensure next read gets fresh data
+				this.invalidateCache(newCanisterId, identity)
+				return newCanisterId
+			} else {
+				const cyclesLedger = await this.getCyclesLedger(identity)
+				const createResult = await cyclesLedger.create_canister_from({
+					spender_subaccount: [],
+					from: {
+						owner: identity.getPrincipal(),
+						subaccount: [],
+					},
+					created_at_time: [],
+					amount: 500_000_000_000n,
+					creation_args: Opt<CmcCreateCanisterArgs>({
+						subnet_selection: [],
+						settings: settings,
+					}),
+				})
+				if ("Ok" in createResult) {
+					const newCanisterId = createResult.Ok.canister_id.toText()
+					// Invalidate the new ID to ensure next read gets fresh data
+					this.invalidateCache(newCanisterId, identity)
+					return newCanisterId
+				}
+				const errorMsg = JSON.stringify(createResult, (_, value) => {
+					if (typeof value === "bigint") {
+						return { __type__: "bigint", value: value.toString() }
+					}
+					return value
+				})
+				throw new CanisterCreateError({
+					message: `Failed to create canister: ${errorMsg}`,
+				})
+			}
 		} catch (error) {
+			const errorMessage =
+				error instanceof Error ? error.message : String(error)
+			if (
+				errorMessage.includes("canister_not_found") ||
+				errorMessage.includes("The specified canister does not exist")
+			) {
+				throw new CanisterCreateError({
+					message: `Failed to create canister on mainnet. This error typically indicates that the caller's account does not have sufficient cycles. On mainnet, create_canister requires cycles to be transferred from the caller's account balance. Ensure your identity has cycles before creating canisters. Original error: ${errorMessage}`,
+				})
+			}
 			throw new CanisterCreateError({
-				message: `Failed to create canister: ${error instanceof Error ? error.message : String(error)}`,
+				message: `Failed to create canister: ${errorMessage}`,
 			})
 		}
 	}
@@ -384,6 +630,9 @@ export class ICReplica implements ReplicaServiceClass {
 			throw new CanisterStopError({
 				message: `Failed to stop canister: ${error instanceof Error ? error.message : String(error)}`,
 			})
+		} finally {
+			// SAFE: Status changed. Invalidate immediately.
+			this.invalidateCache(canisterId, identity)
 		}
 	}
 
@@ -403,6 +652,9 @@ export class ICReplica implements ReplicaServiceClass {
 			throw new CanisterDeleteError({
 				message: `Failed to delete canister: ${error instanceof Error ? error.message : String(error)}`,
 			})
+		} finally {
+			// SAFE: Canister removed. Invalidate immediately.
+			this.invalidateCache(canisterId, identity)
 		}
 	}
 

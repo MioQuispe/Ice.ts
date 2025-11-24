@@ -157,7 +157,7 @@ Error getting identity (FiberFailure) IdsError: Identity does not exist
 const runtime = ManagedRuntime.make(Layer.mergeAll(NodeContext.layer))
 
 export const Ids = {
-	fromDfx: async (name: string) => {
+	fromDfx: async (name?: string) => {
 		try {
 			const user = await runtime.runPromise(getIdentity(name))
 			return user

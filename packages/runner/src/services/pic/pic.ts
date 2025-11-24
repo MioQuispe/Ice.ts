@@ -31,6 +31,7 @@ import {
 	ReplicaError,
 	ReplicaServiceClass,
 	CanisterStopError,
+	getCanisterInfoFromManagementCanister,
 } from "../replica.js"
 import { idlFactory } from "../../canisters/management_latest/management.did.js"
 import { sha256 } from "js-sha256"
@@ -82,6 +83,19 @@ export class PICReplica implements ReplicaServiceClass {
 	public pic?: PocketIc
 	public ctx: ICEGlobalArgs | undefined
 
+	// Cache canister info with 500ms TTL to cover runner's internal "revalidate->execute" gap
+	// 500ms is indistinguishable from network latency variance on mainnet
+	private readonly cacheTTL = 200
+
+	// The Cache: Timestamped data
+	private readonly canisterInfoCache = new Map<
+		string,
+		{ timestamp: number; data: CanisterInfo }
+	>()
+
+	// The Deduplicator: Stores pending promises so concurrent tasks share 1 network call
+	private readonly inflightRequests = new Map<string, Promise<CanisterInfo>>()
+
 	constructor(opts: {
 		host?: string
 		port: number
@@ -89,17 +103,37 @@ export class PICReplica implements ReplicaServiceClass {
 		picConfig?: CreateInstanceOptions
 		manual?: boolean
 	}) {
-		this.host = opts.host ?? "0.0.0.0"
+		this.host = opts.host ?? "http://0.0.0.0"
 		this.port = opts.port
 		this.ttlSeconds = opts.ttlSeconds ?? 9_999_999_999
 		this.picConfig = opts.picConfig ?? defaultPicConfig
 		this.manual = opts.manual ?? false
 	}
 
+	/**
+	 * Generate a unique cache key per canister and identity.
+	 * Different users see different statuses, so identity must be part of the key.
+	 */
+	private getCacheKey(canisterId: string, identity: Identity): string {
+		return `${canisterId}:${identity.getPrincipal().toText()}`
+	}
+
+	/**
+	 * SAFETY MECHANISM - Call this whenever we write/mutate state.
+	 * Invalidates the cache for a specific canister+identity combination.
+	 */
+	private invalidateCache(canisterId: string, identity: Identity): void {
+		const key = this.getCacheKey(canisterId, identity)
+		this.canisterInfoCache.delete(key)
+	}
+
 	async start(ctx: ICEGlobalArgs): Promise<void> {
 		const start = performance.now()
 		this.ctx = ctx
 
+        // TODO: strip protocol from host
+        const hostUrl = this.host.replace(/^https?:\/\//, "")
+        // const hostUrl = String.
 		try {
 			let releaseSpawnLock
 			if (!this.manual) {
@@ -109,7 +143,7 @@ export class PICReplica implements ReplicaServiceClass {
 					policy: ctx.policy,
 					iceDirPath: ctx.iceDirPath,
 					network: ctx.network,
-					host: this.host,
+					host: hostUrl,
 					port: this.port,
 					isDev: ctx.network !== "ic",
 				})
@@ -125,11 +159,13 @@ export class PICReplica implements ReplicaServiceClass {
 				releaseSpawnLock = await acquireSpawnLock(spawnLockPath)
 				await monitor.start()
 				this.monitor = monitor
+                // TODO: clean up
 				this.host = monitor.host
 				this.port = monitor.port
 			}
 
-			const baseUrl = `http://${this.host}:${this.port}`
+            // TODO: clean up
+			const baseUrl = `http://${hostUrl}:${this.port}`
 
 			const stateRoot = path.resolve(
 				path.join(this.ctx.iceDirPath, "networks", this.ctx.network, "replica-state"),
@@ -256,22 +292,16 @@ export class PICReplica implements ReplicaServiceClass {
 		identity: Identity
 	}): Promise<CanisterStatus> {
 		const { canisterId, identity } = params
-		const mgmt = await this.getMgmt(identity)
+		assertStarted(this.client, "PICReplica.getCanisterStatus")
 		try {
 			if (!canisterId) return CanisterStatus.NOT_FOUND
-			try {
-				const info = await mgmt.canister_status({
-					canister_id: Principal.fromText(canisterId),
-				})
-				const key = Object.keys(info.status)[0]
-				if (key === CanisterStatus.RUNNING)
-					return CanisterStatus.RUNNING
-				if (key === CanisterStatus.STOPPED)
-					return CanisterStatus.STOPPED
-				return CanisterStatus.NOT_FOUND
-			} catch {
-				return CanisterStatus.NOT_FOUND
-			}
+			const mgmt = await this.getMgmt(identity)
+			const info = await getCanisterInfoFromManagementCanister(
+				mgmt,
+				canisterId,
+				identity,
+			)
+			return info.status as CanisterStatus
 		} catch (error) {
 			throw new CanisterStatusError({
 				message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
@@ -284,36 +314,141 @@ export class PICReplica implements ReplicaServiceClass {
 		identity: Identity
 	}): Promise<CanisterInfo> {
 		const { canisterId, identity } = params
-		const mgmt = await this.getMgmt(identity)
-		if (!canisterId) return { status: CanisterStatus.NOT_FOUND } as const
-		try {
-			const result = await mgmt.canister_status({
-				canister_id: Principal.fromText(canisterId),
-			})
-			const key = Object.keys(result.status)[0]
-			if (key === CanisterStatus.RUNNING)
-				return {
-					...result,
-					status: CanisterStatus.RUNNING,
-				} as CanisterInfo
-			if (key === CanisterStatus.STOPPED)
-				return {
-					...result,
-					status: CanisterStatus.STOPPED,
-				} as CanisterInfo
+		assertStarted(this.client, "PICReplica.getCanisterInfo")
+		if (!canisterId) {
 			return { status: CanisterStatus.NOT_FOUND } as const
-		} catch (error) {
-			if (
-				error instanceof Error &&
-				(error.message.includes("does not belong to any subnet") ||
-					error.message.includes("CanisterNotFound"))
-			) {
+		}
+
+		const key = this.getCacheKey(canisterId, identity)
+		const now = Date.now()
+
+		// A. CHECK CACHE (Micro-Cache)
+		const cached = this.canisterInfoCache.get(key)
+		if (cached && now - cached.timestamp < this.cacheTTL) {
+			return cached.data
+		}
+
+		// B. CHECK IN-FLIGHT (Deduplication)
+		// If a request is already running (e.g. from a parallel task), join it.
+		if (this.inflightRequests.has(key)) {
+			return this.inflightRequests.get(key)!
+		}
+
+		// C. FETCH FRESH
+		const fetchPromise = (async () => {
+			try {
+				const mgmt = await this.getMgmt(identity)
+				const stateTreeInfo = await getCanisterInfoFromManagementCanister(
+					mgmt,
+					canisterId,
+					identity,
+				)
+			// If canister not found, return early
+			if (stateTreeInfo.status === CanisterStatus.NOT_FOUND) {
 				return { status: CanisterStatus.NOT_FOUND } as const
 			}
-			throw new CanisterStatusError({
-				message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
-			})
-		}
+			// Get full info from management canister if we're a controller
+			// and status allows it (not out_of_cycles or not_controller)
+			if (
+				stateTreeInfo.status !== CanisterStatus.NOT_CONTROLLER &&
+				stateTreeInfo.status !== CanisterStatus.OUT_OF_CYCLES
+			) {
+				try {
+					const result = await mgmt.canister_status({
+						canister_id: Principal.fromText(canisterId),
+					})
+					const key = Object.keys(result.status)[0]
+					if (key === CanisterStatus.RUNNING) {
+						const fullInfo = {
+							...result,
+							status: CanisterStatus.RUNNING,
+						} as CanisterInfo
+						return fullInfo
+					}
+					if (key === CanisterStatus.STOPPED) {
+						const fullInfo = {
+							...result,
+							status: CanisterStatus.STOPPED,
+						} as CanisterInfo
+						return fullInfo
+					}
+					if (key === CanisterStatus.STOPPING) {
+						const fullInfo = {
+							...result,
+							status: CanisterStatus.STOPPING,
+						} as CanisterInfo
+						return fullInfo
+					}
+				} catch (error) {
+					// Fall through to return minimal info
+				}
+			}
+			// Return minimal info for cases where we can't get full info
+			const minimalInfo = {
+				status: stateTreeInfo.status as CanisterStatus,
+				memory_size: 0n,
+				cycles: 0n,
+				settings: {
+					freezing_threshold: 0n,
+					controllers: stateTreeInfo.controllers.map((c) =>
+						Principal.fromText(c),
+					),
+					reserved_cycles_limit: 0n,
+					log_visibility: { controllers: null },
+					wasm_memory_limit: 0n,
+					memory_allocation: 0n,
+					compute_allocation: 0n,
+				},
+				query_stats: {
+					response_payload_bytes_total: 0n,
+					num_instructions_total: 0n,
+					num_calls_total: 0n,
+					request_payload_bytes_total: 0n,
+				},
+				idle_cycles_burned_per_day: 0n,
+				module_hash:
+					stateTreeInfo.module_hash.length > 0
+						? [
+								Array.from(
+									Buffer.from(
+										stateTreeInfo.module_hash[0]!.replace(/^0x/, ""),
+										"hex",
+									),
+								),
+							]
+						: [],
+				reserved_cycles: 0n,
+			} as CanisterInfo
+				return minimalInfo
+			} catch (error) {
+				if (
+					error instanceof Error &&
+					(error.message.includes("does not belong to any subnet") ||
+						error.message.includes("CanisterNotFound"))
+				) {
+					return { status: CanisterStatus.NOT_FOUND } as const
+				}
+				throw new CanisterStatusError({
+					message: `Failed to get canister status: ${error instanceof Error ? error.message : String(error)}`,
+				})
+			} finally {
+				// Cleanup in-flight marker immediately after finish
+				this.inflightRequests.delete(key)
+			}
+		})()
+
+		// Register the promise so concurrent calls can share it
+		this.inflightRequests.set(key, fetchPromise)
+
+		const result = await fetchPromise
+
+		// Save to cache
+		this.canisterInfoCache.set(key, {
+			timestamp: Date.now(),
+			data: result,
+		})
+
+		return result
 	}
 
 	async createCanister(params: {
@@ -323,6 +458,11 @@ export class PICReplica implements ReplicaServiceClass {
 		assertStarted(this.pic, "PICReplica.createCanister")
 		const { canisterId, identity } = params
 		const controller = identity.getPrincipal()
+
+		// Optimistic invalidation before we start, just in case
+		if (canisterId) {
+			this.invalidateCache(canisterId, identity)
+		}
 
 		if (canisterId) {
 			const st = await this.getCanisterStatus({ canisterId, identity })
@@ -376,7 +516,10 @@ export class PICReplica implements ReplicaServiceClass {
 				...(targetSubnetId ? { targetSubnetId } : {}),
 				sender: identity.getPrincipal(),
 			})
-			return created.toText()
+			const newCanisterId = created.toText()
+			// Invalidate the new ID to ensure next read gets fresh data
+			this.invalidateCache(newCanisterId, identity)
+			return newCanisterId
 		} catch (error) {
 			if (
 				error instanceof Error &&
@@ -408,6 +551,9 @@ export class PICReplica implements ReplicaServiceClass {
 			throw new CanisterStopError({
 				message: `Failed to stop canister: ${error instanceof Error ? error.message : String(error)}`,
 			})
+		} finally {
+			// SAFE: Status changed. Invalidate immediately.
+			this.invalidateCache(params.canisterId, params.identity)
 		}
 	}
 
@@ -424,6 +570,9 @@ export class PICReplica implements ReplicaServiceClass {
 			throw new CanisterDeleteError({
 				message: `Failed to delete canister: ${error instanceof Error ? error.message : String(error)}`,
 			})
+		} finally {
+			// SAFE: Canister removed. Invalidate immediately.
+			this.invalidateCache(params.canisterId, params.identity)
 		}
 	}
 
@@ -625,6 +774,9 @@ export class PICReplica implements ReplicaServiceClass {
 					message: `Failed to install code: ${error instanceof Error ? error.message : String(error)}`,
 				})
 			}
+		} finally {
+			// SAFE: Code installed, hash changed. Invalidate immediately.
+			this.invalidateCache(canisterId, identity)
 		}
 	}
 

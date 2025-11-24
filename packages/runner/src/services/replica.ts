@@ -1,15 +1,20 @@
 import { Effect, Context, Data, Layer } from "effect"
-import type {
-	ActorSubclass,
-	HttpAgent,
-    Identity,
-} from "@icp-sdk/core/agent"
+import type { ActorSubclass, HttpAgent, Identity } from "@icp-sdk/core/agent"
 import type { canister_status_result } from "src/canisters/management_latest/management.types.js"
 import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
 import { SubnetTopology } from "@dfinity/pic"
 import { PlatformError } from "@effect/platform/Error"
 import { ICEGlobalArgs } from "../types/types.js"
+import {
+	HttpAgent as DfinityHttpAgent,
+	CanisterStatus as DfinityCanisterStatus,
+	RejectError,
+	UncertifiedRejectUpdateErrorCode,
+	Actor,
+} from "@dfinity/agent"
+import { idlFactory as managementLatestIdlFactory } from "../canisters/management_latest/management.did.js"
+import type { _SERVICE as ManagementActor } from "../canisters/management_latest/management.types.js"
 
 export type SubnetType =
 	| "II"
@@ -152,6 +157,8 @@ export type CanisterStatus =
 	| "stopped"
 	| "stopping"
 	| "running"
+	| "not_controller"
+	| "out_of_cycles"
 
 export const CanisterStatus = {
 	NOT_FOUND: "not_found",
@@ -159,6 +166,8 @@ export const CanisterStatus = {
 	STOPPED: "stopped",
 	STOPPING: "stopping",
 	RUNNING: "running",
+	NOT_CONTROLLER: "not_controller",
+	OUT_OF_CYCLES: "out_of_cycles",
 } as const
 
 type log_visibility =
@@ -292,7 +301,10 @@ export type ReplicaServiceClass = {
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
 	start: (ctx: ICEGlobalArgs) => Promise<void>
-	stop: (args?: { scope: "background" | "foreground" }, ctx?: ICEGlobalArgs) => Promise<void>
+	stop: (
+		args?: { scope: "background" | "foreground" },
+		ctx?: ICEGlobalArgs,
+	) => Promise<void>
 }
 
 export class Replica extends Context.Tag("Replica")<
@@ -352,3 +364,242 @@ export function layerFromAsyncReplica(
 //
 export const layerFromStartedReplica = (replica: ReplicaServiceClass) =>
 	Layer.succeed(Replica, replica)
+
+/**
+ * Result type for canister info from state tree queries.
+ */
+export type CanisterInfoFromStateTree = {
+	controllers: string[]
+	module_hash: [] | [string]
+	status: CanisterStatus
+}
+
+/**
+ * Get canister information (controllers and module hash) using management canister directly.
+ * This works for local environments (PocketIC) where management canister calls work.
+ * Returns the same format as getCanisterInfoFromStateTree.
+ *
+ * @param mgmtActor - The management canister actor
+ * @param canisterId - The canister ID as a Principal or string
+ * @param identity - The identity to use for determining if caller is a controller
+ * @returns An object with controllers (sorted array of principal strings), module_hash (hex string with "0x" prefix, or empty array), and status
+ */
+export async function getCanisterInfoFromManagementCanister(
+	mgmtActor: {
+		canister_status: (p: {
+			canister_id: Principal
+		}) => Promise<canister_status_result>
+	},
+	canisterId: Principal | string,
+	identity: Identity,
+): Promise<CanisterInfoFromStateTree> {
+	const canisterPrincipal =
+		typeof canisterId === "string"
+			? Principal.fromText(canisterId)
+			: canisterId
+
+	try {
+		const result = await mgmtActor.canister_status({
+			canister_id: canisterPrincipal,
+		})
+
+		// Extract controllers and convert to sorted string array
+		const controllers = result.settings.controllers
+		const controllersSorted = controllers.map((p) => p.toText()).sort()
+
+		// Extract module hash and convert to hex with "0x" prefix
+		const moduleHash: [] | [string] =
+			result.module_hash.length > 0
+				? [`0x${Buffer.from(result.module_hash[0]!).toString("hex")}`]
+				: []
+
+		// Map status from management canister response
+		let canisterStatus: CanisterStatus = "running"
+
+		if ("stopped" in result.status) {
+			canisterStatus = "stopped"
+		} else if ("stopping" in result.status) {
+			canisterStatus = "stopping"
+		} else if ("running" in result.status) {
+			canisterStatus = "running"
+		}
+
+		// Check if caller is a controller
+		const callerPrincipal = identity.getPrincipal()
+		const isController = controllersSorted.includes(
+			callerPrincipal.toText(),
+		)
+		if (!isController) {
+			canisterStatus = "not_controller"
+		}
+
+		const returnValue = {
+			controllers: controllersSorted,
+			module_hash: moduleHash,
+			status: canisterStatus,
+		}
+
+		return returnValue
+	} catch (error) {
+		// If canister doesn't exist, return not_found
+		if (
+			error instanceof Error &&
+			(error.message.includes("does not belong to any subnet") ||
+				error.message.includes("CanisterNotFound") ||
+				error.message.includes("not found"))
+		) {
+			return {
+				controllers: [],
+				module_hash: [],
+				status: "not_found" as const,
+			}
+		}
+		// Re-throw other errors
+		throw error
+	}
+}
+
+/**
+ * Get canister information (controllers and module hash) using state tree queries.
+ * This works on both mainnet and local environments, as it doesn't rely solely on
+ * the management canister which is virtual on mainnet.
+ *
+ * @param agent - The HttpAgent instance from @dfinity/agent (must have root key fetched) for state tree queries
+ * @param canisterId - The canister ID as a Principal or string
+ * @param identity - The identity to use for determining if caller is a controller
+ * @param mgmtAgent - The HttpAgent instance from @dfinity/agent to use for management canister calls (must have root key fetched)
+ * @returns An object with controllers (sorted array of principal strings), module_hash (hex string with "0x" prefix, or empty array), and status
+ */
+export async function getCanisterInfoFromStateTree(
+	agent: DfinityHttpAgent,
+	canisterId: Principal | string,
+	identity: Identity,
+	mgmtAgent: DfinityHttpAgent,
+): Promise<CanisterInfoFromStateTree> {
+	const canisterPrincipal =
+		typeof canisterId === "string"
+			? Principal.fromText(canisterId)
+			: canisterId
+
+	// Request controllers and module_hash from the state tree
+	// Note: CanisterStatus.request catches errors internally and returns null values
+	const status = await DfinityCanisterStatus.request({
+		agent,
+		canisterId: canisterPrincipal,
+		paths: ["controllers", "module_hash"],
+	})
+
+	// Get controllers - decode as Principal[] and convert to sorted string array
+	const controllers = status.get("controllers")
+	const controllersSorted: string[] =
+		controllers &&
+		Array.isArray(controllers) &&
+		controllers.every((p) => Principal.isPrincipal(p))
+			? controllers.map((p) => p.toText()).sort()
+			: []
+
+	// Get module hash from state tree - convert to hex with "0x" prefix if it's a string
+	const moduleHashRaw = status.get("module_hash")
+	const moduleHashFromStateTree: [] | [string] =
+		moduleHashRaw &&
+		typeof moduleHashRaw === "string" &&
+		moduleHashRaw.length > 0
+			? [`0x${moduleHashRaw}`]
+			: []
+
+	// Determine if canister exists - if both controllers and module_hash are null, canister doesn't exist
+	const controllersIsNull = controllers === null
+	const moduleHashIsNull = moduleHashRaw === null
+
+	// If both are null, canister doesn't exist
+	if (controllersIsNull && moduleHashIsNull) {
+		return {
+			controllers: [],
+			module_hash: [],
+			status: "not_found" as const,
+		}
+	}
+
+	// Try to get status from management canister by delegating to getCanisterInfoFromManagementCanister
+	// This is the authoritative source - if it succeeds, we use its status but keep state tree controllers/module_hash
+	try {
+		const mgmtActor = Actor.createActor<ManagementActor>(
+			managementLatestIdlFactory,
+			{
+				canisterId: Principal.fromText("aaaaa-aa"),
+				effectiveCanisterId: canisterPrincipal,
+				agent: mgmtAgent,
+			},
+		)
+
+		// Get status from management canister (this handles all status mapping logic)
+		const mgmtInfo = await getCanisterInfoFromManagementCanister(
+			mgmtActor,
+			canisterPrincipal,
+			identity,
+		)
+
+		return {
+			controllers: controllersSorted,
+			module_hash: mgmtInfo.module_hash,
+			status: mgmtInfo.status,
+		}
+	} catch (error) {
+		// If management canister call fails, determine status from error or state tree data
+		let canisterStatus: CanisterStatus = "running"
+
+		// Check if error is a RejectError with UncertifiedRejectUpdateErrorCode
+		if (
+			error instanceof RejectError &&
+			error.hasCode(UncertifiedRejectUpdateErrorCode)
+		) {
+			const rejectError = error.code as UncertifiedRejectUpdateErrorCode
+
+			// Check for specific IC error codes
+			if (rejectError.rejectErrorCode === "IC0207") {
+				// Canister is out of cycles (deallocated)
+				canisterStatus = "out_of_cycles"
+			} else if (rejectError.rejectErrorCode === "IC0512") {
+				// Caller is not a controller
+				canisterStatus = "not_controller"
+			} else {
+				// Other reject errors - throw error
+				throw error
+			}
+		} else {
+			// If management canister call fails for other reasons, check state tree controllers
+			// as a fallback (for cases where state tree is more up-to-date)
+			const callerPrincipal = identity.getPrincipal()
+			const isController = controllersSorted.includes(
+				callerPrincipal.toText(),
+			)
+			if (!isController) {
+				canisterStatus = "not_controller"
+			}
+			// If isController is true, keep the default "running" status
+		}
+
+		console.log(
+			"[DEBUG] getCanisterInfoFromStateTree: mgmt call failed, RETURN fallback",
+			{
+				canisterId: canisterPrincipal.toText(),
+				status: canisterStatus,
+				module_hash_from_state_tree: moduleHashFromStateTree,
+				module_hash_length: moduleHashFromStateTree.length,
+				module_hash_value:
+					moduleHashFromStateTree.length > 0
+						? moduleHashFromStateTree[0]
+						: "empty",
+				moduleHash_raw_from_state_tree: moduleHashRaw,
+				moduleHash_type: typeof moduleHashRaw,
+				error: error instanceof Error ? error.message : String(error),
+			},
+		)
+
+		return {
+			controllers: controllersSorted,
+			module_hash: moduleHashFromStateTree,
+			status: canisterStatus,
+		}
+	}
+}
