@@ -72,16 +72,14 @@ type ResolvedParamOutput<P> =
 			: ParamOutput<P> | undefined
 
 type ResolvedRequiredKeys<P> = {
-	[K in keyof P]: HasValue<P[K]> extends true
-		? K
-		: never
+	[K in keyof P]: HasValue<P[K]> extends true ? K : never
 }[keyof P]
 
 type ResolvedOptionalKeys<P> = Exclude<keyof P, ResolvedRequiredKeys<P>>
 
-export type ResolvedParamsToArgs<
-	Params extends Record<string, TaskParam>,
-> = [keyof Params] extends [never]
+export type ResolvedParamsToArgs<Params extends Record<string, TaskParam>> = [
+	keyof Params,
+] extends [never]
 	? Record<string, never>
 	: {
 			[K in ResolvedRequiredKeys<Params>]: ResolvedParamOutput<Params[K]>
@@ -90,8 +88,16 @@ export type ResolvedParamsToArgs<
 		}
 
 // value type for a TaskParam
-type ParamOutput<P> = P extends InputTaskParam | TaskParam
-	? StandardSchemaV1.InferOutput<P["type"]>
+type ParamOutput<P> = P extends { type: infer TType }
+	? TType extends "string"
+		? string
+		: TType extends "number"
+			? number
+			: TType extends "boolean"
+				? boolean
+				: TType extends StandardSchemaV1<infer TOut>
+					? TOut
+					: never
 	: never
 
 // required vs optional (your rules)
@@ -176,12 +182,12 @@ export class TaskArgsParseError extends Data.TaggedError("TaskArgsParseError")<{
 
 // Helper function to validate a single parameter
 export const resolveArg = <T = unknown>(
-	param: TaskParam<T>, // Adjust type as per your actual schema structure
+	param: TaskParam<T>,
 	arg: unknown | undefined,
 ): Effect.Effect<T | undefined, TaskArgsParseError> => {
-	// TODO: arg might be undefined
-	if (!arg) {
-		if (param.isOptional) {
+	// 1. Handle missing argument (strict check against undefined to allow 0, false, "")
+	if (arg === undefined) {
+		if (param.isOptional || param.default !== undefined) {
 			return Effect.succeed(param.default)
 		}
 		return Effect.fail(
@@ -190,25 +196,90 @@ export const resolveArg = <T = unknown>(
 			}),
 		)
 	}
-	const value = arg ?? param.default
-	const outputType = param.type["~standard"].types?.output
-	const result = param.type["~standard"].validate(value)
 
-	if (result instanceof Promise) {
+	const value = arg
+
+	// 2. Handle Built-in String Types ("string" | "number" | "boolean")
+	if (typeof param.type === "string") {
+		// If value already matches the target primitive type, return it directly
+		if (typeof value === param.type) {
+			return Effect.succeed(value as T)
+		}
+
+		// If value is a string (and expected type is different, e.g. "number"), try to decode
+		if (typeof value === "string") {
+			try {
+				const decoded = param.decode(value)
+
+				// Validate the decoded result matches the expected type
+				if (param.type === "number") {
+					if (typeof decoded === "number" && !isNaN(decoded)) {
+						return Effect.succeed(decoded)
+					}
+					return Effect.fail(
+						new TaskArgsParseError({
+							message: `Expected number for ${param.name}, got "${value}" (parsed as ${decoded})`,
+						}),
+					)
+				}
+				if (param.type === "boolean") {
+					if (typeof decoded === "boolean") {
+						return Effect.succeed(decoded)
+					}
+					return Effect.fail(
+						new TaskArgsParseError({
+							message: `Expected boolean for ${param.name}, got "${value}"`,
+						}),
+					)
+				}
+
+				// For "string", the decoder is identity, so this is safe
+				return Effect.succeed(decoded)
+			} catch (e) {
+				return Effect.fail(
+					new TaskArgsParseError({
+						message: `Failed to decode ${param.name}: ${String(e)}`,
+					}),
+				)
+			}
+		}
+
+		// If value is neither the expected type nor a string, fail
 		return Effect.fail(
 			new TaskArgsParseError({
-				message: `Async validation not implemented for ${param.name ?? "positional parameter"}, arg: ${arg}, param: ${param}`,
+				message: `Invalid argument type for ${param.name}. Expected ${param.type} or string, got ${typeof value}`,
 			}),
 		)
 	}
-	if (result.issues) {
-		return Effect.fail(
-			new TaskArgsParseError({
-				message: `Validation failed for ${param.name ?? "positional parameter"}: ${JSON.stringify(result.issues, null, 2)}, arg: ${arg}, param: ${param}`,
-			}),
-		)
+
+	// 3. Handle StandardSchemaV1
+	// Safety check to ensure it's an object before accessing properties
+	if (typeof param.type === "object" && param.type !== null) {
+		const result = param.type["~standard"].validate(value)
+
+		if (result instanceof Promise) {
+			return Effect.fail(
+				new TaskArgsParseError({
+					message: `Async validation not implemented for ${param.name ?? "positional parameter"}, arg: ${arg}, param: ${param}`,
+				}),
+			)
+		}
+		if (result.issues) {
+			return Effect.fail(
+				new TaskArgsParseError({
+					message: `Validation failed for ${param.name ?? "positional parameter"}: ${JSON.stringify(result.issues, null, 2)}, arg: ${arg}, param: ${param}`,
+				}),
+			)
+		}
+		return Effect.succeed(result.value)
 	}
-	return Effect.succeed(result.value)
+
+	// Fallback for unknown type structure
+	return Effect.fail(
+		new TaskArgsParseError({
+			message: `Unknown schema type for ${param.name}`,
+		}),
+	)
 }
 
 // const resolveCliArg = <T = unknown>(

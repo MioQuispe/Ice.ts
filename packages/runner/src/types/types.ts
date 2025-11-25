@@ -49,8 +49,10 @@ export type ICEEnvironment = {
 	plugins: Array<ICEPlugin>
 }
 
+export type BuiltInTaskType = "string" | "number" | "boolean"
+
 export interface TaskParam<T = unknown, O extends boolean = boolean> {
-	type: StandardSchemaV1<T> // TODO: ship built in types like "string" | "number" etc.
+	type: StandardSchemaV1<T> | BuiltInTaskType
     name: string
 	description?: string
 	default?: T
@@ -60,7 +62,7 @@ export interface TaskParam<T = unknown, O extends boolean = boolean> {
 }
 
 export interface InputTaskParam<T = unknown> {
-	type: StandardSchemaV1<T>
+	type: StandardSchemaV1<T> | BuiltInTaskType
 	description?: string
 	default?: T
 	decode?: (value: string) => T
