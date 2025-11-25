@@ -1644,7 +1644,7 @@ export const installParams = {
 		isVariadic: false as const,
 		name: "mode",
 		aliases: ["m"],
-		parse: (value: string) => value as InstallModes,
+		decode: (value: string) => value as InstallModes,
 	},
 	args: {
 		// TODO: maybe not Uint8Array?
@@ -1656,7 +1656,7 @@ export const installParams = {
 		isVariadic: false as const,
 		name: "args",
 		aliases: ["a"],
-		parse: (value: string) => {
+		decode: (value: string) => {
 			// TODO: convert to candid string
 			return new Uint8Array(Buffer.from(value))
 		},
@@ -1670,7 +1670,7 @@ export const installParams = {
 		default: false as const,
 		name: "forceReinstall",
 		aliases: ["f"],
-		parse: (value: string) => !!value as unknown as boolean,
+		decode: (value: string) => !!value as unknown as boolean,
 	},
 	// TODO: provide defaults. just read from fs by canister name
 	// should we allow passing in wasm bytes?
@@ -1682,7 +1682,7 @@ export const installParams = {
 		isVariadic: false as const,
 		name: "wasm",
 		aliases: ["w"],
-		parse: (value: string) => value as string,
+		decode: (value: string) => value as string,
 	},
 	// TODO: provide defaults
 	candid: {
@@ -1694,7 +1694,7 @@ export const installParams = {
 		isVariadic: false as const,
 		name: "candid",
 		aliases: ["c"],
-		parse: (value: string) => value as string,
+		decode: (value: string) => value as string,
 	},
 	// TODO: provide defaults
 	canisterId: {
@@ -1706,7 +1706,7 @@ export const installParams = {
 		isVariadic: false as const,
 		name: "canisterId",
 		aliases: ["i"],
-		parse: (value: string) => value as string,
+		decode: (value: string) => value as string,
 	},
 }
 
@@ -1746,7 +1746,7 @@ export const installArgsParams = {
 	// 	isVariadic: false as const,
 	// 	name: "mode",
 	// 	aliases: ["m"],
-	// 	parse: (value: string) => value as InstallModes,
+	// 	decode: (value: string) => value as InstallModes,
 	// },
 }
 

@@ -6,9 +6,10 @@ import type { ActorSubclass } from "../types/actor.js"
 import type {
 	InputNamedParam,
 	InputPositionalParam,
+	InputTaskParam,
 	Task,
 } from "../types/types.js"
-import { NamedParam, PositionalParam } from "../types/types.js"
+import { NamedParam, PositionalParam, TaskParam } from "../types/types.js"
 import { patchGlobals } from "../utils/extension.js"
 import { customCanister } from "./custom.js"
 import type {
@@ -24,25 +25,32 @@ import {
 	TaskError,
 	defaultBuilderRuntime,
 } from "./lib.js"
-import { TaskParamsToArgs } from "../tasks/lib.js"
+import {
+	HasValue,
+	ParamsToArgs,
+	ResolvedParamsToArgs,
+	TaskParamsToArgs,
+} from "../tasks/lib.js"
 
-type MergeTaskParams<
-	T extends Task,
-	TP extends AddNameToParams<InputParams>,
-> = T & {
-	namedParams: ExtractNamedParams<TP>
-	positionalParams: ExtractPositionalParams<TP>
-	params: TP
-}
+// Helper to merge the new input params into the phantom type TP
+type MergeTaskInferenceParams<
+	TP extends Record<string, InputTaskParam>,
+	IP extends Record<string, InputTaskParam>,
+> = TP & AddNameToParams<IP>
 
-type ExtractNamedParams<TP extends TaskParams> = {
+type ExtractNamedParams<TP extends Record<string, TaskParam>> = {
 	[K in keyof TP]: Extract<TP[K], NamedParam>
 }
 
-export type ExtractPositionalParams<TP extends TaskParams> = Extract<
-	TP[keyof TP],
-	PositionalParam
->[]
+export type ExtractPositionalParams<TP extends Record<string, TaskParam>> =
+	Extract<TP[keyof TP], PositionalParam>[]
+
+// Utility to add the 'name' property to the inferred Input Params
+export type AddNameToParams<T extends Record<string, InputTaskParam>> = {
+	[K in keyof T]: T[K] & {
+		name: K
+	}
+}
 
 // export type ExtractArgsFromTaskParams<TP extends TaskParams> = {
 // 	// TODO: schema needs to be typed as StandardSchemaV1
@@ -63,23 +71,148 @@ export type ExtractPositionalParams<TP extends TaskParams> = Extract<
 // 	[K in keyof TP]: StandardSchemaV1.InferOutput<TP[K]["type"]>
 // }
 
-export type AddNameToParams<T extends InputParams> = {
-	[K in keyof T]: T[K] & {
-		name: K
-	}
-}
-
 type TaskParams = Record<string, NamedParam | PositionalParam>
-type InputParams = Record<string, InputPositionalParam | InputNamedParam>
+type InputParams = Record<string, InputTaskParam>
 
 type ValidateInputParams<T extends InputParams> = {
 	[K in keyof T]: T[K] extends infer U
-		? U extends InputPositionalParam
+		? U extends InputPositionalParam<infer TType>
 			? InputPositionalParam<StandardSchemaV1.InferOutput<U["type"]>>
-			: U extends InputNamedParam
+			: U extends InputNamedParam<infer TType>
 				? InputNamedParam<StandardSchemaV1.InferOutput<U["type"]>>
 				: never
 		: never
+}
+
+/**
+ * Normalizes InputTaskParam types to full TaskParam types, preserving literal isOptional types.
+ */
+type NormalizeInputParams<T extends Record<string, InputTaskParam>> = {
+	[K in keyof T]: T[K] extends InputNamedParam<infer U>
+		? NamedParam<U>
+		: T[K] extends InputPositionalParam<infer U>
+			? PositionalParam<U>
+			: never
+}
+
+/**
+ * Creates a default decoder function based on the schema type.
+ * Attempts to infer the appropriate decoder for common types (string, number, boolean).
+ * Falls back to identity function for unknown types.
+ */
+function createDefaultDecoder<T>(
+	schema: StandardSchemaV1<T>,
+): (value: string) => T {
+	// Try to detect type from schema structure
+	// Check if schema has a "~standard" property with type information
+	const schemaAny = schema as any
+	if (schemaAny?.["~standard"]?.types?.output) {
+		const outputType = schemaAny["~standard"].types.output
+		// Check if it's a boolean type
+		if (outputType === Boolean || outputType === "boolean") {
+			return (value: string) => {
+				const lower = value.toLowerCase().trim()
+				// Only treat as boolean if it's explicitly "true" or "false"
+				if (lower === "true" || lower === "1") {
+					return true as T
+				}
+				if (lower === "false" || lower === "0" || lower === "") {
+					return false as T
+				}
+				// If not a clear boolean, fall through to identity
+				return value as T
+			}
+		}
+		// Check if it's a number type
+		if (outputType === Number || outputType === "number") {
+			return (value: string) => {
+				const num = Number(value)
+				if (isNaN(num)) {
+					return value as T
+				}
+				return num as T
+			}
+		}
+		// Check if it's a string type
+		if (outputType === String || outputType === "string") {
+			return (value: string) => value as T
+		}
+	}
+	// Fallback: try to infer from schema string representation or use identity
+	// For arktype, we can check if the schema has a specific structure
+	if (typeof schema === "object" && schema !== null) {
+		// Check for arktype-specific patterns
+		const schemaStr = String(schema)
+		if (schemaStr.includes("boolean") || schemaStr.includes("Boolean")) {
+			return (value: string) => {
+				const lower = value.toLowerCase().trim()
+				if (lower === "true" || lower === "1") return true as T
+				if (lower === "false" || lower === "0" || lower === "")
+					return false as T
+				return value as T
+			}
+		}
+		if (schemaStr.includes("number") || schemaStr.includes("Number")) {
+			return (value: string) => {
+				const num = Number(value)
+				return (isNaN(num) ? value : num) as T
+			}
+		}
+	}
+	// Default: identity function
+	return (value: string) => value as T
+}
+
+/**
+ * Normalizes an InputTaskParam to a full TaskParam by applying defaults.
+ */
+function normalizeInputParam<T>(
+	input: InputTaskParam<T>,
+	name: string,
+): TaskParam<T> {
+	const result: TaskParam<T> = {
+		name,
+		type: input.type,
+		decode: input.decode ?? createDefaultDecoder(input.type),
+		isOptional: input.isOptional ?? false,
+		isVariadic: input.isVariadic ?? false,
+	}
+	if (input.description !== undefined) {
+		result.description = input.description
+	}
+	if (input.default !== undefined) {
+		result.default = input.default
+	}
+	return result
+}
+
+/**
+ * Normalizes an InputNamedParam to a full NamedParam.
+ */
+function normalizeInputNamedParam<T>(
+	input: InputNamedParam<T>,
+	name: string,
+): NamedParam<T> {
+	const base = normalizeInputParam(input, name)
+	return {
+		...base,
+		aliases: input.aliases ?? [],
+		isFlag: true,
+	}
+}
+
+/**
+ * Normalizes an InputPositionalParam to a full PositionalParam.
+ */
+function normalizeInputPositionalParam<T>(
+	input: InputPositionalParam<T>,
+	name: string,
+): PositionalParam<T> {
+	const base = normalizeInputParam(input, name)
+	return {
+		...base,
+		isFlag: false,
+	}
 }
 
 const matchParam = match
@@ -91,7 +224,7 @@ const matchParam = match
 			// type: StandardSchemaV1<T> // TODO: ship built in types like "string" | "number" etc.
 			// description?: string
 			// default?: T
-			// parse: (value: string) => T
+			// decode: (value: string) => T
 			// isOptional: boolean
 			// isVariadic: boolean
 			isFlag: "true",
@@ -116,7 +249,7 @@ const matchParam = match
 
 class TaskBuilder<
 	T extends Task,
-	TP extends AddNameToParams<InputParams>,
+	TP extends Record<string, TaskParam>,
 	TCtx extends TaskCtx = TaskCtx,
 > {
 	#task: T
@@ -124,41 +257,48 @@ class TaskBuilder<
 		this.#task = task
 	}
 
-	params<const IP extends ValidateInputParams<IP>>(inputParams: IP) {
-		const updatedParams = Record.map(
-			inputParams as InputParams,
-			(v, k) => ({
-				...v,
-				name: k,
-			}),
-		) as unknown as AddNameToParams<IP>
-		// TODO: use arktype?
+	// We use `const` generic to infer exact literals (e.g. isOptional: true)
+	params<const IP extends Record<string, InputTaskParam>>(inputParams: IP) {
 		const namedParams: Record<string, NamedParam> = {}
 		const positionalParams: Array<PositionalParam> = []
-		// TODO: use effect records
-		for (const kv of Object.entries(updatedParams)) {
-			const [name, param] = kv as [string, NamedParam | PositionalParam]
-			// TODO: nicer error?
+		const normalizedParams: Record<string, TaskParam> = {}
 
-			const result = matchParam(param)
-			if ("namedParam" in result) {
-				namedParams[name] = result.namedParam
-			} else if ("positionalParam" in result) {
-				positionalParams.push(result.positionalParam)
+		// Runtime normalization (creates the TaskParam objects)
+		for (const [name, inputParam] of Object.entries(inputParams)) {
+			// [Same normalization logic as before...]
+			const param = inputParam as InputTaskParam
+			if (param.isPositional === true) {
+				const normalized = normalizeInputPositionalParam(
+					param as InputPositionalParam,
+					name,
+				)
+				positionalParams.push(normalized)
+				normalizedParams[name] = normalized
 			} else {
-				// TODO: do this in a better way
-				throw new Error(`Invalid parameter type: ${param}`)
+				const normalized = normalizeInputNamedParam(
+					param as InputNamedParam,
+					name,
+				)
+				namedParams[name] = normalized
+				normalizedParams[name] = normalized
 			}
 		}
+
+		// Merge runtime params into the task
 		const updatedTask = {
 			...this.#task,
-			namedParams,
-			positionalParams,
-			params: updatedParams,
-		} satisfies Task as MergeTaskParams<T, typeof updatedParams>
+			namedParams: { ...this.#task.namedParams, ...namedParams },
+			positionalParams: [
+				...this.#task.positionalParams,
+				...positionalParams,
+			],
+			params: { ...this.#task.params, ...normalizedParams },
+		} satisfies Task
+
+		// Return new builder with merged Inference Types (TP & IP)
 		return new TaskBuilder(updatedTask) as unknown as TaskBuilder<
 			typeof updatedTask,
-			typeof updatedParams,
+			MergeTaskInferenceParams<TP, IP>,
 			TCtx
 		>
 	}
@@ -196,7 +336,7 @@ class TaskBuilder<
 
 	run<Output>(
 		fn: (env: {
-			args: TaskParamsToArgs<T>
+			args: ParamsToArgs<TP>
 			ctx: TCtx
 			deps: ExtractScopeSuccesses<T["dependencies"]> &
 				ExtractScopeSuccesses<T["dependsOn"]>
@@ -213,7 +353,7 @@ class TaskBuilder<
 							(dep) => dep.result,
 						)
 						const maybePromise = fn({
-							args: taskCtx.args as TaskParamsToArgs<T>,
+							args: taskCtx.args as ParamsToArgs<TP>,
 							ctx: taskCtx as TCtx,
 							deps: deps as ExtractScopeSuccesses<
 								T["dependencies"]
@@ -247,12 +387,13 @@ class TaskBuilder<
 		return new TaskBuilder(newTask) as TaskBuilder<typeof newTask, TP, TCtx>
 	}
 
-	make(): T {
-		// TODO: relink dependencies!!!
+	make(): T & { params: TP } {
+        const s = {} as TP
+		// TODO: relink dependencies?
 		return {
 			...this.#task,
 			id: Symbol("task"),
-		} satisfies Task
+		} satisfies Task as T & { params: TP }
 	}
 }
 
@@ -271,3 +412,69 @@ export function task(description = "") {
 	} satisfies Task
 	return new TaskBuilder<Task, {}, TaskCtx>(baseTask)
 }
+
+const testTaskParams = {
+	amount: {
+		type: type("string"),
+		description: "The name of the test",
+		isOptional: true,
+		default: "test",
+		// decode: (value: string) => value,
+		// // isVariadic: true,
+		// // isFlag: true,
+		// aliases: [],
+	},
+}
+
+type TestTaskParams = AddNameToParams<
+	NormalizeInputParams<typeof testTaskParams>
+>
+const t = {} as TestTaskParams
+t.amount
+
+// t.name
+
+const testTask = task("test")
+	.params({
+		name: {
+			type: type("string"),
+			description: "The name of the test",
+			isOptional: false,
+			// default: "test",
+			decode: (value: string) => value,
+			// isVariadic: true,
+			// isFlag: true,
+			// aliases: [],
+		},
+	})
+	.run(async ({ ctx, args }) => {
+		console.log(args)
+		args.name
+		args.name.length
+	})
+	.make()
+
+testTask
+
+type NormalizedParams = NormalizeInputParams<typeof testTaskParams>
+const n = {} as NormalizedParams
+
+n.amount.isOptional
+
+type TestParam = HasValue<(typeof testTask)["params"]["name"]>
+type TestExtractParams = ParamsToArgs<NonNullable<(typeof testTask)["params"]>>
+type TestExtractParams2 = ParamsToArgs<NonNullable<(typeof testTask)["params"]>>
+const t1 = {} as TestExtractParams
+const t2 = {} as TestExtractParams2
+
+// const t2: {
+//     [key: string]: unknown;
+//     name: string | undefined;
+// }
+t1.name // name?: string | undefined
+
+// const t2: {
+//     [key: string]: unknown;
+//     name: string | undefined;
+// }
+t2.name // name?: string | undefined

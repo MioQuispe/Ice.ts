@@ -126,7 +126,7 @@ export const resolveCliArgsMap = (
 			}
 			const resolvedArg = yield* resolveArg(
 				param,
-				arg ? param.parse(arg) : undefined,
+				arg ? param.decode(arg) : undefined,
 			)
 			argsMap[paramName] = resolvedArg
 		}
@@ -141,7 +141,7 @@ export const resolveCliArgsMap = (
 			}
 			const resolvedArg = yield* resolveArg(
 				param,
-				arg ? param.parse(arg) : undefined,
+				arg ? param.decode(arg) : undefined,
 			)
 			argsMap[param.name] = resolvedArg
 		}

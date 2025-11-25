@@ -49,35 +49,40 @@ export type ICEEnvironment = {
 	plugins: Array<ICEPlugin>
 }
 
-export interface TaskParam<T = unknown> {
+export interface TaskParam<T = unknown, O extends boolean = boolean> {
 	type: StandardSchemaV1<T> // TODO: ship built in types like "string" | "number" etc.
+    name: string
 	description?: string
 	default?: T
-	parse: (value: string) => T
-	isOptional: boolean
-	isVariadic: boolean
-	// isFlag: boolean
+	decode: (value: string) => T // supply default codec if not provided
+	isOptional: O // preserves literal types
+	isVariadic: boolean // false by default
 }
 
-export interface InputNamedParam<T = unknown> extends TaskParam<T> {
+export interface InputTaskParam<T = unknown> {
+	type: StandardSchemaV1<T>
+	description?: string
+	default?: T
+	decode?: (value: string) => T
+	isOptional?: boolean
+	isVariadic?: boolean
+	isPositional?: boolean
+}
+
+export interface InputNamedParam<T = unknown> extends InputTaskParam<T> {
 	aliases?: Array<string>
-	isFlag: true
-	// TODO: means it shouldnt appear in the help. not sure if we need this
-	// hidden: boolean;
 }
 
-export interface InputPositionalParam<T = unknown> extends TaskParam<T> {
-	isFlag: false
+export interface InputPositionalParam<T = unknown> extends InputTaskParam<T> {
+	// Marker interface
 }
 
 export interface NamedParam<T = unknown> extends TaskParam<T> {
-	name: string
 	aliases?: Array<string>
 	isFlag: true
 }
 
 export interface PositionalParam<T = unknown> extends TaskParam<T> {
-	name: string
 	isFlag: false
 }
 
@@ -102,7 +107,7 @@ export type Task<
 	dependencies: P
 	namedParams: Record<string, NamedParam>
 	positionalParams: Array<PositionalParam>
-	params: Record<string, NamedParam | PositionalParam>
+	params: Record<string, TaskParam>
 }
 
 export type CachedTask<

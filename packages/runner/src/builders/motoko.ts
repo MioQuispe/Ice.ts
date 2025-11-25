@@ -94,7 +94,7 @@ export const motokoDeployParams = deployParams
 // 		isVariadic: false as const,
 // 		name: "mode",
 // 		aliases: ["m"],
-// 		parse: (value: string) => value as InstallModes,
+// 		decode: (value: string) => value as InstallModes,
 // 	},
 // 	args: {
 // 		// TODO: maybe not Uint8Array?
@@ -106,7 +106,7 @@ export const motokoDeployParams = deployParams
 // 		isVariadic: false as const,
 // 		name: "args",
 // 		aliases: ["a"],
-// 		parse: (value: string) => {
+// 		decode: (value: string) => {
 // 			// TODO: convert to candid string
 // 			return new Uint8Array(Buffer.from(value))
 // 		},
@@ -121,7 +121,7 @@ export const motokoDeployParams = deployParams
 // 		isVariadic: false as const,
 // 		name: "wasm",
 // 		aliases: ["w"],
-// 		parse: (value: string) => value as string,
+// 		decode: (value: string) => value as string,
 // 	},
 // 	// TODO: provide defaults
 // 	candid: {
@@ -133,7 +133,7 @@ export const motokoDeployParams = deployParams
 // 		isVariadic: false as const,
 // 		name: "candid",
 // 		aliases: ["c"],
-// 		parse: (value: string) => value as string,
+// 		decode: (value: string) => value as string,
 // 	},
 // 	// TODO: provide defaults
 // 	canisterId: {
@@ -144,7 +144,7 @@ export const motokoDeployParams = deployParams
 // 		isVariadic: false as const,
 // 		name: "canisterId",
 // 		aliases: ["i"],
-// 		parse: (value: string) => value as string,
+// 		decode: (value: string) => value as string,
 // 	},
 // }
 
@@ -321,7 +321,7 @@ const motokoBindingsParams = {
 		description: "Path to the candid file",
 		name: "candid",
 		isFlag: true as const,
-		parse: (value: string) => value,
+		decode: (value: string) => value,
 		isOptional: false as const,
 		isVariadic: false as const,
 	},

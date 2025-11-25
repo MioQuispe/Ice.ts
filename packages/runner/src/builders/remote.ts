@@ -59,7 +59,7 @@ export const remoteDeployParams = {
 		isVariadic: false as const,
 		name: "mode",
 		aliases: ["m"],
-		parse: (value: string) => value as InstallModes,
+		decode: (value: string) => value as InstallModes,
 	},
 }
 
@@ -222,7 +222,7 @@ const remoteBindingsParams = {
 		description: "Path to the candid file",
 		name: "candid",
 		isFlag: true as const,
-		parse: (value: string) => value,
+		decode: (value: string) => value,
 		isOptional: false as const,
 		isVariadic: false as const,
 	},

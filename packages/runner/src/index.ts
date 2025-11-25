@@ -40,6 +40,8 @@ export type { TaskCtxExtension } from "./services/taskRuntime.js"
 export { PICReplica } from "./services/pic/pic.js"
 export { ICReplica } from "./services/ic-replica.js"
 
+export { type StandardSchemaV1 } from "@standard-schema/spec"
+
 // Export additional types for user configs
 export type {
 	ICEConfig,
@@ -61,13 +63,13 @@ type SafeTask = {
 	_tag: "task"
 	id: symbol
 	// We type effect as Function or generic to avoid TaskCtx dependency
-	effect: Function 
+	effect: Function
 	description: string
 	tags: Array<string | symbol>
 	dependsOn: Record<string, SafeTask>
 	dependencies: Record<string, SafeTask>
-    // Include other properties if needed for plugin logic
-    [key: string]: any
+	// Include other properties if needed for plugin logic
+	[key: string]: any
 }
 
 type SafeScope = {
@@ -75,20 +77,20 @@ type SafeScope = {
 	id: symbol
 	description: string
 	children: Record<string, SafeTask | SafeScope>
-    [key: string]: any
+	[key: string]: any
 }
 
 type SafeTaskTreeNode = SafeTask | SafeScope
 type SafeTaskTree = Record<string, SafeTaskTreeNode>
 
 // 2. Define SafeICEPlugin using SafeTaskTree
-type SafeICEPlugin<C> = (
-	env: {
-		config: C
-		tasks: SafeTaskTree
-		args: ICEGlobalArgs
-	},
-) => Promise<{ config?: Partial<C>; tasks?: SafeTaskTree }> | { config?: Partial<C>; tasks?: SafeTaskTree }
+type SafeICEPlugin<C> = (env: {
+	config: C
+	tasks: SafeTaskTree
+	args: ICEGlobalArgs
+}) =>
+	| Promise<{ config?: Partial<C>; tasks?: SafeTaskTree }>
+	| { config?: Partial<C>; tasks?: SafeTaskTree }
 
 export class IceBuilder<C extends Partial<ICEConfig>> {
 	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
@@ -99,14 +101,12 @@ export class IceBuilder<C extends Partial<ICEConfig>> {
 	}
 
 	// 3. Use SafeICEPlugin here
-	extendEnv(
-		plugin: SafeICEPlugin<C>,
-	): IceBuilder<C> {
+	extendEnv(plugin: SafeICEPlugin<C>): IceBuilder<C> {
 		this.#plugins.push(plugin)
 		return this
 	}
 
-    // 4. Use any[] for plugins in return type to ensure InferIceConfig doesn't trip
+	// 4. Use any[] for plugins in return type to ensure InferIceConfig doesn't trip
 	make(): (
 		globalArgs: ICEGlobalArgs,
 	) => Promise<{ config: C; plugins: SafeICEPlugin<C>[] }> {
@@ -124,9 +124,6 @@ export class IceBuilder<C extends Partial<ICEConfig>> {
 		}
 	}
 }
-
-
-
 
 export const Ice = <C extends Partial<ICEConfig>>(
 	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,

@@ -246,7 +246,7 @@ const rustBindingsParams = {
 		description: "Path to the candid file",
 		name: "candid",
 		isFlag: true as const,
-		parse: (value: string) => value,
+		decode: (value: string) => value,
 		isOptional: false as const,
 		isVariadic: false as const,
 	},

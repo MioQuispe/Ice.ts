@@ -27,6 +27,7 @@ async function main() {
 						"@dfinity/agent",
 						"@dfinity/principal",
 						"@dfinity/candid",
+                        "@standard-schema/spec",
 						// add others here if they leak into TaskCtx / ICEConfig / whatever
 					],
 					importedLibraries: [],

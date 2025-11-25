@@ -21,6 +21,7 @@ import { TaskRegistry } from "../services/taskRegistry.js"
 import type {
 	CachedTask,
 	ICEUser,
+	InputTaskParam,
 	NamedParam,
 	PositionalParam,
 	Scope,
@@ -29,25 +30,35 @@ import type {
 	TaskTree,
 	TaskTreeNode,
 } from "../types/types.js"
-import { BaseTaskCtx, type TaskCtx, TaskRuntime } from "../services/taskRuntime.js"
+import {
+	BaseTaskCtx,
+	type TaskCtx,
+	TaskRuntime,
+} from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
 import { hashJson, TaskCancelled, isTaskCancelled } from "../builders/lib.js"
 import { FiberFailure } from "effect/Runtime"
 import { Failure, isFailure } from "effect/Exit"
-
 export type ParamsToArgs<
-	Params extends Record<string, NamedParam | PositionalParam>,
+	Params extends Record<string, InputTaskParam | TaskParam>,
 > = [keyof Params] extends [never]
 	? Record<string, never>
 	: {
-			[K in keyof Params as Params[K] extends { isOptional: false }
+			[K in keyof Params as HasValue<Params[K]> extends true
 				? K
 				: never]: ParamOutput<Params[K]>
 		} & {
-			[K in keyof Params as Params[K] extends { isOptional: false }
+			[K in keyof Params as HasValue<Params[K]> extends true
 				? never
 				: K]?: ParamOutput<Params[K]>
 		}
+
+export type HasValue<P> =
+	HasDefault<P> extends true
+		? true
+		: P extends { isOptional: true }
+			? false // explicitly optional
+			: true // isOptional is false, boolean (which includes false), or missing (defaults to false, so required)
 
 // Resolved args for use inside task effects: defaults are applied at runtime,
 // so any param with a default is treated as present and non-undefined.
@@ -61,17 +72,15 @@ type ResolvedParamOutput<P> =
 			: ParamOutput<P> | undefined
 
 type ResolvedRequiredKeys<P> = {
-	[K in keyof P]: P[K] extends { isOptional: false }
+	[K in keyof P]: HasValue<P[K]> extends true
 		? K
-		: HasDefault<P[K]> extends true
-			? K
-			: never
+		: never
 }[keyof P]
 
 type ResolvedOptionalKeys<P> = Exclude<keyof P, ResolvedRequiredKeys<P>>
 
 export type ResolvedParamsToArgs<
-	Params extends Record<string, NamedParam | PositionalParam>,
+	Params extends Record<string, TaskParam>,
 > = [keyof Params] extends [never]
 	? Record<string, never>
 	: {
@@ -81,7 +90,7 @@ export type ResolvedParamsToArgs<
 		}
 
 // value type for a TaskParam
-type ParamOutput<P> = P extends TaskParam
+type ParamOutput<P> = P extends InputTaskParam | TaskParam
 	? StandardSchemaV1.InferOutput<P["type"]>
 	: never
 
@@ -91,13 +100,6 @@ type RequiredKeys<P> = {
 }[keyof P]
 
 type OptionalKeys<P> = Exclude<keyof P, RequiredKeys<P>>
-
-// build args; empty params => forbid any keys via Record<string, never>
-type BuildArgs<P extends object> = [keyof P] extends [never]
-	? Record<string, never>
-	: { [K in RequiredKeys<P>]: ParamOutput<P[K]> } & {
-			[K in OptionalKeys<P>]?: ParamOutput<P[K]>
-		}
 
 // Final: exact args for a Task's params
 export type TaskParamsToArgs<T extends Task> = ParamsToArgs<
@@ -169,12 +171,12 @@ export const collectDependencies = (
 export class TaskArgsParseError extends Data.TaggedError("TaskArgsParseError")<{
 	message: string
 	arg?: unknown
-	param?: PositionalParam<unknown> | NamedParam<unknown>
+	param?: TaskParam<unknown>
 }> {}
 
 // Helper function to validate a single parameter
 export const resolveArg = <T = unknown>(
-	param: PositionalParam<T> | NamedParam<T>, // Adjust type as per your actual schema structure
+	param: TaskParam<T>, // Adjust type as per your actual schema structure
 	arg: unknown | undefined,
 ): Effect.Effect<T | undefined, TaskArgsParseError> => {
 	// TODO: arg might be undefined
@@ -616,14 +618,12 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 		// unknown
 		deferredMap.set(task.id, deferred)
 	}
-    const { taskCtx: baseTaskCtx } = yield* TaskRuntime
+	const { taskCtx: baseTaskCtx } = yield* TaskRuntime
 
 	const taskEffects = EffectArray.map(tasks, (task) =>
 		Effect.fn("task_execute_effect")(function* () {
 			const taskPath = yield* getTaskPathById(task.id)
-			yield* Effect.logDebug(
-				`[TASK_START] Task entered: ${taskPath}`,
-			)
+			yield* Effect.logDebug(`[TASK_START] Task entered: ${taskPath}`)
 			yield* Effect.annotateCurrentSpan({
 				taskPath,
 				dependencies: Object.keys(task.dependencies),
@@ -678,7 +678,7 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					result: unknown
 				}
 			> = {}
-            yield* Effect.logDebug("resolving dependencies")
+			yield* Effect.logDebug("resolving dependencies")
 			for (const [dependencyName, providedTask] of Object.entries(
 				task.dependencies as Record<string, Task>,
 			)) {
@@ -1009,10 +1009,7 @@ export const filterNodes = (
 type TaskFullName = string
 // TODO: figure out if multiple tasks are needed
 
-export const getNodeByPath = (
-	taskCtx: TaskCtx,
-	taskPathString: TaskFullName,
-) =>
+export const getNodeByPath = (taskCtx: TaskCtx, taskPathString: TaskFullName) =>
 	Effect.gen(function* () {
 		const taskPath: string[] = taskPathString.split(":")
 		const { taskTree } = taskCtx
