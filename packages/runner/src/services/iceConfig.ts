@@ -22,14 +22,14 @@ const createService = (globalArgs: {
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	origin: "extension" | "cli"
+	config?: string
 }) =>
 	Effect.gen(function* () {
 		// TODO: service?
 		const path = yield* Path.Path
 		const fs = yield* FileSystem.FileSystem
 		const appDirectory = yield* fs.realPath(process.cwd())
-		// TODO: make this configurable if needed
-		const configPath = "ice.config.ts"
+		const configPath = globalArgs.config ?? "ice.config.ts"
 		const startTime = performance.now()
 		yield* Effect.logDebug("Loading config...", { startTime })
 		const { path: iceDirPath } = yield* IceDir
@@ -127,6 +127,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			background: boolean
 			policy: "reuse" | "restart"
 			origin: "extension" | "cli"
+			config?: string
 		}
 	}
 >() {
@@ -135,6 +136,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 		background: boolean
 		policy: "reuse" | "restart"
 		origin: "extension" | "cli"
+		config?: string
 	}) => Layer.effect(ICEConfigService, createService(globalArgs))
 
 	static readonly Test = (
@@ -143,6 +145,7 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 			background: boolean
 			policy: "reuse" | "restart"
 			origin: "extension" | "cli"
+			config?: string
 		},
 		tasks: TaskTree,
 		config: ICEConfig,

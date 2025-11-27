@@ -97,9 +97,10 @@ export type CustomCanisterConfig = {
 
 export const deployParams = {
 	mode: {
+        // TODO: doesnt become optional unless default is removed
+        // fix the type of runTask
 		type: InstallModes.or("'auto'"),
 		description: "The mode to install the canister in",
-		// TODO: add "auto"
 		default: "auto" as const,
 		isFlag: true as const,
 		isOptional: true as const,
@@ -114,7 +115,7 @@ export const deployParams = {
 		isFlag: true as const,
 		isOptional: true as const,
 		isVariadic: false as const,
-		default: false as const,
+		// default: false as const,
 		name: "forceReinstall",
 		aliases: ["f"],
 		decode: (value: string) => !!value as unknown as boolean,
@@ -298,7 +299,7 @@ export const makeCustomDeployTask = <_SERVICE>(): DeployTask<_SERVICE> => {
 								mode: taskArgs.mode,
 								canisterId,
 								wasm: wasmPath,
-								forceReinstall: taskArgs.forceReinstall,
+								forceReinstall: taskArgs.forceReinstall ?? false,
 							}),
 						catch: (error) => {
 							return new TaskError({

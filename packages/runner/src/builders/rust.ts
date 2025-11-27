@@ -216,7 +216,7 @@ export const makeRustDeployTask = <_SERVICE>(
 								canisterId,
 								candid: candidPath,
 								wasm: wasmPath,
-								forceReinstall: taskArgs.forceReinstall,
+								forceReinstall: taskArgs.forceReinstall ?? false,
 							}),
 						catch: (error) => {
 							return new TaskError({

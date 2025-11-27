@@ -96,6 +96,7 @@ export const makeTestEnvEffect = (
 	)
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
+        Layer.provide(NodeContext.layer),
 	)
 
 	// TODO: find out cleaner way to do this

@@ -65,7 +65,7 @@ export type { Identity } from "@dfinity/agent"
 //     }
 // }
 
-export const Ice = <C extends Partial<ICEConfig>>(
+export const Ice = <C extends ICEConfig>(
 	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
 ) => {
 	return async (globalArgs: ICEGlobalArgs) => {

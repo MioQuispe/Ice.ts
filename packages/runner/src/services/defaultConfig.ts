@@ -1,8 +1,13 @@
 import { Context, Effect, Layer, Option } from "effect"
-import { Ids } from "../ids.js"
+import { identityToPemEd25519, Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
 import { Replica, ReplicaServiceClass } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
+import { Path, FileSystem } from "@effect/platform"
+import { Ed25519KeyIdentity } from "@dfinity/identity"
+import { Secp256k1KeyIdentity } from "@dfinity/identity-secp256k1"
+import * as os from "node:os"
+import { principalToAccountId } from "../utils/utils.js"
 
 // const DfxReplicaService = DfxReplica.pipe(
 // 	Layer.provide(NodeContext.layer),
@@ -14,10 +19,10 @@ export type InitializedDefaultConfig = {
 		default: ICEUser
 	}
 	roles: {
-		deployer: ICEUser
-		minter: ICEUser
-		controller: ICEUser
-		treasury: ICEUser
+		deployer: string
+		minter: string
+		controller: string
+		treasury: string
 	}
 	replica: ReplicaServiceClass
 }
@@ -45,60 +50,75 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 			const defaultReplica = yield* Replica
 			// const icReplica = yield* ICReplica
 			const startIdentity = performance.now()
-			const defaultUser = yield* Effect.tryPromise({
-				// TODO: support identity.json
-				// TODO: very slow if no name passed in (whoami)
-				try: () => Ids.fromDfx("default"),
-				catch: () =>
-					new TaskRuntimeError({
-						message: "Failed to get default user from dfx",
-					}),
-			})
-			// .pipe(
-			// 	// Effect.mapError
-			// 	Effect.option,
-			// )
-			// Option.match
-			// const defaultUser = Option.match(maybeDefaultUser, {
-			// 	{
-			// 		onSome: (user) => user,
-			//         // TODO: create default user?
-			// 		onNone: () => new TaskRuntimeError({
-			// 			message: "Default user not found",
+			// const defaultUser = yield* Effect.tryPromise({
+			// 	try: () => Ids.fromDfx("default"),
+			// 	catch: () =>
+			// 		new TaskRuntimeError({
+			// 			message: "Failed to get default user from dfx",
 			// 		}),
-			// 	},
-			// )
-			// TODO: handle case where identity is not found?
+			// })
+			const fs = yield* FileSystem.FileSystem
+			const path = yield* Path.Path
+			const homeDir = os.homedir()
+
+			// Path: ~/.config/ice/identities/default.json
+			const identityDir = path.join(
+				homeDir,
+				".config",
+				"ice",
+				"identities",
+			)
+
+			const identityPath = path.join(identityDir, "default.pem")
+
+			let defaultIdentity: Ed25519KeyIdentity
+
+			if (yield* fs.exists(identityPath)) {
+				const content = yield* fs.readFileString(identityPath)
+				defaultIdentity = yield* Effect.tryPromise({
+					try: async () => {
+						const { identity } = await Ids.fromPem(content)
+						return identity as Ed25519KeyIdentity
+					},
+					catch: (error) => {
+						return new TaskRuntimeError({
+							message: `Failed to parse default identity: ${error}`,
+						})
+					},
+				})
+			} else {
+				const identity = Ed25519KeyIdentity.generate()
+				const pem = identityToPemEd25519(identity)
+				yield* fs.makeDirectory(identityDir, { recursive: true })
+				yield* fs.writeFileString(identityPath, pem)
+				yield* fs.chmod(identityPath, 0o600)
+				yield* Effect.logInfo(
+					`No default identity found, generated new one and saved to ${identityPath}`,
+				)
+				defaultIdentity = identity
+			}
+
+			const principal = defaultIdentity.getPrincipal().toText()
+			const accountId = principalToAccountId(principal)
+
+			const defaultUser = {
+				identity: defaultIdentity,
+				principal,
+				accountId,
+			}
+
 			yield* Effect.logDebug(
 				`[TIMING] DefaultConfig identity loaded in ${performance.now() - startIdentity}ms`,
 			)
 
-			// TODO: dont export all networks. just the current network.
-			const defaultNetworks = {
-				local: {
-					replica: defaultReplica,
-					host: defaultReplica.host,
-					port: defaultReplica.port,
-				},
-				staging: {
-					replica: defaultReplica,
-					host: defaultReplica.host,
-					port: defaultReplica.port,
-				},
-				ic: {
-					replica: defaultReplica,
-					host: defaultReplica.host,
-					port: defaultReplica.port,
-				},
-			}
 			const defaultUsers = {
 				default: defaultUser,
 			}
 			const defaultRoles = {
-				deployer: defaultUsers.default,
-				minter: defaultUsers.default,
-				controller: defaultUsers.default,
-				treasury: defaultUsers.default,
+				deployer: "default",
+				minter: "default",
+				controller: "default",
+				treasury: "default",
 			}
 
 			yield* Effect.logDebug(
@@ -109,8 +129,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 				network: "local",
 				users: defaultUsers,
 				roles: defaultRoles,
-				networks: defaultNetworks,
-                replica: defaultReplica,
+				replica: defaultReplica,
 			}
 		}),
 	)

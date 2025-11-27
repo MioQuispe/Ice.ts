@@ -31,6 +31,36 @@ const parseEd25519PrivateKey = (pem: string) => {
 	return Ed25519KeyIdentity.fromSecretKey(new Uint8Array(secretKey.buffer))
 }
 
+export const identityToPemEd25519 = (identity: Ed25519KeyIdentity): string => {
+	// 1. Extract the Raw Keys
+	// identity.toJSON() returns [publicKeyDer, privateKeyHex]
+	const [_, privateKeyHex] = identity.toJSON()
+	const publicKeyHex = Buffer.from(identity.getPublicKey().toRaw()).toString(
+		"hex",
+	)
+	// 2. Define the ASN.1 Constants (The reverse of what you strip)
+	// Sequence(83) + Version(1) + AlgoID(Ed25519) + OctetString(34) + OctetString(32)
+	const PREFIX = "3053020101300506032b657004220420"
+	// Context(1) + BitString(33) + Padding(0)
+	const INFIX = "a123032100"
+
+	// 3. Construct the DER Hex
+	// Structure: Prefix + PrivateKey(32b) + Infix + PublicKey(32b)
+	const derHex = PREFIX + privateKeyHex + INFIX + publicKeyHex
+
+	// 4. Convert to Base64
+	const base64Content = Buffer.from(derHex, "hex").toString("base64")
+
+	// 5. Format as PEM (Wrap at 64 chars)
+	const pemBody = base64Content.match(/.{1,64}/g)?.join("\n")
+
+	return [
+		"-----BEGIN PRIVATE KEY-----",
+		pemBody,
+		"-----END PRIVATE KEY-----",
+	].join("\n")
+}
+
 const parseSecp256k1PrivateKey = (pem: string) => {
 	try {
 		// Parse the EC private key using Node.js crypto

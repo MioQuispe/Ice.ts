@@ -55,7 +55,7 @@ describe("PocketIC persistence", () => {
 
 		const { canisterId: canisterIdA } = await runtimeA.runPromise(
 			Effect.gen(function* () {
-				const config = {} satisfies Partial<ICEConfig>
+				const config = {} satisfies ICEConfig
 				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
 				const KVStorageLayer = Layer.succeed(
 					KeyValueStore.KeyValueStore,
@@ -205,7 +205,7 @@ describe("PocketIC persistence", () => {
 		// deploy
 		await runtimeA.runPromise(
 			Effect.gen(function* () {
-				const config = {} satisfies Partial<ICEConfig>
+				const config = {} satisfies ICEConfig
 				const KVStorageImpl = yield* KeyValueStore.KeyValueStore
 				const KVStorageLayer = Layer.succeed(
 					KeyValueStore.KeyValueStore,

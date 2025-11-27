@@ -38,8 +38,6 @@ export type CanisterInitArgs = [
 	}>,
 ]
 
-type Networks = "local" | "ic" | "staging"
-
 const candid = path.resolve(
 	__dirname,
 	"./internet-identity/internet_identity.did",

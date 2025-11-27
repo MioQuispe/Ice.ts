@@ -305,7 +305,7 @@ const UI = ({
 	config,
 	taskTree,
 }: {
-	config: Partial<ICEConfig>
+	config: ICEConfig
 	taskTree: TaskTree
 }) => {
 	const { logs } = useICE()
@@ -335,7 +335,7 @@ const CliApp = ({
 	config,
 	taskTree,
 }: {
-	config: Partial<ICEConfig>
+	config: ICEConfig
 	taskTree: TaskTree
 }) => {
 	const focusManager = useFocusManager()
@@ -375,7 +375,7 @@ export const uiTask = ({
 	config,
 	taskTree,
 }: {
-	config: Partial<ICEConfig>
+	config: ICEConfig
 	taskTree: TaskTree
 }) =>
 	Effect.gen(function* () {

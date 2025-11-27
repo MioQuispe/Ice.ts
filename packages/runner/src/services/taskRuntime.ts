@@ -13,13 +13,7 @@ import {
 	Option,
 	Scope,
 } from "effect"
-import type {
-	ICENetworks,
-	ICERoles,
-	ICEUser,
-	ICEUsers,
-	Task,
-} from "../types/types.js"
+import type { ICEUser, Task } from "../types/types.js"
 import { TaskParamsToArgs, TaskSuccess } from "../tasks/lib.js"
 // import { executeTasks } from "../tasks/execute"
 import { ProgressUpdate } from "../tasks/lib.js"
@@ -64,24 +58,6 @@ import { PromptsService } from "./prompts.js"
 import { ConfirmOptions } from "@clack/prompts"
 import { ICEConfig } from "../types/types.js"
 
-// export type DefaultICEConfig = {
-// 	readonly users: {
-// 		[name: string]: ICEUser
-// 	}
-// 	readonly roles: {
-// 		deployer: string
-// 		minter: string
-// 		controller: string
-// 		treasury: string
-// 		[name: string]: string
-// 	}
-// 	networks: {
-// 		[key: string]: {
-// 			replica: ReplicaServiceClass
-// 		}
-// 	}
-// }
-
 export type DefaultICEConfig = {
 	network: string
 	users: {
@@ -99,21 +75,16 @@ export type DefaultICEConfig = {
 
 export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 
-export type InitializedICEConfig<I extends Partial<ICEConfig>> = {
+export type InitializedICEConfig<I extends ICEConfig> = {
 	users: I["users"]
 	roles: {
 		[key in keyof I["roles"]]: ICEUser
-	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
 	}
 }
 
 export type TaskCtxBase<
 	A extends Record<string, unknown>,
-	I extends Partial<ICEConfig>,
+	I extends ICEConfig,
 > = InitializedICEConfig<I> & {
 	readonly taskTree: TaskTree
 	readonly runTask: {
@@ -270,43 +241,41 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				})
 				const { path: iceDirPath } = yield* IceDir
 
-				const startICEConfig = performance.now()
 				const {
 					config,
 					globalArgs,
 					tasks: taskTree,
 				} = yield* ICEConfigService
 
-				const currentReplica = config?.replica ?? defaultConfig.replica
-				if (!currentReplica) {
+				const replica = config?.replica ?? defaultConfig.replica
+				if (!replica) {
 					return yield* Effect.fail(
 						new TaskRuntimeError({
-							message: `No replica found for network: ${config.network}`,
+							message: `No replica found`,
 						}),
 					)
 				}
-				const currentUsers = config?.users ?? {}
-				// TODO: merge with defaultConfig.roles
-				const initializedRoles: Record<string, ICEUser> = {}
-				for (const [name, user] of Object.entries(
-					config?.roles ?? {},
-				)) {
-					if (!currentUsers[user]) {
+				const currentUsers = config?.users ?? defaultConfig.users
+				const currentRoles = config?.roles ?? defaultConfig.roles
+				let resolvedRoles = {} as {
+					deployer: ICEUser
+					minter: ICEUser
+					controller: ICEUser
+					treasury: ICEUser
+					[key: string]: ICEUser
+				}
+				for (const [name, user] of Object.entries(currentRoles)) {
+					if (!(user in currentUsers)) {
 						return yield* Effect.fail(
 							new TaskRuntimeError({
-								message: `User ${user} not found in current users`,
+								message: `User ${user} not found in current users: ${currentUsers}`,
 							}),
 						)
 					}
-					initializedRoles[name] = currentUsers[user]
+					resolvedRoles[name] =
+						currentUsers[user as keyof typeof currentUsers]
 				}
 				const runtimeScope = yield* Scope.make()
-				const resolvedRoles: {
-					[key: string]: ICEUser
-				} & InitializedDefaultConfig["roles"] = {
-					...defaultConfig.roles,
-					...initializedRoles,
-				}
 
 				const resolvedUsers = {
 					...defaultConfig.users,
@@ -356,15 +325,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					...globalArgs,
 					iceDirPath: iceDirPath,
 				}
-
-				const defaultReplica = yield* Replica
-                // TODO: remove this
-                const resolvedNetworks = {
-                    [defaultConfig.network]: {
-                        replica: defaultConfig.replica,
-                    }
-                }
-				const replica = config?.replica ?? defaultConfig.replica
 
 				const ReplicaService = Layer.succeed(Replica, replica)
 				const DefaultConfigService = Layer.succeed(
@@ -423,7 +383,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					replica,
 					taskTree,
 					network: config?.network ?? defaultConfig.network,
-					networks: resolvedNetworks,
 					users: resolvedUsers,
 					roles: resolvedRoles,
 					appDir,
@@ -482,8 +441,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				const warmup = Effect.gen(function* () {
 					yield* Effect.succeed(true)
 				}).pipe(Effect.provide(ChildTaskRuntimeLayer), Effect.scoped)
-				// const startTimeMs = performance.now()
-				// console.log(`Warming up task runtime... at ${startTimeMs}ms`)
 				const startWarmup = performance.now()
 				yield* Effect.tryPromise({
 					try: () => taskRuntime.runPromise(warmup),
@@ -493,7 +450,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				yield* Effect.logDebug(
 					`[TIMING] TaskRuntime warmup finished in ${performance.now() - startWarmup}ms`,
 				)
-				// console.log(`Warming up task runtime completed at ${performance.now() - startTimeMs}ms`)
 
 				yield* Effect.logDebug(
 					`[TIMING] TaskRuntime.Live finished in ${performance.now() - startTaskRuntime}ms`,

@@ -13,8 +13,6 @@ export type ReplicaConfig = {
 	type: "pocketic" | "dfx"
 }
 
-// const t = Identity
-
 export type ICEUser = {
 	identity: Identity
 	principal: string
@@ -26,22 +24,14 @@ export type ICEUsers = Record<string, ICEUser>
 
 export type ICERoles<U extends ICEUsers = ICEUsers> = Record<string, keyof U> // or string, depending on how you normalize it
 
-export type ICENetworks = {
-	[key: string]: {
-		replica: ReplicaServiceClass
-	}
-}
-
 export type ICEConfig<
 	U extends ICEUsers = ICEUsers,
 	R extends ICERoles<U> = ICERoles<U>,
-	N extends ICENetworks = ICENetworks,
 > = {
 	network: string
-	replica: ReplicaServiceClass
+	replica?: ReplicaServiceClass
 	users?: U
 	roles?: R
-	networks?: N
 }
 
 export type ICEEnvironment = {

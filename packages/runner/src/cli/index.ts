@@ -149,19 +149,21 @@ export const resolveCliArgsMap = (
 		return argsMap
 	})
 
-export const CliArgs = type({
+export const CliGlobalArgs = type({
 	logLevel: "'debug' | 'info' | 'error'",
 	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
 		(str) => str === "1" || str === "true" || str === "" || str === true,
 	),
 	policy: "'reuse' | 'restart'",
 	origin: "'extension' | 'cli'",
+	"config?": "string",
 }) satisfies StandardSchemaV1<Record<string, unknown>>
-export type CliArgs = {
+export type CliGlobalArgs = {
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	policy: "reuse" | "restart"
 	origin: "extension" | "cli"
+	config?: string
 }
 
 export const logLevelMap = {
@@ -170,16 +172,8 @@ export const logLevelMap = {
 	error: LogLevel.Error,
 }
 
-type RuntimeArgs = {
-	// TODO: add config
-	logLevel: string
-	background: boolean
-	policy: string
-	origin: "extension" | "cli"
-}
-
 type MakeCliRuntimeArgs = {
-	globalArgs: RuntimeArgs
+	globalArgs: CliGlobalArgs
 	telemetryExporter?: SpanExporter
 }
 
@@ -191,7 +185,7 @@ export const makeMinimalRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = CliArgs(rawGlobalArgs)
+	const globalArgs = CliGlobalArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -239,7 +233,7 @@ export const makeConfigRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = CliArgs(rawGlobalArgs)
+	const globalArgs = CliGlobalArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -250,12 +244,10 @@ export const makeConfigRuntime = ({
 		Layer.provide(NodeContext.layer),
 	)
 
-	const ICEConfigLayer = ICEConfigService.Live({
-		logLevel: globalArgs.logLevel,
-		background: globalArgs.background,
-		policy: globalArgs.policy,
-		origin: globalArgs.origin,
-	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
+	const ICEConfigLayer = ICEConfigService.Live(globalArgs).pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(IceDirLayer),
+	)
 
 	const spanProcessor = new SimpleSpanProcessor(telemetryExporter)
 	const telemetryConfig = {
@@ -309,7 +301,7 @@ export const makeFullRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = CliArgs(rawGlobalArgs)
+	const globalArgs = CliGlobalArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -322,12 +314,10 @@ export const makeFullRuntime = ({
 		Layer.provide(NodeContext.layer),
 	)
 
-	const ICEConfigLayer = ICEConfigService.Live({
-		logLevel: globalArgs.logLevel,
-		background: globalArgs.background,
-		policy: globalArgs.policy,
-		origin: globalArgs.origin,
-	}).pipe(Layer.provide(NodeContext.layer), Layer.provide(IceDirLayer))
+	const ICEConfigLayer = ICEConfigService.Live(globalArgs).pipe(
+		Layer.provide(NodeContext.layer),
+		Layer.provide(IceDirLayer),
+	)
 
 	// const telemetryExporter = new OTLPTraceExporter()
 	// const spanProcessor = new BatchSpanProcessor(telemetryExporter)
@@ -360,41 +350,12 @@ export const makeFullRuntime = ({
 		}),
 	)
 
-	// TODO: use staging & ic urls
-	// const stagingReplicaLayer = layerFromAsyncReplica(
-	// 	new ICReplica({
-	// 		host: "http://0.0.0.0",
-	// 		port: 8080,
-	// 		isDev: true,
-	// 	}),
-	// 	{
-	// 		iceDirPath: iceDirName,
-	// 		network: globalArgs.network,
-	// 		logLevel: globalArgs.logLevel,
-	// 		background: globalArgs.background,
-	// 		policy: globalArgs.policy,
-	// 	},
-	// )
-	// const icReplicaLayer = layerFromAsyncReplica(
-	// 	new ICReplica({
-	// 		// host: "0.0.0.0",
-	// 		// port: 8080,
-	// 		host: "https://icp-api.io",
-	// 		port: 80,
-	// 		isDev: false,
-	// 	}),
-	// 	{
-	// 		iceDirPath: iceDirName,
-	// 		network: globalArgs.network,
-	// 		logLevel: globalArgs.logLevel,
-	// 		background: globalArgs.background,
-	// 		policy: globalArgs.policy,
-	// 	},
-	// )
-
+	const ClackLoggingLayer = ClackLoggingLive
 	const ReplicaService = picReplicaLayer
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
+		Layer.provide(NodeContext.layer),
+		Layer.provide(ClackLoggingLayer),
 	)
 
 	const InFlightLayer = InFlight.Live.pipe(Layer.provide(NodeContext.layer))
@@ -416,9 +377,9 @@ export const makeFullRuntime = ({
 		InFlightLayer,
 		IceDirLayer,
 		// Moc.Live.pipe(Layer.provide(NodeContext.layer)),
-		ClackLoggingLive,
-		PromptsService.Live,
+		ClackLoggingLayer,
 		Logger.minimumLogLevel(logLevelMap[globalArgs.logLevel]),
+		PromptsService.Live,
 		CanisterIdsLayer,
 		KVStorageLayer,
 		NodeContext.layer,
@@ -431,7 +392,7 @@ export const makeFullRuntime = ({
 		TaskRuntimeLayer.pipe(
 			Layer.provide(
 				Layer.mergeAll(
-					ClackLoggingLive,
+					ClackLoggingLayer,
 					NodeContext.layer,
 					KVStorageLayer,
 					ICEConfigLayer,
@@ -467,35 +428,35 @@ function moduleHashToHexString(moduleHash: [] | [number[]]): string {
 	return `0x${hexString}`
 }
 
-const getGlobalArgs = (cmdName: string): CliArgs => {
-	const args = process.argv.slice(2)
-	// Stop at the first non-flag token (subcommand/positional)
-	const firstNonFlagIndex = args.findIndex((arg) => !arg.startsWith("-"))
-	const globalSlice =
-		firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
-	const parsed = mri(globalSlice, {
-		boolean: ["background"],
-		string: ["logLevel", "policy", "origin"],
-		default: { background: false },
-	}) as Record<string, unknown>
-	const rawLogLevel = String(parsed["logLevel"] ?? "info").toLowerCase()
-	const logLevel = ["debug", "info", "error"].includes(rawLogLevel)
-		? (rawLogLevel as "debug" | "info" | "error")
-		: "info"
-	const rawOrigin = String(parsed["origin"] ?? "cli").toLowerCase()
-	const origin = ["extension", "cli"].includes(rawOrigin)
-		? (rawOrigin as "extension" | "cli")
-		: "cli"
-	const background =
-		Boolean(parsed["background"]) || parsed["background"] === ""
-	const rawPolicy = String(parsed["policy"]).toLowerCase()
-	const policy = ["reuse", "restart"].includes(rawPolicy)
-		? (rawPolicy as "reuse" | "restart")
-		: "reuse"
-	return { logLevel, background, policy, origin }
+/**
+ * Extracts global CLI arguments from process.argv.
+ * This is needed because citty doesn't merge parent command args with subcommand args.
+ */
+const extractGlobalArgsFromProcess = (): CliGlobalArgs => {
+	// Parse all args from process.argv (skip node and script path)
+	const allArgs = process.argv.slice(2)
+	const parsed = mri(allArgs)
+
+	// Start with defaults from cliGlobalArgs, then override with parsed values
+	const globalArgsRaw: Record<string, unknown> = {}
+	for (const [key, def] of Object.entries(cliGlobalArgs)) {
+		// Use default value if not provided
+		globalArgsRaw[key] = key in parsed ? parsed[key] : def.default
+	}
+	const globalArgs = CliGlobalArgs(globalArgsRaw)
+	if (globalArgs instanceof type.errors) {
+		// If validation fails, return defaults
+		return {
+			logLevel: "info",
+			background: false,
+			policy: "reuse",
+			origin: "cli",
+		}
+	}
+	return globalArgs
 }
 
-const globalArgs = {
+const cliGlobalArgs = {
 	logLevel: {
 		type: "string",
 		required: false,
@@ -507,6 +468,24 @@ const globalArgs = {
 		required: false,
 		default: false,
 		description: "Run in background",
+	},
+	policy: {
+		type: "string",
+		required: false,
+		default: "reuse",
+		description: "Run policy",
+	},
+	origin: {
+		type: "string",
+		required: false,
+		default: "cli",
+		description: "Run origin",
+	},
+	config: {
+		type: "string",
+		required: false,
+		default: "ice.config.ts",
+		description: "Path to the ICE config file (relative or absolute)",
 	},
 } satisfies Resolvable<ArgsDef>
 
@@ -525,10 +504,11 @@ const runCommand = defineCommand({
 				"The task to run. examples: icrc1:build, nns:governance:install",
 		},
 		// TODO: fix. these get overridden by later args
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args, rawArgs }) => {
-		const globalArgs = getGlobalArgs("run")
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -598,10 +578,11 @@ const stopCommand = defineCommand({
 	},
 	args: {
 		// TODO: fix. these get overridden by later args
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args, rawArgs }) => {
-		const globalArgs = getGlobalArgs("stop")
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -621,10 +602,11 @@ const stopCommand = defineCommand({
 				const Prompts = yield* PromptsService
 				const s = yield* Prompts.Spinner()
 				s.start("Stopping replica...")
-				const { runtime, replica } = yield* TaskRuntime
+				const { runtime, replica: defaultReplica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
 				const { config } = yield* ICEConfigService
-				// TODO: replica stop needs to work without starting it
+				// TODO: stop both?
+				const replica = config?.replica ?? defaultReplica
 				yield* Effect.tryPromise({
 					try: () =>
 						replica.stop(
@@ -665,16 +647,10 @@ const initCommand = defineCommand({
 })
 
 const deployRun = async ({
-	logLevel,
-	background,
-	policy,
-	origin,
+	globalArgs,
 	cliTaskArgs,
 }: {
-	logLevel: "debug" | "info" | "error"
-	background: boolean
-	policy: "reuse" | "restart"
-	origin: "extension" | "cli"
+	globalArgs: CliGlobalArgs
 	cliTaskArgs: {
 		positionalArgs: string[]
 		namedArgs: Record<string, string>
@@ -682,12 +658,6 @@ const deployRun = async ({
 }) => {
 	// spinner controlled inside Effect program via PromptsService
 	// TODO: mode
-	const globalArgs = {
-		logLevel,
-		background,
-		policy,
-		origin,
-	}
 	const telemetryExporter = new InMemorySpanExporter()
 	// const telemetryExporter = new OTLPTraceExporter()
 	// TODO: convert to task
@@ -866,11 +836,11 @@ const canistersCreateCommand = defineCommand({
 		description: "Creates all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("create")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -920,12 +890,7 @@ const canistersCreateCommand = defineCommand({
 
 		// TODO: mode
 		await makeFullRuntime({
-			globalArgs: {
-				logLevel,
-				background,
-				policy,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -936,11 +901,11 @@ const canistersBuildCommand = defineCommand({
 		description: "Builds all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("build")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -989,12 +954,7 @@ const canistersBuildCommand = defineCommand({
 		})
 
 		await makeFullRuntime({
-			globalArgs: {
-				logLevel,
-				background,
-				policy,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -1005,11 +965,11 @@ const canistersBindingsCommand = defineCommand({
 		description: "Generates bindings for all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("bindings")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1044,12 +1004,7 @@ const canistersBindingsCommand = defineCommand({
 		})
 
 		await makeFullRuntime({
-			globalArgs: {
-				logLevel,
-				background,
-				policy,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -1060,11 +1015,11 @@ const canistersInstallCommand = defineCommand({
 		description: "Installs all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("install")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1115,12 +1070,7 @@ const canistersInstallCommand = defineCommand({
 
 		// TODO: mode
 		await makeFullRuntime({
-			globalArgs: {
-				policy,
-				logLevel,
-				background,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -1131,11 +1081,11 @@ const cleanCommand = defineCommand({
 		description: "Clean cache and state",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("clean")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1151,12 +1101,7 @@ const cleanCommand = defineCommand({
 		})
 
 		await makeMinimalRuntime({
-			globalArgs: {
-				logLevel,
-				background,
-				policy,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -1167,11 +1112,11 @@ const canistersStopCommand = defineCommand({
 		description: "Stops all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("stop")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1249,12 +1194,7 @@ const canistersStopCommand = defineCommand({
 		})
 
 		await makeFullRuntime({
-			globalArgs: {
-				logLevel,
-				background,
-				policy,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(program)
 	},
 })
@@ -1339,13 +1279,13 @@ const canistersStatusCommand = defineCommand({
 			required: false,
 			description: "The name or ID of the canister to get the status of",
 		},
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
 		// TODO: support canister name or ID
 		if (args._.length === 0) {
-			const globalArgs = getGlobalArgs("status")
-			const { logLevel, background, policy, origin } = globalArgs
+			// Extract global args from process.argv since citty doesn't merge parent args
+			const globalArgs = extractGlobalArgsFromProcess()
 
 			const program = Effect.gen(function* () {
 				const { replica } = yield* TaskRuntime
@@ -1375,12 +1315,7 @@ const canistersStatusCommand = defineCommand({
 			})
 
 			await makeFullRuntime({
-				globalArgs: {
-					policy,
-					logLevel,
-					background,
-					origin,
-				},
+				globalArgs,
 			}).runPromise(program)
 		}
 	},
@@ -1392,18 +1327,13 @@ const canistersRemoveCommand = defineCommand({
 		description: "Removes all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
-		const globalArgs = getGlobalArgs("remove")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 		await makeFullRuntime({
-			globalArgs: {
-				policy,
-				logLevel,
-				background,
-				origin,
-			},
+			globalArgs,
 		}).runPromise(
 			Effect.gen(function* () {
 				yield* Effect.logInfo("Coming soon...")
@@ -1461,11 +1391,11 @@ const canistersDeployCommand = defineCommand({
 		description: "Deploys all canisters",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args, rawArgs }) => {
-		const globalArgs = getGlobalArgs("deploy")
-		const { logLevel, background, policy, origin } = globalArgs
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1478,10 +1408,7 @@ const canistersDeployCommand = defineCommand({
 			namedArgs,
 		}
 		await deployRun({
-			logLevel,
-			background,
-			policy,
-			origin,
+			globalArgs,
 			cliTaskArgs,
 		})
 	},
@@ -1494,12 +1421,12 @@ const canisterCommand = defineCommand({
 			"Select a specific canister to run a task on. install, build, deploy, etc.",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
 		if (args._.length === 0) {
-			const globalArgs = getGlobalArgs("canister")
-			const { logLevel, background, policy, origin } = globalArgs
+			// Extract global args from process.argv since citty doesn't merge parent args
+			const globalArgs = extractGlobalArgsFromProcess()
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1594,12 +1521,7 @@ const canisterCommand = defineCommand({
 			})
 
 			await makeFullRuntime({
-				globalArgs: {
-					policy,
-					logLevel,
-					background,
-					origin,
-				},
+				globalArgs,
 			}).runPromise(program)
 		}
 	},
@@ -1622,12 +1544,12 @@ const taskCommand = defineCommand({
 		description: `Select and run a task from the available tasks`,
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args }) => {
 		if (args._.length === 0) {
-			const globalArgs = getGlobalArgs("task")
-			const { logLevel, background, policy, origin } = globalArgs
+			// Extract global args from process.argv since citty doesn't merge parent args
+			const globalArgs = extractGlobalArgsFromProcess()
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1696,12 +1618,7 @@ const taskCommand = defineCommand({
 			})
 
 			await makeFullRuntime({
-				globalArgs: {
-					policy,
-					logLevel,
-					background,
-					origin,
-				},
+				globalArgs,
 			}).runPromise(program)
 		}
 	},
@@ -1732,10 +1649,11 @@ const main = defineCommand({
 		description: "ICE CLI",
 	},
 	args: {
-		...globalArgs,
+		...cliGlobalArgs,
 	},
 	run: async ({ args, rawArgs }) => {
-		const globalArgs = getGlobalArgs("ice")
+		// Extract global args from process.argv since citty doesn't merge parent args
+		const globalArgs = extractGlobalArgsFromProcess()
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1743,7 +1661,6 @@ const main = defineCommand({
 		)
 		const positionalArgs = parsedArgs._
 		const mode = namedArgs["mode"] as string | undefined
-		const { logLevel, background, policy, origin } = globalArgs
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
@@ -1751,11 +1668,8 @@ const main = defineCommand({
 
 		if (args._.length === 0) {
 			await deployRun({
-				logLevel,
-				background,
-				policy,
+				globalArgs,
 				cliTaskArgs,
-				origin,
 			})
 			// await deployRun(globalArgs)
 		}

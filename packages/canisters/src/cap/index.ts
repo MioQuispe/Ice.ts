@@ -22,8 +22,6 @@ import * as url from "node:url"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
-type Networks = "local" | "ic" | "staging"
-
 const CapBucketIds = {
 	local: "r7inp-6aaaa-aaaaa-aaabq-cai",
 	ic: "r7inp-6aaaa-aaaaa-aaabq-cai",
@@ -66,7 +64,7 @@ export const CapBucket = (
 					__dirname,
 					"./cap/cap-bucket/cap-bucket.wasm.gz",
 				),
-				canisterId: CapBucketIds[ctx.network as Networks],
+				canisterId: CapBucketIds.ic,
 			}
 		})
 		.installArgs(async ({ ctx }) => {
