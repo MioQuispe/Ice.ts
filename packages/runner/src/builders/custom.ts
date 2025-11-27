@@ -198,7 +198,7 @@ export const makeCustomDeployTask = <_SERVICE>(): DeployTask<_SERVICE> => {
 					// 	taskCtx,
 					// 	canisterConfigOrFn,
 					// )
-					// TODO: include this in taskCtx instead? as { scope }
+					// TODO: include this in taskCtx instead? parentNode?
 					const parentScope = (yield* getNodeByPath(
 						taskCtx,
 						canisterName,

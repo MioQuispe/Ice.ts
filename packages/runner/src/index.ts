@@ -1,16 +1,7 @@
-// import { customCanister } from "./builders/custom.js"
-// import { motokoCanister } from "./builders/motoko.js"
-// import { SignIdentity } from "@icp-sdk/core/agent"
 import type {
 	ICEConfig,
 	ICEGlobalArgs,
-	ICEEnvironment,
-	ICEConfigFile,
-	ICEPlugin,
 } from "./types/types.js"
-import type { Scope, TaskTree, Task } from "./types/types.js"
-// import { TaskCtx, TaskCtxExtension } from "./services/taskRuntime.js"
-// import { Principal } from "./external.js"
 export { Opt } from "./types/types.js"
 export { canister, task, scope } from "./builders/index.js"
 export type { CanisterScopeSimple } from "./builders/lib.js"
@@ -47,125 +38,45 @@ export type {
 	ICEConfig,
 	ICEGlobalArgs,
 	ICEEnvironment,
-	ICEPlugin,
 	TaskTree,
 	Scope,
 	Task,
-	InferIceConfig,
 	ICEUser,
+	InferIceConfig,
 } from "./types/types.js"
 
 export type { Principal } from "@dfinity/principal"
 export type { Identity } from "@dfinity/agent"
 
-// 1. Define Structural/Safe Types that don't depend on TaskCtx
-type SafeTask = {
-	_tag: "task"
-	id: symbol
-	// We type effect as Function or generic to avoid TaskCtx dependency
-	effect: Function
-	description: string
-	tags: Array<string | symbol>
-	dependsOn: Record<string, SafeTask>
-	dependencies: Record<string, SafeTask>
-	// Include other properties if needed for plugin logic
-	[key: string]: any
-}
+// export const Ice = (
+//     globalArgs: ICEGlobalArgs,
+// ) => Promise<C> {
+//     return async (globalArgs: ICEGlobalArgs) => {
+//         const configResult =
+//             typeof this.#config === "function"
+//                 ? this.#config(globalArgs)
+//                 : this.#config
+//         const config =
+//             configResult instanceof Promise
+//                 ? await configResult
+//                 : configResult
 
-type SafeScope = {
-	_tag: "scope"
-	id: symbol
-	description: string
-	children: Record<string, SafeTask | SafeScope>
-	[key: string]: any
-}
-
-type SafeTaskTreeNode = SafeTask | SafeScope
-type SafeTaskTree = Record<string, SafeTaskTreeNode>
-
-// 2. Define SafeICEPlugin using SafeTaskTree
-type SafeICEPlugin<C> = (env: {
-	config: C
-	tasks: SafeTaskTree
-	args: ICEGlobalArgs
-}) =>
-	| Promise<{ config?: Partial<C>; tasks?: SafeTaskTree }>
-	| { config?: Partial<C>; tasks?: SafeTaskTree }
-
-export class IceBuilder<C extends Partial<ICEConfig>> {
-	#config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C
-	#plugins: SafeICEPlugin<C>[] = []
-
-	constructor(config: ((globalArgs: ICEGlobalArgs) => Promise<C> | C) | C) {
-		this.#config = config
-	}
-
-	// 3. Use SafeICEPlugin here
-	extendEnv(plugin: SafeICEPlugin<C>): IceBuilder<C> {
-		this.#plugins.push(plugin)
-		return this
-	}
-
-	// 4. Use any[] for plugins in return type to ensure InferIceConfig doesn't trip
-	make(): (
-		globalArgs: ICEGlobalArgs,
-	) => Promise<{ config: C; plugins: SafeICEPlugin<C>[] }> {
-		return async (globalArgs: ICEGlobalArgs) => {
-			const configResult =
-				typeof this.#config === "function"
-					? this.#config(globalArgs)
-					: this.#config
-			const config =
-				configResult instanceof Promise
-					? await configResult
-					: configResult
-
-			return { config, plugins: this.#plugins }
-		}
-	}
-}
-
-export const Ice = <C extends Partial<ICEConfig>>(
-	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
-): IceBuilder<C> => {
-	return new IceBuilder(configFn)
-}
-// const ice = Ice({
-// 	users: {
-// 		bla: {
-// 			principal: "bla",
-// 			accountId: "bla",
-// 			identity: {} as SignIdentity,
-// 		},
-// 	},
-// })
-
-// const t = ice.customCanister(ctx => ({
-// 	wasm: "bla.wasm",
-// 	candid: "bla.did",
-// })).installArgs(ctx => [])
-
-// ice.test
-
-// TODO: just use namespaces instead
-// export const scope = <T extends TaskTree>(description: string, children: T) => {
-// 	return {
-// 		_tag: "scope",
-// 		id: Symbol("scope"),
-// 		tags: [],
-// 		description,
-// 		children,
-// 	} satisfies Scope
-// }
-
-// TODO: figure out programmatic use & API
-// export const publicRuntime = (globalArgs: { network: string; logLevel: string }) => {
-//     const runtime = makeCliRuntime({ globalArgs })
-//     return {
-//         runTask: (task: Task) => runtime.runPromise(task)
-//         runTaskByPath: (path: string) => runtime.runPromise(runTaskByPath(path))
+//         return { config, plugins: this.#plugins }
 //     }
 // }
 
+export const Ice = <C extends Partial<ICEConfig>>(
+	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
+) => {
+	return async (globalArgs: ICEGlobalArgs) => {
+		const configResult =
+			typeof configFn === "function" ? configFn(globalArgs) : configFn
+		const config =
+			configResult instanceof Promise ? await configResult : configResult
+
+		return config
+	}
+}
+// TODO: figure out programmatic use & APIs
 export { runCli } from "./cli/index.js"
 export type { TaskCtx } from "./services/taskRuntime.js"

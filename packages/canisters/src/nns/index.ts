@@ -1261,7 +1261,7 @@ NNSLifeline.remote = (canisterId?: string) => {
 NNSLifeline.id = NNSLifelineIds
 
 // TODO: init args
-// Define an overall scope that groups these NNS tasks
+// TODO: Define an overall scope that groups these NNS tasks
 export const NNS = {
 	NNSDapp,
 	NNSSNSWasm,

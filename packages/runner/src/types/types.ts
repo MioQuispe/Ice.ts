@@ -3,7 +3,6 @@ import type { ReplicaServiceClass } from "../services/replica.js"
 import { TaskCancelled } from "../builders/lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import type { Identity } from "@icp-sdk/core/agent"
-import { IceBuilder } from "../index.js"
 
 export type ReplicaConfig = {
 	// TODO: use pocket-ic subnet config
@@ -46,14 +45,13 @@ export type ICEConfig<
 export type ICEEnvironment = {
 	config: Partial<ICEConfig>
 	tasks: TaskTree
-	plugins: Array<ICEPlugin>
 }
 
 export type BuiltInTaskType = "string" | "number" | "boolean"
 
 export interface TaskParam<T = unknown, O extends boolean = boolean> {
 	type: StandardSchemaV1<T> | BuiltInTaskType
-    name: string
+	name: string
 	description?: string
 	default?: T
 	decode: (value: string) => T // supply default codec if not provided
@@ -168,24 +166,13 @@ export type ICEGlobalArgs = {
 }
 
 export type ICEConfigFile = {
-	default: (
-		globalArgs: ICEGlobalArgs,
-	) => Promise<{ config: Partial<ICEConfig>; plugins: ICEPlugin[] }>
+	default: (globalArgs: ICEGlobalArgs) => Promise<Partial<ICEConfig>>
 } & {
 	[key: string]: TaskTreeNode
 }
 
-export type ICEPlugin = (
-	env: Omit<ICEEnvironment, "plugins"> & { args: ICEGlobalArgs },
-) => Promise<Omit<ICEEnvironment, "plugins">> | Omit<ICEEnvironment, "plugins">
-
-type ICEDefault<C extends Partial<ICEConfig>> = (
-	globalArgs: ICEGlobalArgs,
-) => Promise<{ config: C; plugins: ICEPlugin[] }>
-
-type ICEDefaultOmit<C extends Partial<ICEConfig>> = (
-	globalArgs: ICEGlobalArgs,
-) => Promise<{ config: C }>
-
-export type InferIceConfig<T> = T extends IceBuilder<infer Config> ? Config : never
-// export type InferIceConfig<T> = T extends ICEDefaultOmit<infer I> ? I : never
+export type InferIceConfig<T> = T extends (
+	env: ICEGlobalArgs,
+) => Promise<infer Config>
+	? Config
+	: never
