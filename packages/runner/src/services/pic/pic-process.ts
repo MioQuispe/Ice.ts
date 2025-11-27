@@ -393,8 +393,7 @@ export class Monitor {
 				initialTime: { AutoProgress: { artificialDelayMs: 0 } },
 				topology: createDefaultTopology(),
 				incompleteState,
-				// TODO: ??? wtf is this
-				// nonmainnet: this.network !== "ic",
+				// TODO: what is this?
 				nonmainnet: this.isDev,
 				verifiedApplication: 0,
 			},

@@ -149,8 +149,7 @@ export const resolveCliArgsMap = (
 		return argsMap
 	})
 
-export const GlobalArgs = type({
-	network: "string" as const,
+export const CliArgs = type({
 	logLevel: "'debug' | 'info' | 'error'",
 	background: type("'1' | '0' | 'true' | 'false' | '' | false | true").pipe(
 		(str) => str === "1" || str === "true" || str === "" || str === true,
@@ -158,8 +157,7 @@ export const GlobalArgs = type({
 	policy: "'reuse' | 'restart'",
 	origin: "'extension' | 'cli'",
 }) satisfies StandardSchemaV1<Record<string, unknown>>
-export type GlobalArgs = {
-	network: string
+export type CliArgs = {
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	policy: "reuse" | "restart"
@@ -173,7 +171,7 @@ export const logLevelMap = {
 }
 
 type RuntimeArgs = {
-	network: string
+	// TODO: add config
 	logLevel: string
 	background: boolean
 	policy: string
@@ -193,7 +191,7 @@ export const makeMinimalRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = GlobalArgs(rawGlobalArgs)
+	const globalArgs = CliArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -241,7 +239,7 @@ export const makeConfigRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = GlobalArgs(rawGlobalArgs)
+	const globalArgs = CliArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -253,7 +251,6 @@ export const makeConfigRuntime = ({
 	)
 
 	const ICEConfigLayer = ICEConfigService.Live({
-		network: globalArgs.network,
 		logLevel: globalArgs.logLevel,
 		background: globalArgs.background,
 		policy: globalArgs.policy,
@@ -312,7 +309,7 @@ export const makeFullRuntime = ({
 	globalArgs: rawGlobalArgs,
 	telemetryExporter = new OTLPTraceExporter(),
 }: MakeCliRuntimeArgs) => {
-	const globalArgs = GlobalArgs(rawGlobalArgs)
+	const globalArgs = CliArgs(rawGlobalArgs)
 	if (globalArgs instanceof type.errors) {
 		throw new Error(globalArgs.summary)
 	}
@@ -326,7 +323,6 @@ export const makeFullRuntime = ({
 	)
 
 	const ICEConfigLayer = ICEConfigService.Live({
-		network: globalArgs.network,
 		logLevel: globalArgs.logLevel,
 		background: globalArgs.background,
 		policy: globalArgs.policy,
@@ -362,63 +358,41 @@ export const makeFullRuntime = ({
 			port: 8081,
 			ttlSeconds: 9_999_999_999,
 		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
 	)
 
 	// TODO: use staging & ic urls
-	const stagingReplicaLayer = layerFromAsyncReplica(
-		new ICReplica({
-			host: "http://0.0.0.0",
-			port: 8080,
-			isDev: true,
-		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
-	)
-	const icReplicaLayer = layerFromAsyncReplica(
-		new ICReplica({
-			// host: "0.0.0.0",
-			// port: 8080,
-			host: "https://icp-api.io",
-			port: 80,
-			isDev: false,
-		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
-	)
-	const replicas = {
-		// local: picReplicaLayer,
-		local: picReplicaLayer,
-		staging: stagingReplicaLayer,
-		ic: icReplicaLayer,
-	}
+	// const stagingReplicaLayer = layerFromAsyncReplica(
+	// 	new ICReplica({
+	// 		host: "http://0.0.0.0",
+	// 		port: 8080,
+	// 		isDev: true,
+	// 	}),
+	// 	{
+	// 		iceDirPath: iceDirName,
+	// 		network: globalArgs.network,
+	// 		logLevel: globalArgs.logLevel,
+	// 		background: globalArgs.background,
+	// 		policy: globalArgs.policy,
+	// 	},
+	// )
+	// const icReplicaLayer = layerFromAsyncReplica(
+	// 	new ICReplica({
+	// 		// host: "0.0.0.0",
+	// 		// port: 8080,
+	// 		host: "https://icp-api.io",
+	// 		port: 80,
+	// 		isDev: false,
+	// 	}),
+	// 	{
+	// 		iceDirPath: iceDirName,
+	// 		network: globalArgs.network,
+	// 		logLevel: globalArgs.logLevel,
+	// 		background: globalArgs.background,
+	// 		policy: globalArgs.policy,
+	// 	},
+	// )
 
-	// TODO: provide them all??
-	//@ts-ignore
-	const ReplicaService = replicas[globalArgs.network] as typeof replicas.local
-
-	// const icReplicaHost = "0.0.0.0"
-	// const icReplicaPort = 8080
-	// const icReplica = new ICReplica({
-	// 	host: icReplicaHost,
-	// 	port: icReplicaPort,
-	// })
+	const ReplicaService = picReplicaLayer
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
 	)
@@ -493,7 +467,7 @@ function moduleHashToHexString(moduleHash: [] | [number[]]): string {
 	return `0x${hexString}`
 }
 
-const getGlobalArgs = (cmdName: string): GlobalArgs => {
+const getGlobalArgs = (cmdName: string): CliArgs => {
 	const args = process.argv.slice(2)
 	// Stop at the first non-flag token (subcommand/positional)
 	const firstNonFlagIndex = args.findIndex((arg) => !arg.startsWith("-"))
@@ -501,14 +475,13 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 		firstNonFlagIndex === -1 ? args : args.slice(0, firstNonFlagIndex)
 	const parsed = mri(globalSlice, {
 		boolean: ["background"],
-		string: ["logLevel", "network", "policy", "origin"],
+		string: ["logLevel", "policy", "origin"],
 		default: { background: false },
 	}) as Record<string, unknown>
 	const rawLogLevel = String(parsed["logLevel"] ?? "info").toLowerCase()
 	const logLevel = ["debug", "info", "error"].includes(rawLogLevel)
 		? (rawLogLevel as "debug" | "info" | "error")
 		: "info"
-	const network = String(parsed["network"] ?? "local")
 	const rawOrigin = String(parsed["origin"] ?? "cli").toLowerCase()
 	const origin = ["extension", "cli"].includes(rawOrigin)
 		? (rawOrigin as "extension" | "cli")
@@ -519,18 +492,10 @@ const getGlobalArgs = (cmdName: string): GlobalArgs => {
 	const policy = ["reuse", "restart"].includes(rawPolicy)
 		? (rawPolicy as "reuse" | "restart")
 		: "reuse"
-	return { network, logLevel, background, policy, origin }
+	return { logLevel, background, policy, origin }
 }
 
 const globalArgs = {
-	network: {
-		type: "string",
-		required: false,
-		// TODO: hmm?
-		default: "local",
-		// TODO: better description
-		description: "Select a network",
-	},
 	logLevel: {
 		type: "string",
 		required: false,
@@ -587,11 +552,13 @@ const runCommand = defineCommand({
 				)
 				const { replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
+				const { config } = yield* ICEConfigService
 				// TODO: use finalizer??
 				yield* Effect.tryPromise({
 					try: () =>
 						replica.start({
 							...globalArgs,
+							network: config.network,
 							iceDirPath: iceDir.path,
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
@@ -656,6 +623,7 @@ const stopCommand = defineCommand({
 				s.start("Stopping replica...")
 				const { runtime, replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
+				const { config } = yield* ICEConfigService
 				// TODO: replica stop needs to work without starting it
 				yield* Effect.tryPromise({
 					try: () =>
@@ -665,6 +633,7 @@ const stopCommand = defineCommand({
 							},
 							{
 								...globalArgs,
+								network: config.network,
 								iceDirPath: iceDir.path,
 							},
 						),
@@ -696,14 +665,12 @@ const initCommand = defineCommand({
 })
 
 const deployRun = async ({
-	network,
 	logLevel,
 	background,
 	policy,
 	origin,
 	cliTaskArgs,
 }: {
-	network: string
 	logLevel: "debug" | "info" | "error"
 	background: boolean
 	policy: "reuse" | "restart"
@@ -716,7 +683,6 @@ const deployRun = async ({
 	// spinner controlled inside Effect program via PromptsService
 	// TODO: mode
 	const globalArgs = {
-		network,
 		logLevel,
 		background,
 		policy,
@@ -754,11 +720,13 @@ const deployRun = async ({
 		}))
 		const { replica } = yield* TaskRuntime
 		const iceDir = yield* IceDir
+		const { config } = yield* ICEConfigService
 		// TODO: use finalizer??
 		yield* Effect.tryPromise({
 			try: () =>
 				replica.start({
 					...globalArgs,
+					network: config.network,
 					iceDirPath: iceDir.path,
 				}),
 			catch: (e) => new ReplicaError({ message: String(e) }),
@@ -902,7 +870,7 @@ const canistersCreateCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("create")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -924,11 +892,13 @@ const canistersCreateCommand = defineCommand({
 			}))
 			const { replica } = yield* TaskRuntime
 			const iceDir = yield* IceDir
+			const { config } = yield* ICEConfigService
 			// TODO: use finalizer??
 			yield* Effect.tryPromise({
 				try: () =>
 					replica.start({
 						...globalArgs,
+						network: config.network,
 						iceDirPath: iceDir.path,
 					}),
 				catch: (e) => new ReplicaError({ message: String(e) }),
@@ -951,7 +921,6 @@ const canistersCreateCommand = defineCommand({
 		// TODO: mode
 		await makeFullRuntime({
 			globalArgs: {
-				network,
 				logLevel,
 				background,
 				policy,
@@ -971,7 +940,7 @@ const canistersBuildCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("build")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -993,11 +962,13 @@ const canistersBuildCommand = defineCommand({
 			}))
 			const { replica } = yield* TaskRuntime
 			const iceDir = yield* IceDir
+			const { config } = yield* ICEConfigService
 			// TODO: use finalizer??
 			yield* Effect.tryPromise({
 				try: () =>
 					replica.start({
 						...globalArgs,
+						network: config.network,
 						iceDirPath: iceDir.path,
 					}),
 				catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1019,7 +990,6 @@ const canistersBuildCommand = defineCommand({
 
 		await makeFullRuntime({
 			globalArgs: {
-				network,
 				logLevel,
 				background,
 				policy,
@@ -1039,7 +1009,7 @@ const canistersBindingsCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("bindings")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1075,7 +1045,6 @@ const canistersBindingsCommand = defineCommand({
 
 		await makeFullRuntime({
 			globalArgs: {
-				network,
 				logLevel,
 				background,
 				policy,
@@ -1095,7 +1064,7 @@ const canistersInstallCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("install")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1117,11 +1086,13 @@ const canistersInstallCommand = defineCommand({
 			}))
 			const { replica } = yield* TaskRuntime
 			const iceDir = yield* IceDir
+			const { config } = yield* ICEConfigService
 			// TODO: use finalizer??
 			yield* Effect.tryPromise({
 				try: () =>
 					replica.start({
 						...globalArgs,
+						network: config.network,
 						iceDirPath: iceDir.path,
 					}),
 				catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1146,7 +1117,6 @@ const canistersInstallCommand = defineCommand({
 		await makeFullRuntime({
 			globalArgs: {
 				policy,
-				network,
 				logLevel,
 				background,
 				origin,
@@ -1165,7 +1135,7 @@ const cleanCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("clean")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1182,7 +1152,6 @@ const cleanCommand = defineCommand({
 
 		await makeMinimalRuntime({
 			globalArgs: {
-				network,
 				logLevel,
 				background,
 				policy,
@@ -1202,7 +1171,7 @@ const canistersStopCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("stop")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 
 		const program = Effect.gen(function* () {
 			const Prompts = yield* PromptsService
@@ -1224,11 +1193,13 @@ const canistersStopCommand = defineCommand({
 			}))
 			const { replica } = yield* TaskRuntime
 			const iceDir = yield* IceDir
+			const { config } = yield* ICEConfigService
 			// TODO: use finalizer??
 			yield* Effect.tryPromise({
 				try: () =>
 					replica.start({
 						...globalArgs,
+						network: config.network,
 						iceDirPath: iceDir.path,
 					}),
 				catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1279,7 +1250,6 @@ const canistersStopCommand = defineCommand({
 
 		await makeFullRuntime({
 			globalArgs: {
-				network,
 				logLevel,
 				background,
 				policy,
@@ -1375,16 +1345,18 @@ const canistersStatusCommand = defineCommand({
 		// TODO: support canister name or ID
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("status")
-			const { network, logLevel, background, policy, origin } = globalArgs
+			const { logLevel, background, policy, origin } = globalArgs
 
 			const program = Effect.gen(function* () {
 				const { replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
+				const { config } = yield* ICEConfigService
 				// TODO: use finalizer??
 				yield* Effect.tryPromise({
 					try: () =>
 						replica.start({
 							...globalArgs,
+							network: config.network,
 							iceDirPath: iceDir.path,
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1405,7 +1377,6 @@ const canistersStatusCommand = defineCommand({
 			await makeFullRuntime({
 				globalArgs: {
 					policy,
-					network,
 					logLevel,
 					background,
 					origin,
@@ -1425,11 +1396,10 @@ const canistersRemoveCommand = defineCommand({
 	},
 	run: async ({ args }) => {
 		const globalArgs = getGlobalArgs("remove")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 		await makeFullRuntime({
 			globalArgs: {
 				policy,
-				network,
 				logLevel,
 				background,
 				origin,
@@ -1495,7 +1465,7 @@ const canistersDeployCommand = defineCommand({
 	},
 	run: async ({ args, rawArgs }) => {
 		const globalArgs = getGlobalArgs("deploy")
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 		const taskArgs = rawArgs.slice(1)
 		const parsedArgs = mri(taskArgs)
 		const namedArgs = Object.fromEntries(
@@ -1508,7 +1478,6 @@ const canistersDeployCommand = defineCommand({
 			namedArgs,
 		}
 		await deployRun({
-			network,
 			logLevel,
 			background,
 			policy,
@@ -1530,7 +1499,7 @@ const canisterCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("canister")
-			const { network, logLevel, background, policy, origin } = globalArgs
+			const { logLevel, background, policy, origin } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1592,11 +1561,13 @@ const canisterCommand = defineCommand({
 				const s = yield* Prompts.Spinner()
 				const { replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
+				const { config } = yield* ICEConfigService
 				// TODO: use finalizer??
 				yield* Effect.tryPromise({
 					try: () =>
 						replica.start({
 							...globalArgs,
+							network: config.network,
 							iceDirPath: iceDir.path,
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1625,7 +1596,6 @@ const canisterCommand = defineCommand({
 			await makeFullRuntime({
 				globalArgs: {
 					policy,
-					network,
 					logLevel,
 					background,
 					origin,
@@ -1657,7 +1627,7 @@ const taskCommand = defineCommand({
 	run: async ({ args }) => {
 		if (args._.length === 0) {
 			const globalArgs = getGlobalArgs("task")
-			const { network, logLevel, background, policy, origin } = globalArgs
+			const { logLevel, background, policy, origin } = globalArgs
 			const cliTaskArgs = {
 				positionalArgs: [],
 				namedArgs: {},
@@ -1693,11 +1663,13 @@ const taskCommand = defineCommand({
 				const s = yield* Prompts.Spinner()
 				const { replica } = yield* TaskRuntime
 				const iceDir = yield* IceDir
+				const { config } = yield* ICEConfigService
 				// TODO: use finalizer??
 				yield* Effect.tryPromise({
 					try: () =>
 						replica.start({
 							...globalArgs,
+							network: config.network,
 							iceDirPath: iceDir.path,
 						}),
 					catch: (e) => new ReplicaError({ message: String(e) }),
@@ -1726,7 +1698,6 @@ const taskCommand = defineCommand({
 			await makeFullRuntime({
 				globalArgs: {
 					policy,
-					network,
 					logLevel,
 					background,
 					origin,
@@ -1772,7 +1743,7 @@ const main = defineCommand({
 		)
 		const positionalArgs = parsedArgs._
 		const mode = namedArgs["mode"] as string | undefined
-		const { network, logLevel, background, policy, origin } = globalArgs
+		const { logLevel, background, policy, origin } = globalArgs
 		const cliTaskArgs = {
 			positionalArgs,
 			namedArgs,
@@ -1780,7 +1751,6 @@ const main = defineCommand({
 
 		if (args._.length === 0) {
 			await deployRun({
-				network,
 				logLevel,
 				background,
 				policy,

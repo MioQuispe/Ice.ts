@@ -483,7 +483,8 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 			})
 
 			const prepareIceConfig = {
-				networks: { local: { replica: picReplica } },
+				network: "local",
+				replica: picReplica,
 			}
 			const hold_task = task("hold_lease")
 				.run(async () => {
@@ -645,13 +646,10 @@ describe("process orchestration — scenarios (public APIs only)", () => {
 				},
 			})
 			const mainIceConfig = {
-				networks: {
-					local: {
-						replica: useMismatch
-							? mainMismatchReplica
-							: mainPicReplica,
-					},
-				},
+				network: "local",
+				replica: useMismatch
+					? mainMismatchReplica
+					: mainPicReplica,
 			}
 			const { runtime: mainRuntime } = makeTestEnvEffect(
 				idx,

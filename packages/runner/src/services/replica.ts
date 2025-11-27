@@ -16,6 +16,7 @@ import {
 import { idlFactory as managementLatestIdlFactory } from "../canisters/management_latest/management.did.js"
 import type { _SERVICE as ManagementActor } from "../canisters/management_latest/management.types.js"
 
+export type ReplicaContext = ICEGlobalArgs & { network: string }
 export type SubnetType =
 	| "II"
 	| "Application"
@@ -300,10 +301,10 @@ export type ReplicaServiceClass = {
 		identity: Identity
 	}) => Promise<ActorSubclass<_SERVICE>>
 	getTopology: () => Promise<SubnetTopology[]>
-	start: (ctx: ICEGlobalArgs) => Promise<void>
+	start: (ctx: ReplicaContext) => Promise<void>
 	stop: (
 		args?: { scope: "background" | "foreground" },
-		ctx?: ICEGlobalArgs,
+		ctx?: ReplicaContext,
 	) => Promise<void>
 }
 
@@ -313,10 +314,7 @@ export class Replica extends Context.Tag("Replica")<
 >() {}
 
 // TODO: unnecessary??
-export function layerFromAsyncReplica(
-	replica: ReplicaServiceClass,
-	ctx: ICEGlobalArgs,
-) {
+export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
 	return Layer.scoped(
 		Replica,
 		Effect.acquireRelease(

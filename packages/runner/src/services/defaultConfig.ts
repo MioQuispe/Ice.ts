@@ -9,6 +9,7 @@ import { TaskRuntimeError } from "../tasks/lib.js"
 // )
 
 export type InitializedDefaultConfig = {
+	network: string
 	users: {
 		default: ICEUser
 	}
@@ -18,13 +19,7 @@ export type InitializedDefaultConfig = {
 		controller: ICEUser
 		treasury: ICEUser
 	}
-	networks: {
-		[key: string]: {
-			replica: ReplicaServiceClass
-			host: string
-			port: number
-		}
-	}
+	replica: ReplicaServiceClass
 }
 
 export class DefaultConfig extends Context.Tag("DefaultConfig")<
@@ -59,15 +54,15 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 						message: "Failed to get default user from dfx",
 					}),
 			})
-            // .pipe(
+			// .pipe(
 			// 	// Effect.mapError
 			// 	Effect.option,
 			// )
-            // Option.match
+			// Option.match
 			// const defaultUser = Option.match(maybeDefaultUser, {
 			// 	{
 			// 		onSome: (user) => user,
-            //         // TODO: create default user?
+			//         // TODO: create default user?
 			// 		onNone: () => new TaskRuntimeError({
 			// 			message: "Default user not found",
 			// 		}),
@@ -111,9 +106,11 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 			)
 
 			return {
+				network: "local",
 				users: defaultUsers,
 				roles: defaultRoles,
 				networks: defaultNetworks,
+                replica: defaultReplica,
 			}
 		}),
 	)

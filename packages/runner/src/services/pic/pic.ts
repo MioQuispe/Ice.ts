@@ -48,7 +48,7 @@ import {
 	PocketIcState,
 	readJsonFile,
 } from "./pic-process.js"
-import type { ICEGlobalArgs } from "../../types/types.js"
+import type { ReplicaContext } from "../replica.js"
 
 const __dirname = url.fileURLToPath(new URL(".", import.meta.url))
 
@@ -71,6 +71,7 @@ const defaultPicConfig: CreateInstanceOptions = {
 	application: [{ state: { type: SubnetStateType.New } }],
 }
 
+
 export class PICReplica implements ReplicaServiceClass {
 	public host: string
 	public port: number
@@ -81,7 +82,7 @@ export class PICReplica implements ReplicaServiceClass {
 	public monitor: Monitor | undefined
 	public client?: InstanceType<typeof CustomPocketIcClient>
 	public pic?: PocketIc
-	public ctx: ICEGlobalArgs | undefined
+	public ctx: ReplicaContext | undefined
 
 	// Cache canister info with 500ms TTL to cover runner's internal "revalidate->execute" gap
 	// 500ms is indistinguishable from network latency variance on mainnet
@@ -127,7 +128,7 @@ export class PICReplica implements ReplicaServiceClass {
 		this.canisterInfoCache.delete(key)
 	}
 
-	async start(ctx: ICEGlobalArgs): Promise<void> {
+	async start(ctx: ReplicaContext): Promise<void> {
 		const start = performance.now()
 		this.ctx = ctx
 
@@ -145,7 +146,8 @@ export class PICReplica implements ReplicaServiceClass {
 					network: ctx.network,
 					host: hostUrl,
 					port: this.port,
-					isDev: ctx.network !== "ic",
+                    // TODO: ? toggles mainnet flag simply?
+                    isDev: true,
 				})
 				// spawn lock is inside here. how can we cleanest extend it?
 				const spawnLockPath = path.resolve(
@@ -168,7 +170,7 @@ export class PICReplica implements ReplicaServiceClass {
 			const baseUrl = `http://${hostUrl}:${this.port}`
 
 			const stateRoot = path.resolve(
-				path.join(this.ctx.iceDirPath, "networks", this.ctx.network, "replica-state"),
+				path.join(this.ctx.iceDirPath, "networks", ctx.network, "replica-state"),
 			)
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
@@ -225,7 +227,7 @@ export class PICReplica implements ReplicaServiceClass {
 		args: {
 			scope: "background" | "foreground"
 		} = { scope: "foreground" },
-        ctx?: ICEGlobalArgs,
+        ctx?: ReplicaContext,
 	): Promise<void> {
 		if (this.monitor) {
 			await this.monitor.stop({ scope: args.scope }) //???
@@ -234,7 +236,7 @@ export class PICReplica implements ReplicaServiceClass {
 		}
 	}
 
-	private async stopExistingMonitor(ctx?: ICEGlobalArgs): Promise<void> {
+	private async stopExistingMonitor(ctx?: ReplicaContext): Promise<void> {
 		if (!ctx) {
 			return
 		}

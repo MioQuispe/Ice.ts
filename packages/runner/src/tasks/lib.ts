@@ -199,6 +199,31 @@ export const resolveArg = <T = unknown>(
 
 	const value = arg
 
+	// 3. Handle StandardSchemaV1
+	// Safety check to ensure it's an object before accessing properties
+	if (
+		typeof param.type === "function" ||
+		(typeof param.type === "object" && param.type !== null)
+	) {
+		const result = param.type["~standard"].validate(value)
+
+		if (result instanceof Promise) {
+			return Effect.fail(
+				new TaskArgsParseError({
+					message: `Async validation not implemented for ${param.name ?? "positional parameter"}, arg: ${arg}, param: ${param}`,
+				}),
+			)
+		}
+		if (result.issues) {
+			return Effect.fail(
+				new TaskArgsParseError({
+					message: `Validation failed for ${param.name ?? "positional parameter"}: ${JSON.stringify(result.issues, null, 2)}, arg: ${arg}, param: ${param}`,
+				}),
+			)
+		}
+		return Effect.succeed(result.value)
+	}
+
 	// 2. Handle Built-in String Types ("string" | "number" | "boolean")
 	if (typeof param.type === "string") {
 		// If value already matches the target primitive type, return it directly
@@ -250,28 +275,6 @@ export const resolveArg = <T = unknown>(
 				message: `Invalid argument type for ${param.name}. Expected ${param.type} or string, got ${typeof value}`,
 			}),
 		)
-	}
-
-	// 3. Handle StandardSchemaV1
-	// Safety check to ensure it's an object before accessing properties
-	if (typeof param.type === "object" && param.type !== null) {
-		const result = param.type["~standard"].validate(value)
-
-		if (result instanceof Promise) {
-			return Effect.fail(
-				new TaskArgsParseError({
-					message: `Async validation not implemented for ${param.name ?? "positional parameter"}, arg: ${arg}, param: ${param}`,
-				}),
-			)
-		}
-		if (result.issues) {
-			return Effect.fail(
-				new TaskArgsParseError({
-					message: `Validation failed for ${param.name ?? "positional parameter"}: ${JSON.stringify(result.issues, null, 2)}, arg: ${arg}, param: ${param}`,
-				}),
-			)
-		}
-		return Effect.succeed(result.value)
 	}
 
 	// Fallback for unknown type structure

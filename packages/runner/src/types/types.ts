@@ -37,13 +37,15 @@ export type ICEConfig<
 	R extends ICERoles<U> = ICERoles<U>,
 	N extends ICENetworks = ICENetworks,
 > = {
-	users: U
-	roles: R
-	networks: N
+	network: string
+	replica: ReplicaServiceClass
+	users?: U
+	roles?: R
+	networks?: N
 }
 
 export type ICEEnvironment = {
-	config: Partial<ICEConfig>
+	config: ICEConfig
 	tasks: TaskTree
 }
 
@@ -158,7 +160,6 @@ export type TaskTreeNode = Task | Scope
 export type TaskTree = Record<string, TaskTreeNode>
 
 export type ICEGlobalArgs = {
-	network: string
 	iceDirPath: string
 	background: boolean
 	policy: "reuse" | "restart"
@@ -166,7 +167,7 @@ export type ICEGlobalArgs = {
 }
 
 export type ICEConfigFile = {
-	default: (globalArgs: ICEGlobalArgs) => Promise<Partial<ICEConfig>>
+	default: (globalArgs: ICEGlobalArgs) => Promise<ICEConfig>
 } & {
 	[key: string]: TaskTreeNode
 }

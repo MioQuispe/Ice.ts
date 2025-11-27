@@ -54,7 +54,6 @@ export const InternetIdentity = (
 		| Partial<CustomCanisterConfig>
 		| ((env: TaskCtx) => Partial<CustomCanisterConfig>),
 ) => {
-	// const currentNetwork = "local" // TODO: how?
 	return canister.custom<_SERVICE, CanisterInitArgs>((env) => ({
 		canisterId: InternetIdentityIds.ic,
 		...(ConfigOrFn && typeof ConfigOrFn === "function"

@@ -18,7 +18,6 @@ export class ICEConfigError extends Data.TaggedError("ICEConfigError")<{
 }> {}
 
 const createService = (globalArgs: {
-	network: string
 	policy: "reuse" | "restart"
 	logLevel: "debug" | "info" | "error"
 	background: boolean
@@ -69,7 +68,6 @@ const createService = (globalArgs: {
 
 		const beforeGlobalArgs = performance.now()
 		const iceGlobalArgs: ICEGlobalArgs = {
-			network: globalArgs.network,
 			iceDirPath,
 			background: globalArgs.background,
 			policy: globalArgs.policy,
@@ -82,7 +80,7 @@ const createService = (globalArgs: {
 		const config = yield* Effect.tryPromise({
 			try: () => {
 				if (typeof d !== "function") {
-					return Promise.resolve({} as Partial<ICEConfig>)
+					return Promise.resolve({ network: "local" } as ICEConfig)
 				}
 				const result = d(iceGlobalArgs)
 				if (result instanceof Promise) {
@@ -122,10 +120,9 @@ const createService = (globalArgs: {
 export class ICEConfigService extends Context.Tag("ICEConfigService")<
 	ICEConfigService,
 	{
-		readonly config: Partial<ICEConfig>
+		readonly config: ICEConfig
 		readonly tasks: TaskTree
 		readonly globalArgs: {
-			network: string
 			logLevel: "debug" | "info" | "error"
 			background: boolean
 			policy: "reuse" | "restart"
@@ -134,7 +131,6 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 	}
 >() {
 	static readonly Live = (globalArgs: {
-		network: string
 		logLevel: "debug" | "info" | "error"
 		background: boolean
 		policy: "reuse" | "restart"
@@ -143,14 +139,13 @@ export class ICEConfigService extends Context.Tag("ICEConfigService")<
 
 	static readonly Test = (
 		globalArgs: {
-			network: string
 			logLevel: "debug" | "info" | "error"
 			background: boolean
 			policy: "reuse" | "restart"
 			origin: "extension" | "cli"
 		},
 		tasks: TaskTree,
-		config: Partial<ICEConfig>,
+		config: ICEConfig,
 	) =>
 		Layer.effect(
 			ICEConfigService,

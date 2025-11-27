@@ -1511,7 +1511,7 @@ export const resolveMode = (
 		)
 		// // const lastDeployment = yield* Deployments.get(
 		// 	canisterName,
-		// 	currentNetwork,
+		// 	network,
 		// )
 		const { installArgs, upgradeArgs } = depResults["install_args"]
 			?.result as TaskSuccess<InstallArgsTask>

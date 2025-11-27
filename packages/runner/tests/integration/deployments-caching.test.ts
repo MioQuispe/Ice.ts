@@ -128,7 +128,7 @@ const parseCsv = (txt: string): Scenario[] => {
 const csvPath = path.resolve(__dirname, "../fixtures/deploy_table.csv")
 const csv = fs.readFileSync(csvPath, "utf8")
 const allScenarios = parseCsv(csv)
-// const allScenarios = parseCsv(csv).slice(60 - 1, 80 - 1)
+// const allScenarios = parseCsv(csv).slice(1 - 1, 10 - 1)
 // const scenarios = allScenarios
 // const scenarios = allScenarios.slice(0, 10)
 const stripCanisterCache = <S extends CustomCanisterScope>(scope: S) => {
@@ -254,8 +254,9 @@ describe("deployments & caching decision table", () => {
 			},
 		})
 		const config = {
-			networks: { local: { replica: picReplica } },
-		} satisfies Partial<ICEConfig>
+			network: "local",
+			replica: picReplica,
+		} satisfies ICEConfig
 		const {
 			runtime: runtimeSeed,
 			telemetryExporter: telemetryExporterSeed,

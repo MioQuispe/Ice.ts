@@ -82,25 +82,20 @@ import { ICEConfig } from "../types/types.js"
 // 	}
 // }
 
-export type DefaultICEConfig = ICEConfig<
-	{
+export type DefaultICEConfig = {
+	network: string
+	users: {
 		[key: string]: ICEUser
-	},
-	{
-		// [key: string]: {
-		// }
+	}
+	roles: {
 		deployer: string
 		minter: string
 		controller: string
 		treasury: string
 		[name: string]: string
-	},
-	{
-		[key: string]: {
-			replica: ReplicaServiceClass
-		}
 	}
->
+	replica: ReplicaServiceClass
+}
 
 export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
 
@@ -192,72 +187,12 @@ type ResolvedConfig = TaskCtxExtension &
 
 export interface TaskCtxExtension {}
 
-// = TaskCtxBase<A, I>
-// export type TaskCtx<
-// 	A extends Record<string, unknown> = {},
-// 	I extends Partial<ICEConfig> = DefaultICEConfig,
-// > = TaskCtxExtension extends Partial<{
-// 	users: infer U extends ICEUsers
-// 	roles: infer R extends ICERoles
-// 	networks: infer N extends ICENetworks
-// }>
-// 	? TaskCtxBase<A, { users: U; roles: R; networks: N }>
-// 	: TaskCtxBase<A, DefaultICEConfig>
-
-// type test = TaskCtx<
-// 	{},
-// 	{
-// 		// users: {
-//         //     seppo: ICEUser
-//         //     jussi: ICEUser
-//         // }
-// 		// roles: { [key: string]: string }
-// 		// networks: { [key: string]: { replica: ReplicaServiceClass } }
-// 	}
-// >
-
-// interface TaskExtension {
-//     users: {
-//         seppo: ICEUser
-//         jussi: ICEUser
-//     }
-//     // roles: { [key: string]: string }
-//     // networks: { [key: string]: { replica: ReplicaServiceClass } }
-// }
-
-// type test = TaskCtx
-
 export type TaskCtx<
 	A extends Record<string, unknown> = {},
-	I extends Partial<ICEConfig> = ResolvedConfig,
+	I extends ICEConfig = ResolvedConfig,
 > = TaskCtxBase<A, I>
 
 export type BaseTaskCtx = Omit<TaskCtx, "taskPath" | "depResults" | "args">
-
-// export type TaskCtx<
-// 	A extends Record<string, unknown> = {},
-// 	I extends Partial<ICEConfig> = DefaultICEConfig,
-// > = TaskCtxExtension extends {
-// 	users: infer U extends ICEUsers
-// 	roles: infer R extends ICERoles
-// 	networks: infer N extends ICENetworks
-// }
-// 	? TaskCtxBase<A, ICEConfig<U, R, N>>
-// 	: TaskCtxBase<A, I>
-
-// 3. The "Runtime" Context (Used in external tasks and .extendEnv)
-// This looks at the global declaration to infer types.
-
-// export type TaskCtx<
-// 	A extends Record<string, unknown> = {},
-// 	I extends Partial<ICEConfig> = DefaultICEConfig,
-// > = TaskCtxExtension extends {
-// 	users: infer U extends ICEUsers
-// 	roles: infer R extends ICERoles
-// 	networks: infer N extends ICENetworks
-// }
-// 	? TaskCtxBase<A, ICEConfig<U, R, N>>
-// 	: TaskCtxBase<A, I>
 
 export const logLevelMap = {
 	debug: LogLevel.Debug,
@@ -342,14 +277,11 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					tasks: taskTree,
 				} = yield* ICEConfigService
 
-				const currentNetwork = globalArgs.network ?? "local"
-				const resolvedNetworks = config?.networks ?? defaultConfig.networks
-				const currentNetworkConfig = resolvedNetworks[currentNetwork]
-				const currentReplica = currentNetworkConfig?.replica
+				const currentReplica = config?.replica ?? defaultConfig.replica
 				if (!currentReplica) {
 					return yield* Effect.fail(
 						new TaskRuntimeError({
-							message: `No replica found for network: ${currentNetwork}`,
+							message: `No replica found for network: ${config.network}`,
 						}),
 					)
 				}
@@ -381,8 +313,6 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					...currentUsers,
 				}
 				const iceConfigService = yield* ICEConfigService
-				const configReplica =
-					config?.networks?.[currentNetwork]?.replica
 				const ICEConfigLayer = Layer.succeed(
 					ICEConfigService,
 					iceConfigService,
@@ -428,7 +358,13 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 				}
 
 				const defaultReplica = yield* Replica
-				const replica = configReplica ?? defaultReplica
+                // TODO: remove this
+                const resolvedNetworks = {
+                    [defaultConfig.network]: {
+                        replica: defaultConfig.replica,
+                    }
+                }
+				const replica = config?.replica ?? defaultConfig.replica
 
 				const ReplicaService = Layer.succeed(Replica, replica)
 				const DefaultConfigService = Layer.succeed(
@@ -486,7 +422,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					},
 					replica,
 					taskTree,
-					network: currentNetwork,
+					network: config?.network ?? defaultConfig.network,
 					networks: resolvedNetworks,
 					users: resolvedUsers,
 					roles: resolvedRoles,

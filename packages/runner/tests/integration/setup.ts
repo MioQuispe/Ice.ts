@@ -63,7 +63,7 @@ export const makeTestEnvEffect = (
 		origin: "cli",
 	} as const,
 	taskTree: TaskTree = {},
-	iceConfig: Partial<ICEConfig> = {},
+	iceConfig: ICEConfig,
 ) => {
 	const iceDirName = `.ice_test/${idx}`
 
@@ -93,13 +93,6 @@ export const makeTestEnvEffect = (
 				icpConfig: { betaFeatures: IcpConfigFlag.Enabled },
 			},
 		}),
-		{
-			iceDirPath: iceDirName,
-			network: globalArgs.network,
-			logLevel: globalArgs.logLevel,
-			background: globalArgs.background,
-			policy: globalArgs.policy,
-		},
 	)
 	const DefaultConfigLayer = DefaultConfig.Live.pipe(
 		Layer.provide(ReplicaService),
