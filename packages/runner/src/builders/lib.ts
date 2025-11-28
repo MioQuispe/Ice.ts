@@ -119,6 +119,9 @@ export const loadCanisterId = (taskCtx: TaskCtx, taskPath: string) =>
 		return Option.none()
 	})
 
+/**
+ * A task that resolves the configuration for a canister.
+ */
 export type ConfigTask<
 	Config extends Record<string, unknown>,
 	D extends Record<string, Task> = {},
@@ -225,37 +228,14 @@ export const makeConfigTask = <
 	} satisfies ConfigTask<Config, D, P>
 }
 
-// export const resolveConfig = <T, P extends Record<string, unknown>>(
-// 	taskCtx: TaskCtxShape,
-// 	configOrFn:
-// 		| ((args: { ctx: TaskCtxShape; deps: P }) => Promise<T>)
-// 		| ((args: { ctx: TaskCtxShape; deps: P }) => T)
-// 		| T,
-// ) =>
-// 	Effect.gen(function* () {
-// 		if (typeof configOrFn === "function") {
-// 			const configFn = configOrFn as (args: {
-// 				ctx: TaskCtxShape
-// 			}) => Promise<T> | T
-// 			const configResult = configFn({ ctx: taskCtx })
-// 			if (configResult instanceof Promise) {
-// 				return yield* Effect.tryPromise({
-// 					try: () => configResult,
-// 					catch: (error) => {
-// 						return new TaskError({ message: String(error) })
-// 					},
-// 				})
-// 			}
-// 			return configResult
-// 		}
-// 		return configOrFn
-// 	})
-
 export type CreateConfig = {
 	canisterId?: string
 	settings?: CanisterSettings
 }
 
+/**
+ * Creates a task that handles canister creation on the replica.
+ */
 export const makeCreateTask = <Config extends CreateConfig>(
 	configTask: ConfigTask<Config>,
 	tags: string[] = [],
@@ -492,6 +472,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 								canisterName,
 								network: taskCtx.network,
 								canisterId,
+								// TODO:
 							}),
 						catch: (error) => {
 							return new TaskError({ message: String(error) })
@@ -1043,6 +1024,10 @@ export type CanisterScopeSimple = {
 	}
 }
 
+/**
+ * Standard tags used to categorize tasks in the ICE runner.
+ * Useful for filtering and organizing tasks in the UI/CLI.
+ */
 export const Tags = {
 	HIDDEN: "$$ice/hidden",
 
@@ -1528,6 +1513,7 @@ export const resolveMode = (
 		)
 		// // const lastDeployment = yield* Deployments.get(
 		// 	canisterName,
+		// 	network,
 		// 	network,
 		// )
 		const { installArgs, upgradeArgs } = depResults["install_args"]
@@ -2347,7 +2333,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 									path: candid,
 									mtimeMs: maybePrevDeployment.candidMtimeMs,
 									sha256: maybePrevDeployment.candidHash,
-								}
+									}
 							: undefined
 					
 					// Get digests using cached fast path
@@ -2625,6 +2611,7 @@ export const makeInstallTask = <_SERVICE, I, U>(
 							taskCtx.deployments.get(
 								canisterName,
 								taskCtx.network,
+								
 							),
 						catch: (error) => {
 							return new TaskError({ message: String(error) })

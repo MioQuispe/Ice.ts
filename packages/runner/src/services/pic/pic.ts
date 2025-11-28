@@ -73,6 +73,10 @@ const defaultPicConfig: CreateInstanceOptions = {
 	application: [{ state: { type: SubnetStateType.New } }],
 }
 
+/**
+ * Implementation of the Replica for PocketIC.
+ * Manages a local PocketIC instance for testing and development.
+ */
 export class PICReplica implements Replica {
 	public host: string
 	public port: number
@@ -98,6 +102,15 @@ export class PICReplica implements Replica {
 	// The Deduplicator: Stores pending promises so concurrent tasks share 1 network call
 	private readonly inflightRequests = new Map<string, Promise<CanisterInfo>>()
 
+	/**
+	 * Creates a new PICReplica instance.
+	 *
+	 * @param opts.host - The host to bind to (default: http://0.0.0.0).
+	 * @param opts.port - The port to bind to.
+	 * @param opts.ttlSeconds - Time-to-live for the instance.
+	 * @param opts.picConfig - Configuration for the PocketIC instance (subnets, state).
+	 * @param opts.manual - If true, assumes PocketIC is already running and connects to it.
+	 */
 	constructor(opts: {
 		host?: string
 		port: number

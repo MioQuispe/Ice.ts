@@ -28,6 +28,7 @@ async function main() {
 						"@dfinity/principal",
 						"@dfinity/candid",
                         "@standard-schema/spec",
+                        "@dfinity/pic",
 						// add others here if they leak into TaskCtx / ICEConfig / whatever
 					],
 					importedLibraries: [],

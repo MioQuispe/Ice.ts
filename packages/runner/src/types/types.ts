@@ -4,9 +4,30 @@ import { TaskCancelled } from "../builders/lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import type { Identity } from "@icp-sdk/core/agent"
 
+export type ReplicaConfig = {
+	// TODO: use pocket-ic subnet config
+	subnet: "system" | "application" | "verified_application"
+	// type?: "ephemeral" | "persistent"
+	bitcoin?: boolean
+	canister_http?: boolean
+	type: "pocketic" | "dfx"
+}
+
+/**
+ * Represents a user identity in the ICE environment.
+ */
 export type ICEUser = {
+	/**
+	 * The cryptographic identity (signer).
+	 */
 	identity: Identity
+	/**
+	 * The principal ID as a string (e.g. "aaaaa-aa").
+	 */
 	principal: string
+	/**
+	 * The account ID (hex string) derived from the principal.
+	 */
 	accountId: string
 	// agent: Agent
 }
@@ -15,13 +36,30 @@ export type ICEUsers = Record<string, ICEUser>
 
 export type ICERoles<U extends ICEUsers = ICEUsers> = Record<string, keyof U> // or string, depending on how you normalize it
 
+/**
+ * The core configuration object for an ICE environment.
+ */
 export type ICEConfig<
 	U extends ICEUsers = ICEUsers,
 	R extends ICERoles<U> = ICERoles<U>,
 > = {
+	/**
+	 * A logical name for the network (e.g. "local", "ic", "staging").
+	 * Used for caching and state isolation.
+	 */
 	network: string
+	/**
+	 * The replica instance to connect to.
+	 */
 	replica?: Replica
+	/**
+	 * A map of named users/identities available in this environment.
+	 */
 	users?: U
+	/**
+	 * A map of role names to user keys.
+	 * Common roles: "deployer", "minter", "controller", "treasury".
+	 */
 	roles?: R
 }
 
@@ -76,6 +114,9 @@ export const Opt = <T>(value?: T): Opt<T> => {
 	return value || value === 0 ? [value] : []
 }
 
+/**
+ * Represents an executable task.
+ */
 export type Task<
 	out A = unknown,
 	D extends Record<string, Task> = {},
@@ -93,6 +134,9 @@ export type Task<
 	params: Record<string, TaskParam>
 }
 
+/**
+ * A task that caches its output based on inputs and dependencies.
+ */
 export type CachedTask<
 	A = unknown,
 	D extends Record<string, Task> = {},
@@ -119,6 +163,9 @@ export type CachedTask<
 	) => Promise<A>
 }
 
+/**
+ * A logical grouping of tasks and other scopes.
+ */
 export type Scope = {
 	_tag: "scope"
 	readonly id: symbol
@@ -128,6 +175,12 @@ export type Scope = {
 	children: Record<string, TaskTreeNode>
 	// this is just the modules default export
 	defaultTask?: string
+}
+
+export type BuilderResult = {
+	_tag: "builder"
+	make: () => Task | Scope
+	[key: string]: any
 }
 
 export type TaskTreeNode = Task | Scope
@@ -147,6 +200,9 @@ export type ICEConfigFile = {
 	[key: string]: TaskTreeNode
 }
 
+/**
+ * Helper type to infer the configuration type from an `Ice` config function.
+ */
 export type InferIceConfig<T> = T extends (
 	env: ICEGlobalArgs,
 ) => Promise<infer Config>

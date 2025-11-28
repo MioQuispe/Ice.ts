@@ -49,10 +49,25 @@ import { deployParams } from "./custom.js"
 import { ActorSubclass } from "../types/actor.js"
 import { decodeText, runFold, Stream } from "effect/Stream"
 
+/**
+ * Configuration for a Rust canister.
+ */
 export type RustCanisterConfig = {
-	readonly src: string // Path to Cargo.toml
-	readonly candid: string // Path to .did file
+	/**
+	 * Path to the directory containing Cargo.toml, or path to Cargo.toml itself.
+	 */
+	readonly src: string
+	/**
+	 * Path to the Candid interface file (.did).
+	 */
+	readonly candid: string
+	/**
+	 * Optional specific canister ID.
+	 */
 	readonly canisterId?: string
+	/**
+	 * Initial canister settings.
+	 */
 	readonly settings?: CanisterSettings
 }
 
@@ -769,6 +784,9 @@ type ResolveService<T> = UnwrapConfig<T> extends { candid: infer S }
 		: unknown
 	: unknown
 
+/**
+ * A builder for configuring Rust canisters.
+ */
 export class RustCanisterBuilder<
 	I,
 	U,
@@ -857,6 +875,12 @@ export class RustCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments for the `install` method.
+	 *
+	 * @param installArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 */
 	installArgs(
 		installArgsFn: (args: {
 			ctx: TCtx
@@ -947,6 +971,12 @@ export class RustCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments for the `postUpgrade` method.
+	 *
+	 * @param upgradeArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 */
 	upgradeArgs(
 		upgradeArgsFn: (args: {
 			ctx: TCtx
@@ -1034,6 +1064,12 @@ export class RustCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Declares dependencies needed for calculating arguments.
+	 *
+	 * @param providedDeps - A map of dependencies.
+	 * @returns The builder instance.
+	 */
 	deps<UP extends Record<string, AllowedDep>, NP extends NormalizeDeps<UP>>(
 		providedDeps: ValidProvidedDeps<D, UP>,
 	): RustCanisterBuilder<
@@ -1078,6 +1114,12 @@ export class RustCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Declares execution dependencies.
+	 *
+	 * @param dependencies - A map of dependencies.
+	 * @returns The builder instance.
+	 */
 	dependsOn<
 		UD extends Record<string, AllowedDep>,
 		ND extends NormalizeDeps<UD>,
@@ -1124,6 +1166,11 @@ export class RustCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Finalizes the canister definition.
+	 *
+	 * @returns A `RustCanisterScope` with all lifecycle tasks.
+	 */
 	make(
 		this: IsValid<S> extends true
 			? RustCanisterBuilder<I, U, S, D, P, Config, _SERVICE, TCtx>
@@ -1151,6 +1198,22 @@ export class RustCanisterBuilder<
 	}
 }
 
+/**
+ * Creates a Rust canister builder.
+ *
+ * @param canisterConfigOrFn - Configuration object or a function returning one.
+ * @returns A {@link RustCanisterBuilder}.
+ *
+ * @example
+ * ```typescript
+ * import { canister } from "@ice.ts/runner"
+ *
+ * export const ledger = canister.rust({
+ *   src: "canisters/ledger",
+ *   candid: "canisters/ledger.did"
+ * }).make()
+ * ```
+ */
 export const rustCanister = <
 	const Config extends RustCanisterConfig,
 	TCtx extends TaskCtx = TaskCtx,

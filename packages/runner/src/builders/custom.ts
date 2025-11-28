@@ -90,10 +90,25 @@ export type CustomCanisterScope<
 	}
 }
 
+/**
+ * Configuration for a custom canister (pre-built Wasm).
+ */
 export type CustomCanisterConfig = {
+	/**
+	 * Path to the pre-compiled Wasm file.
+	 */
 	readonly wasm: string
+	/**
+	 * Path to the Candid interface file (.did).
+	 */
 	readonly candid: string
+	/**
+	 * Optional specific canister ID.
+	 */
 	readonly canisterId?: string
+	/**
+	 * Initial canister settings.
+	 */
 	readonly settings?: CanisterSettings
 }
 
@@ -200,7 +215,7 @@ export const makeCustomDeployTask = <_SERVICE>(): DeployTask<_SERVICE> => {
 					// const canisterConfig = yield* resolveConfig(
 					// 	taskCtx,
 					// 	canisterConfigOrFn,
-					// )
+					// 	// )
 					// TODO: include this in taskCtx instead? parentNode?
 					const parentScope = (yield* getNodeByPath(
 						taskCtx,
@@ -654,6 +669,9 @@ type ResolveService<T> =
 			: unknown
 		: unknown
 
+/**
+ * A builder for configuring Custom canisters (pre-compiled Wasm).
+ */
 export class CustomCanisterBuilder<
 	I,
 	U,
@@ -758,6 +776,12 @@ export class CustomCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments for the `install` method.
+	 *
+	 * @param installArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 */
 	installArgs(
 		installArgsFn: (args: {
 			ctx: TCtx
@@ -847,7 +871,6 @@ export class CustomCanisterBuilder<
 				install_args,
 				// reuse installTask as upgradeTask by default unless overridden by user
 				// how will it affect caching? both get invalidated when argsFn has changed
-
 				// TODO: check in make instead?
 			},
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
@@ -859,6 +882,12 @@ export class CustomCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments for the `postUpgrade` method.
+	 *
+	 * @param upgradeArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 */
 	upgradeArgs(
 		upgradeArgsFn: (args: {
 			ctx: TCtx
@@ -950,6 +979,12 @@ export class CustomCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Declares dependencies needed for calculating arguments.
+	 *
+	 * @param dependencies - A map of dependencies.
+	 * @returns The builder instance.
+	 */
 	deps<UP extends Record<string, AllowedDep>, NP extends NormalizeDeps<UP>>(
 		dependencies: ValidProvidedDeps<D, UP>,
 	): CustomCanisterBuilder<
@@ -991,6 +1026,12 @@ export class CustomCanisterBuilder<
 		return new CustomCanisterBuilder(updatedScope, installArgs, upgradeArgs)
 	}
 
+	/**
+	 * Declares execution dependencies.
+	 *
+	 * @param dependsOn - A map of dependencies.
+	 * @returns The builder instance.
+	 */
 	dependsOn<
 		UD extends Record<string, AllowedDep>,
 		ND extends NormalizeDeps<UD>,
@@ -1033,6 +1074,11 @@ export class CustomCanisterBuilder<
 		return new CustomCanisterBuilder(updatedScope, installArgs, upgradeArgs)
 	}
 
+	/**
+	 * Finalizes the canister definition.
+	 *
+	 * @returns A `CustomCanisterScope` with all lifecycle tasks.
+	 */
 	make(
 		this: IsValid<S> extends true
 			? CustomCanisterBuilder<I, U, S, D, P, Config, _SERVICE, TCtx>
@@ -1059,6 +1105,22 @@ export class CustomCanisterBuilder<
 	}
 }
 
+/**
+ * Creates a Custom canister builder (for pre-built Wasm/Candid).
+ *
+ * @param canisterConfigOrFn - Configuration object or a function returning one.
+ * @returns A {@link CustomCanisterBuilder}.
+ *
+ * @example
+ * ```typescript
+ * import { canister } from "@ice.ts/runner"
+ *
+ * export const internet_identity = canister.custom({
+ *   wasm: "canisters/internet_identity/internet_identity.wasm",
+ *   candid: "canisters/internet_identity/internet_identity.did"
+ * }).make()
+ * ```
+ */
 export const customCanister = <
 	const Config extends CustomCanisterConfig,
 	TCtx extends TaskCtx = TaskCtx,

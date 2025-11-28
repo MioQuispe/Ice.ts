@@ -82,11 +82,21 @@ export type InitializedICEConfig<I extends ICEConfig> = {
 	}
 }
 
+/**
+ * Base execution context passed to tasks.
+ */
 export type TaskCtxBase<
 	A extends Record<string, unknown>,
 	I extends ICEConfig,
 > = InitializedICEConfig<I> & {
+	/**
+	 * The full tree of tasks defined in the config.
+	 */
 	readonly taskTree: TaskTree
+	/**
+	 * Helper to run another task from within a task.
+	 * Automatically handles dependencies and caching.
+	 */
 	readonly runTask: {
 		<T extends Task>(task: T): Promise<TaskSuccess<T>>
 		<T extends Task>(
@@ -98,11 +108,26 @@ export type TaskCtxBase<
 	readonly network: string
 	readonly replica: Replica
 
+	/**
+	 * The parsed arguments for the current task.
+	 */
 	readonly args: A
+	/**
+	 * The logical path of the current task (e.g. "backend:deploy").
+	 */
 	readonly taskPath: string
+	/**
+	 * Absolute path to the application root (where ice.config.ts lives).
+	 */
 	readonly appDir: string
+	/**
+	 * Absolute path to the .ice directory.
+	 */
 	readonly iceDir: string
 	readonly logLevel: "debug" | "info" | "error"
+	/**
+	 * Results of dependency tasks that have already run.
+	 */
 	readonly depResults: Record<
 		string,
 		{
@@ -110,6 +135,9 @@ export type TaskCtxBase<
 			result: unknown
 		}
 	>
+	/**
+	 * API to manage deployment metadata.
+	 */
 	readonly deployments: {
 		// readonly canisterIds: CanisterIds
 		/**
@@ -128,6 +156,9 @@ export type TaskCtxBase<
 			deployment: Omit<Deployment, "id">
 		}) => Promise<void>
 	}
+	/**
+	 * API to manage canister IDs (canister_ids.json).
+	 */
 	readonly canisterIds: {
 		// readonly canisterIds: CanisterIds
 		/**
@@ -147,6 +178,9 @@ export type TaskCtxBase<
 		 */
 		removeCanisterId: (canisterName: string) => Promise<void>
 	}
+	/**
+	 * Interactive prompts.
+	 */
 	readonly prompts: {
 		confirm: (confirmOptions: ConfirmOptions) => Promise<boolean>
 	}
@@ -156,8 +190,21 @@ export type TaskCtxBase<
 type ResolvedConfig = TaskCtxExtension &
 	Omit<DefaultICEConfig, keyof TaskCtxExtension>
 
+/**
+ * Interface for module augmentation to extend TaskCtx with user-specific types.
+ *
+ * @example
+ * ```typescript
+ * declare module "@ice.ts/runner" {
+ *   interface TaskCtxExtension extends InferIceConfig<typeof ice> {}
+ * }
+ * ```
+ */
 export interface TaskCtxExtension {}
 
+/**
+ * The full execution context available to tasks and canister hooks.
+ */
 export type TaskCtx<
 	A extends Record<string, unknown> = {},
 	I extends ICEConfig = ResolvedConfig,

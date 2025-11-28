@@ -27,8 +27,17 @@ import {
 import { type } from "arktype"
 import { ActorSubclass } from "../types/actor.js"
 
+/**
+ * Configuration for a remote canister (existing on network).
+ */
 export type RemoteCanisterConfig = {
+	/**
+	 * The canister ID of the remote canister.
+	 */
 	readonly canisterId: string
+	/**
+	 * Path to the Candid interface file (.did).
+	 */
 	readonly candid: string
 }
 
@@ -338,6 +347,9 @@ type ResolveService<T> =
 			: unknown
 		: unknown
 
+/**
+ * A builder for configuring Remote canisters (existing on mainnet/testnet).
+ */
 export class RemoteCanisterBuilder<
 	const Config extends RemoteCanisterConfig = RemoteCanisterConfig,
 	_SERVICE = ResolveService<Config>,
@@ -352,6 +364,11 @@ export class RemoteCanisterBuilder<
 		return this as unknown as RemoteCanisterBuilder<Config, T, TCtx>
 	}
 
+	/**
+	 * Finalizes the canister definition.
+	 *
+	 * @returns A `RemoteCanisterScope` containing deployment/interaction tasks.
+	 */
 	make(): RemoteCanisterScope<_SERVICE> {
 		const linkedChildren = linkChildren(this.#scope.children)
 
@@ -364,6 +381,22 @@ export class RemoteCanisterBuilder<
 	}
 }
 
+/**
+ * Creates a Remote canister builder (references an existing canister).
+ *
+ * @param canisterConfigOrFn - Configuration object or a function returning one.
+ * @returns A {@link RemoteCanisterBuilder}.
+ *
+ * @example
+ * ```typescript
+ * import { canister } from "@ice.ts/runner"
+ *
+ * export const nns_governance = canister.remote({
+ *   canisterId: "rrkah-fqaaa-aaaaa-aaaaq-cai",
+ *   candid: "canisters/nns_governance.did"
+ * }).make()
+ * ```
+ */
 export const remoteCanister = <
 	const Config extends RemoteCanisterConfig,
 	TCtx extends TaskCtx = TaskCtx,

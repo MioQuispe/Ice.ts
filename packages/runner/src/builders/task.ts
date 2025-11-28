@@ -268,6 +268,11 @@ const matchParam = match
 	)
 	.default("assert")
 
+/**
+ * A builder for defining ICE tasks with typed parameters, dependencies, and execution logic.
+ *
+ * This class is not instantiated directly. Use the {@link task} function to start building a task.
+ */
 class TaskBuilder<
 	T extends Task,
 	TP extends Record<string, TaskParam>,
@@ -279,6 +284,22 @@ class TaskBuilder<
 	}
 
 	// We use `const` generic to infer exact literals (e.g. isOptional: true)
+	/**
+	 * Defines the parameters that this task accepts.
+	 * Parameters can be named (flags) or positional.
+	 *
+	 * @param inputParams - An object defining the parameters.
+	 * @returns The builder instance with updated parameter types.
+	 *
+	 * @example
+	 * ```typescript
+	 * task("greet")
+	 *   .params({
+	 *     name: { type: "string", description: "Who to greet" },
+	 *     loud: { type: "boolean", isFlag: true, default: false }
+	 *   })
+	 * ```
+	 */
 	params<const IP extends ValidateInputParams<IP>>(inputParams: IP) {
 		const namedParams: Record<string, NamedParam> = {}
 		const positionalParams: Array<PositionalParam> = []
@@ -324,6 +345,25 @@ class TaskBuilder<
 		>
 	}
 
+	/**
+	 * Declares local dependencies (tasks or canisters) that will be injected into the `run` context.
+	 *
+	 * These dependencies are *not* automatically executed before this task.
+	 * Instead, they are made available in the `deps` object for manual invocation.
+	 *
+	 * @param providedDeps - A map of dependencies to inject.
+	 * @returns The builder instance with updated dependency types.
+	 *
+	 * @example
+	 * ```typescript
+	 * task("integration-test")
+	 *   .deps({ backend: backendCanister })
+	 *   .run(async ({ deps }) => {
+	 *     const { backend } = deps
+	 *     await backend.actor.init()
+	 *   })
+	 * ```
+	 */
 	deps<UP extends Record<string, AllowedDep>, NP extends NormalizeDeps<UP>>(
 		providedDeps: ValidProvidedDeps<T["dependsOn"], UP>,
 	) {
@@ -339,6 +379,25 @@ class TaskBuilder<
 		>
 	}
 
+	/**
+	 * Declares execution dependencies. These tasks/canisters MUST complete successfully
+	 * before this task is allowed to run.
+	 *
+	 * Their results are also available in the `deps` object.
+	 *
+	 * @param dependencies - A map of dependencies to await.
+	 * @returns The builder instance.
+	 *
+	 * @example
+	 * ```typescript
+	 * task("deploy-all")
+	 *   .dependsOn({ backend: backend.children.deploy })
+	 *   .run(async ({ deps }) => {
+	 *     // Backend deploy is guaranteed to be finished here
+	 *     console.log("Backend deployed:", deps.backend)
+	 *   })
+	 * ```
+	 */
 	dependsOn<
 		UD extends Record<string, AllowedDep>,
 		ND extends NormalizeDeps<UD>,
@@ -355,6 +414,20 @@ class TaskBuilder<
 		>
 	}
 
+	/**
+	 * Defines the execution logic for the task.
+	 *
+	 * @param fn - An async function that receives the task context.
+	 * @returns The builder instance.
+	 *
+	 * @example
+	 * ```typescript
+	 * .run(async ({ args, deps, ctx }) => {
+	 *   console.log("Running task with", args)
+	 *   return "success"
+	 * })
+	 * ```
+	 */
 	run<Output>(
 		fn: (env: {
 			args: ParamsToArgs<TP>
@@ -408,6 +481,11 @@ class TaskBuilder<
 		return new TaskBuilder(newTask) as TaskBuilder<typeof newTask, TP, TCtx>
 	}
 
+	/**
+	 * Finalizes the task definition and returns the task object.
+	 *
+	 * @returns The constructed `Task` object.
+	 */
 	make(): T & { params: TP } {
 		const s = {} as TP
 		// TODO: relink dependencies?
@@ -418,6 +496,22 @@ class TaskBuilder<
 	}
 }
 
+/**
+ * Creates a new task builder.
+ *
+ * @param description - A brief description of what the task does.
+ * @returns A {@link TaskBuilder} to configure the task.
+ *
+ * @example
+ * ```typescript
+ * import { task } from "@ice.ts/runner"
+ *
+ * export const myTask = task("My useful task")
+ *   .params({ name: { type: "string" } })
+ *   .run(({ args }) => console.log(args.name))
+ *   .make()
+ * ```
+ */
 export function task(description = "") {
 	const baseTask = {
 		_tag: "task",

@@ -186,7 +186,16 @@ Error getting identity (FiberFailure) IdsError: Identity does not exist
 
 const runtime = ManagedRuntime.make(Layer.mergeAll(NodeContext.layer))
 
+/**
+ * Utilities for managing Internet Computer identities.
+ */
 export const Ids = {
+	/**
+	 * Loads an identity from the local dfx configuration.
+	 *
+	 * @param name - The name of the dfx identity to load. Defaults to the currently selected identity.
+	 * @returns An `ICEUser` object containing the identity, principal, and account ID.
+	 */
 	fromDfx: async (name?: string) => {
 		try {
 			const user = await runtime.runPromise(getIdentity(name))
@@ -196,6 +205,12 @@ export const Ids = {
 			throw error
 		}
 	},
+	/**
+	 * Creates an identity from a PEM string (Ed25519 or Secp256k1).
+	 *
+	 * @param pem - The PEM-encoded private key.
+	 * @returns An `ICEUser` object.
+	 */
 	fromPem: async (pem: string) => {
 		try {
 			const identity = parseIdentityFromPem(pem)

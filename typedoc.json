@@ -1,0 +1,18 @@
+{
+  "entryPoints": ["packages/runner/src/index.ts", "packages/canisters/src/index.ts"],
+  "out": "docs",
+  "name": "ICE Task Runner",
+  "includeVersion": true,
+  "lightTheme": "light",
+  "darkTheme": "dark",
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeInternal": true,
+  "hideGenerator": true,
+  "searchInComments": true,
+  "navigation": {
+    "includeCategories": true,
+    "includeGroups": true
+  },
+  "plugin": []
+}

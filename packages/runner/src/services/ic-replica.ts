@@ -127,6 +127,9 @@ export class DfxError extends Data.TaggedError("DfxError")<{
 	readonly message: string
 }> {}
 
+/**
+ * Implementation of the Replica for the Internet Computer (Mainnet) or standard `dfx` local replica.
+ */
 export class ICReplica implements Replica {
 	public readonly host: string = "http://0.0.0.0"
 	public readonly port: number = 8080
@@ -151,6 +154,14 @@ export class ICReplica implements Replica {
 	// The Deduplicator: Stores pending promises so concurrent tasks share 1 network call
 	private readonly inflightRequests = new Map<string, Promise<CanisterInfo>>()
 
+	/**
+	 * Creates a new ICReplica instance.
+	 *
+	 * @param opts.host - The host URL of the replica (e.g. "https://ic0.app").
+	 * @param opts.port - The port number.
+	 * @param opts.manual - If true, assumes the replica is already running (always true for mainnet).
+	 * @param opts.isDev - Whether this is a development environment (local) or production (mainnet).
+	 */
 	constructor(opts: {
 		host: string
 		port: number

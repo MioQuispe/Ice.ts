@@ -51,9 +51,21 @@ import { deployParams } from "./custom.js"
 import { ActorSubclass } from "../types/actor.js"
 // layer types are re-exported from ./lib.js
 
+/**
+ * Configuration for a Motoko canister.
+ */
 export type MotokoCanisterConfig = {
+	/**
+	 * Path to the main Motoko source file (e.g. "canisters/main.mo").
+	 */
 	readonly src: string
+	/**
+	 * Optional specific canister ID. If not provided, one will be generated/managed automatically.
+	 */
 	readonly canisterId?: string
+	/**
+	 * Initial canister settings (cycles, resource allocation, etc.).
+	 */
 	readonly settings?: CanisterSettings
 }
 
@@ -86,69 +98,6 @@ export type MotokoCanisterScope<
 }
 
 export const motokoDeployParams = deployParams
-// export const motokoDeployParams = {
-// 	mode: {
-// 		type: InstallModes,
-// 		description: "The mode to install the canister in",
-// 		default: "install",
-// 		isFlag: true as const,
-// 		isOptional: true as const,
-// 		isVariadic: false as const,
-// 		name: "mode",
-// 		aliases: ["m"],
-// 		decode: (value: string) => value as InstallModes,
-// 	},
-// 	args: {
-// 		// TODO: maybe not Uint8Array?
-// 		type: type("TypedArray.Uint8"),
-// 		description: "The arguments to pass to the canister as a candid string",
-// 		// default: undefined,
-// 		isFlag: true as const,
-// 		isOptional: true as const,
-// 		isVariadic: false as const,
-// 		name: "args",
-// 		aliases: ["a"],
-// 		decode: (value: string) => {
-// 			// TODO: convert to candid string
-// 			return new Uint8Array(Buffer.from(value))
-// 		},
-// 	},
-// 	// TODO: provide defaults. just read from fs by canister name
-// 	// should we allow passing in wasm bytes?
-// 	wasm: {
-// 		type: type("string"),
-// 		description: "The path to the wasm file",
-// 		isFlag: true as const,
-// 		isOptional: true as const,
-// 		isVariadic: false as const,
-// 		name: "wasm",
-// 		aliases: ["w"],
-// 		decode: (value: string) => value as string,
-// 	},
-// 	// TODO: provide defaults
-// 	candid: {
-// 		// TODO: should be encoded?
-// 		type: type("string"),
-// 		description: "The path to the candid file",
-// 		isFlag: true as const,
-// 		isOptional: true as const,
-// 		isVariadic: false as const,
-// 		name: "candid",
-// 		aliases: ["c"],
-// 		decode: (value: string) => value as string,
-// 	},
-// 	// TODO: provide defaults
-// 	canisterId: {
-// 		type: type("string"),
-// 		description: "The canister ID to install the canister in",
-// 		isFlag: true as const,
-// 		isOptional: true as const,
-// 		isVariadic: false as const,
-// 		name: "canisterId",
-// 		aliases: ["i"],
-// 		decode: (value: string) => value as string,
-// 	},
-// }
 
 export type MotokoDeployTask<_SERVICE = unknown> = Omit<
 	Task<
@@ -682,6 +631,10 @@ type ResolveService<T> =
 			: unknown
 		: unknown
 
+/**
+ * A builder class for configuring Motoko canisters.
+ * Provides a fluent API to set installation arguments, upgrade arguments, and dependencies.
+ */
 export class MotokoCanisterBuilder<
 	const Config extends MotokoCanisterConfig = MotokoCanisterConfig,
 	_SERVICE = ResolveService<Config>,
@@ -786,6 +739,19 @@ export class MotokoCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments to pass to the canister's `install` method (initial deployment).
+	 *
+	 * @param installArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 *
+	 * @example
+	 * ```typescript
+	 * .installArgs(({ ctx }) => ({
+	 *   owner: ctx.users.default.principal
+	 * }))
+	 * ```
+	 */
 	installArgs(
 		installArgsFn: (args: {
 			ctx: TCtx
@@ -874,6 +840,12 @@ export class MotokoCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Defines the arguments to pass to the canister's `postUpgrade` method (subsequent deployments).
+	 *
+	 * @param upgradeArgsOrFn - A value or function returning the arguments.
+	 * @returns The builder instance.
+	 */
 	upgradeArgs(
 		upgradeArgsFn: (args: {
 			ctx: TCtx
@@ -961,6 +933,20 @@ export class MotokoCanisterBuilder<
 		)
 	}
 
+	/**
+	 * Declares dependencies (other canisters or tasks) that are required for calculating init/upgrade args.
+	 *
+	 * @param providedDeps - A map of dependencies.
+	 * @returns The builder instance.
+	 *
+	 * @example
+	 * ```typescript
+	 * .deps({ ledger: ledgerCanister })
+	 * .installArgs(({ deps }) => ({
+	 *   ledgerId: deps.ledger.canisterId
+	 * }))
+	 * ```
+	 */
 	deps<UP extends Record<string, AllowedDep>, NP extends NormalizeDeps<UP>>(
 		providedDeps: ValidProvidedDeps<D, UP>,
 	): MotokoCanisterBuilder<
@@ -1001,6 +987,11 @@ export class MotokoCanisterBuilder<
 		return new MotokoCanisterBuilder(updatedScope, installArgs, upgradeArgs)
 	}
 
+	/**
+	 * Declares execution dependencies. The canister tasks will wait for these to complete.
+	 *
+	 * @param dependencies - A map of dependencies.
+	 */
 	dependsOn<
 		UD extends Record<string, AllowedDep>,
 		ND extends NormalizeDeps<UD>,
@@ -1043,6 +1034,11 @@ export class MotokoCanisterBuilder<
 		return new MotokoCanisterBuilder(updatedScope, installArgs, upgradeArgs)
 	}
 
+	/**
+	 * Finalizes the canister definition and returns the scope.
+	 *
+	 * @returns A `MotokoCanisterScope` containing all lifecycle tasks (build, deploy, etc).
+	 */
 	make(
 		this: IsValid<S> extends true
 			? MotokoCanisterBuilder<Config, _SERVICE, I, U, D, P, S, TCtx>
@@ -1070,6 +1066,21 @@ export class MotokoCanisterBuilder<
 	}
 }
 
+/**
+ * Creates a Motoko canister builder.
+ *
+ * @param canisterConfigOrFn - Configuration object or a function returning one.
+ * @returns A {@link MotokoCanisterBuilder}.
+ *
+ * @example
+ * ```typescript
+ * import { canister } from "@ice.ts/runner"
+ *
+ * export const backend = canister.motoko({
+ *   src: "canisters/backend/main.mo"
+ * }).make()
+ * ```
+ */
 export const motokoCanister = <
 	const Config extends MotokoCanisterConfig,
 	TCtx extends TaskCtx = TaskCtx,
