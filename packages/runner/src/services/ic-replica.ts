@@ -129,6 +129,8 @@ export class DfxError extends Data.TaggedError("DfxError")<{
 
 /**
  * Implementation of the Replica for the Internet Computer (Mainnet) or standard `dfx` local replica.
+ *
+ * @group Environment
  */
 export class ICReplica implements Replica {
 	public readonly host: string = "http://0.0.0.0"

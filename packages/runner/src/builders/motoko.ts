@@ -53,6 +53,8 @@ import { ActorSubclass } from "../types/actor.js"
 
 /**
  * Configuration for a Motoko canister.
+ *
+ * @group Canister Definitions
  */
 export type MotokoCanisterConfig = {
 	/**
@@ -634,6 +636,8 @@ type ResolveService<T> =
 /**
  * A builder class for configuring Motoko canisters.
  * Provides a fluent API to set installation arguments, upgrade arguments, and dependencies.
+ *
+ * @group Canister Definitions
  */
 export class MotokoCanisterBuilder<
 	const Config extends MotokoCanisterConfig = MotokoCanisterConfig,

@@ -5,6 +5,8 @@ import type {
 
 /**
  * Optional type wrapper, commonly used for Motoko optional values.
+ *
+ * @group Utilities
  */
 export { Opt } from "./types/types.js"
 
@@ -29,6 +31,8 @@ export { Opt } from "./types/types.js"
  *   candid: "canisters/ledger.did",
  * }).make()
  * ```
+ *
+ * @group Essentials
  */
 export { canister } from "./builders/index.js"
 
@@ -52,6 +56,8 @@ export { canister } from "./builders/index.js"
  *   })
  *   .make()
  * ```
+ *
+ * @group Essentials
  */
 export { task } from "./builders/index.js"
 
@@ -72,25 +78,39 @@ export { task } from "./builders/index.js"
  * })
  * // Usage via CLI: ice run db:reset
  * ```
+ *
+ * @group Essentials
  */
 export { scope } from "./builders/index.js"
 
 export type { CanisterScopeSimple } from "./builders/lib.js"
+/**
+ * @group Canister Definitions
+ */
 export type {
 	CustomCanisterScope,
 	CustomCanisterConfig,
 	CustomCanisterBuilder,
 } from "./builders/custom.js"
+/**
+ * @group Canister Definitions
+ */
 export type {
 	MotokoCanisterBuilder,
 	MotokoCanisterConfig,
 	MotokoCanisterScope,
 } from "./builders/motoko.js"
+/**
+ * @group Canister Definitions
+ */
 export type {
 	RemoteCanisterScope,
 	RemoteCanisterConfig,
 	RemoteCanisterBuilder,
 } from "./builders/remote.js"
+/**
+ * @group Canister Definitions
+ */
 export type {
 	RustCanisterBuilder,
 	RustCanisterConfig,
@@ -109,10 +129,15 @@ export type {
  * const pem = await fs.readFile("./identity.pem", "utf8")
  * const user = await Ids.fromPem(pem)
  * ```
+ *
+ * @group Environment
  */
 export { Ids } from "./ids.js"
 
 export type { InstallModes } from "./services/replica.js"
+/**
+ * @group Execution Context
+ */
 export type { TaskCtxExtension } from "./services/taskRuntime.js"
 
 /**
@@ -128,6 +153,8 @@ export type { TaskCtxExtension } from "./services/taskRuntime.js"
  *   port: 8080,
  * })
  * ```
+ *
+ * @group Environment
  */
 export { PICReplica } from "./services/pic/pic.js"
 
@@ -146,10 +173,16 @@ export { PICReplica } from "./services/pic/pic.js"
  */
 export { ICReplica } from "./services/ic-replica.js"
 
+/**
+ * @hidden
+ */
 export { type StandardSchemaV1 } from "@standard-schema/spec"
 export { type CreateInstanceOptions } from "@dfinity/pic"
 
 // Export additional types for user configs
+/**
+ * @group Environment
+ */
 export type {
 	ICEConfig,
 	ICEGlobalArgs,
@@ -161,7 +194,13 @@ export type {
 	InferIceConfig,
 } from "./types/types.js"
 
+/**
+ * @group Utilities
+ */
 export type { Principal } from "@dfinity/principal"
+/**
+ * @group Utilities
+ */
 export type { Identity } from "@dfinity/agent"
 
 // export const Ice = (
@@ -215,6 +254,8 @@ export type { Identity } from "@dfinity/agent"
  *   }
  * })
  * ```
+ *
+ * @group Essentials
  */
 export const Ice = <C extends ICEConfig>(
 	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
@@ -247,5 +288,7 @@ export { runCli } from "./cli/index.js"
  *   interface TaskCtxExtension extends InferIceConfig<typeof ice> {}
  * }
  * ```
+ *
+ * @group Execution Context
  */
 export type { TaskCtx } from "./services/taskRuntime.js"

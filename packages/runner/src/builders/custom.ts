@@ -671,6 +671,8 @@ type ResolveService<T> =
 
 /**
  * A builder for configuring Custom canisters (pre-compiled Wasm).
+ *
+ * @group Canister Definitions
  */
 export class CustomCanisterBuilder<
 	I,

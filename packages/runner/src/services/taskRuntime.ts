@@ -199,11 +199,15 @@ type ResolvedConfig = TaskCtxExtension &
  *   interface TaskCtxExtension extends InferIceConfig<typeof ice> {}
  * }
  * ```
+ *
+ * @group Execution Context
  */
 export interface TaskCtxExtension {}
 
 /**
  * The full execution context available to tasks and canister hooks.
+ *
+ * @group Execution Context
  */
 export type TaskCtx<
 	A extends Record<string, unknown> = {},

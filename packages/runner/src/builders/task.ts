@@ -511,6 +511,8 @@ class TaskBuilder<
  *   .run(({ args }) => console.log(args.name))
  *   .make()
  * ```
+ *
+ * @group Essentials
  */
 export function task(description = "") {
 	const baseTask = {

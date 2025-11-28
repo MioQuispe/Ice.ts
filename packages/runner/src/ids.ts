@@ -188,6 +188,8 @@ const runtime = ManagedRuntime.make(Layer.mergeAll(NodeContext.layer))
 
 /**
  * Utilities for managing Internet Computer identities.
+ *
+ * @group Environment
  */
 export const Ids = {
 	/**

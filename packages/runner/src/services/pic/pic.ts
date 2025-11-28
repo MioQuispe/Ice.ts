@@ -76,6 +76,8 @@ const defaultPicConfig: CreateInstanceOptions = {
 /**
  * Implementation of the Replica for PocketIC.
  * Manages a local PocketIC instance for testing and development.
+ *
+ * @group Environment
  */
 export class PICReplica implements Replica {
 	public host: string

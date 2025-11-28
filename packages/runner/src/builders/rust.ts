@@ -786,6 +786,8 @@ type ResolveService<T> = UnwrapConfig<T> extends { candid: infer S }
 
 /**
  * A builder for configuring Rust canisters.
+ *
+ * @group Canister Definitions
  */
 export class RustCanisterBuilder<
 	I,

@@ -22,6 +22,8 @@ import { Tags } from "./lib.js"
  * })
  * // Usage: ice run db:reset
  * ```
+ *
+ * @group Essentials
  */
 export const scope = (children: TaskTree) => {
 	const scopeDefinition = {

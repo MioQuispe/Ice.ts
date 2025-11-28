@@ -38,6 +38,8 @@ export type ICERoles<U extends ICEUsers = ICEUsers> = Record<string, keyof U> //
 
 /**
  * The core configuration object for an ICE environment.
+ *
+ * @group Environment
  */
 export type ICEConfig<
 	U extends ICEUsers = ICEUsers,
@@ -109,7 +111,13 @@ export interface PositionalParam<T = unknown> extends TaskParam<T> {
 
 // TODO: we only want the shape of the task here
 
+/**
+ * @group Utilities
+ */
 export type Opt<T> = [T] | []
+/**
+ * @group Utilities
+ */
 export const Opt = <T>(value?: T): Opt<T> => {
 	return value || value === 0 ? [value] : []
 }

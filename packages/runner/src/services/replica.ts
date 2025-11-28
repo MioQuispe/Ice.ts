@@ -176,6 +176,9 @@ export type LogVisibility =
 	| { public: null }
 	| { allowed_viewers: string[] }
 
+/**
+ * @group Canister Definitions
+ */
 export type CanisterSettings = {
 	controllers?: string[]
 	freezing_threshold?: bigint
@@ -278,6 +281,9 @@ export class ReplicaStartError extends Data.TaggedError("ReplicaStartError")<{
 	readonly cause?: Error
 }> {}
 
+/**
+ * @group Environment
+ */
 export type Replica = {
 	// TODO:
 	// topology: Topology

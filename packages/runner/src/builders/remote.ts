@@ -349,6 +349,8 @@ type ResolveService<T> =
 
 /**
  * A builder for configuring Remote canisters (existing on mainnet/testnet).
+ *
+ * @group Canister Definitions
  */
 export class RemoteCanisterBuilder<
 	const Config extends RemoteCanisterConfig = RemoteCanisterConfig,

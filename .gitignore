@@ -30,3 +30,4 @@ pocket_ic_server.md
 packages/runner/tests/fixtures/ice_deploy_trace.json
 .gitignore
 packages/runner/tests/integration/caching-test-sharded.sh
+packages/runner/docs/**
