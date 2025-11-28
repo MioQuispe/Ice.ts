@@ -58,6 +58,12 @@ import { confirm } from "@clack/prompts"
 import { Schema } from "effect"
 import { ClackLoggingLive } from "../services/logger.js"
 
+declare global {
+	// Maps "path/to/file" -> Service Interface
+	interface IceCanisterPaths {}
+}
+export type UnwrapConfig<T> = T extends (...args: any) => infer R ? Awaited<R> : T
+
 // Schema.TaggedError
 
 const baseLayer = Layer.mergeAll(

@@ -28,6 +28,7 @@ import {
 	ConfigTask,
 	makeLoggerLayer,
 	defaultBuilderRuntime,
+	UnwrapConfig,
 } from "./lib.js"
 import {
 	getNodeByPath,
@@ -90,15 +91,15 @@ export type CustomCanisterScope<
 }
 
 export type CustomCanisterConfig = {
-	wasm: string
-	candid: string
-	canisterId?: string
+	readonly wasm: string
+	readonly candid: string
+	readonly canisterId?: string
 }
 
 export const deployParams = {
 	mode: {
-        // TODO: doesnt become optional unless default is removed
-        // fix the type of runTask
+		// TODO: doesnt become optional unless default is removed
+		// fix the type of runTask
 		type: InstallModes.or("'auto'"),
 		description: "The mode to install the canister in",
 		default: "auto" as const,
@@ -299,7 +300,8 @@ export const makeCustomDeployTask = <_SERVICE>(): DeployTask<_SERVICE> => {
 								mode: taskArgs.mode,
 								canisterId,
 								wasm: wasmPath,
-								forceReinstall: taskArgs.forceReinstall ?? false,
+								forceReinstall:
+									taskArgs.forceReinstall ?? false,
 							}),
 						catch: (error) => {
 							return new TaskError({
@@ -638,14 +640,21 @@ type ArgsFields<
 		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
 }
 
+type ResolveService<T> =
+	UnwrapConfig<T> extends { candid: infer S }
+		? S extends keyof IceCanisterPaths
+			? IceCanisterPaths[S]
+			: unknown
+		: unknown
+
 export class CustomCanisterBuilder<
 	I,
 	U,
 	S extends CustomCanisterScope<_SERVICE, I, U, D, P>,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
-	Config extends CustomCanisterConfig,
-	_SERVICE = unknown,
+	const Config extends CustomCanisterConfig,
+	_SERVICE = ResolveService<Config>,
 	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: S
@@ -659,6 +668,20 @@ export class CustomCanisterBuilder<
 		this.#scope = scope
 		this.#installArgs = installArgs
 		this.#upgradeArgs = upgradeArgs
+	}
+
+	// ✨ ADD this method
+	as<T>(): CustomCanisterBuilder<
+		I,
+		U,
+		CustomCanisterScope<T, I, U, D, P>,
+		D,
+		P,
+		Config,
+		T,
+		TCtx
+	> {
+		return this as any
 	}
 
 	// TODO: does nothing? what do we even use it for?
@@ -1026,39 +1049,29 @@ export class CustomCanisterBuilder<
 			children: linkedChildren,
 		} satisfies CustomCanisterScope<_SERVICE, I, U, D, P>
 		return finalScope
-		// const self = this as CustomCanisterBuilder<I, S, D, P, Config, _SERVICE>
-		// return {
-		// 	...self.#scope,
-		// 	id: Symbol("scope"),
-		// 	children: Record.map(self.#scope.children, (value) => ({
-		// 		...value,
-		// 		id: Symbol("task"),
-		// 	})),
-		// } satisfies CanisterScope<_SERVICE, I, D, P>
 	}
 }
 
 export const customCanister = <
-	_SERVICE = unknown,
+	const Config extends CustomCanisterConfig,
+	TCtx extends TaskCtx = TaskCtx,
+	_SERVICE = ResolveService<Config>,
 	I = unknown,
 	U = unknown,
-	TCtx extends TaskCtx = TaskCtx,
 >(
 	canisterConfigOrFn:
-		| ((args: { ctx: TCtx }) => Promise<CustomCanisterConfig>)
-		| ((args: { ctx: TCtx }) => CustomCanisterConfig)
-		| CustomCanisterConfig,
+		| Config
+		| ((args: { ctx: TCtx }) => Config | Promise<Config>),
 ): CustomCanisterBuilder<
 	I,
 	U,
 	CustomCanisterScope<_SERVICE, I, U, {}, {}>,
 	{},
 	{},
-	CustomCanisterConfig,
+	Config,
 	_SERVICE,
 	TCtx
 > => {
-	// TODO: fix later. no any
 	const config = makeConfigTask(canisterConfigOrFn as any)
 	const installArgs = {
 		fn: () => [] as I,
@@ -1102,7 +1115,7 @@ export const customCanister = <
 		CustomCanisterScope<_SERVICE, I, U, {}, {}>,
 		{},
 		{},
-		CustomCanisterConfig,
+		Config,
 		_SERVICE,
 		TCtx
 	>(initialScope, installArgs, upgradeArgs)

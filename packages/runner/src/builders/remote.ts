@@ -12,6 +12,7 @@ import {
 	makeLoggerLayer,
 	CanisterDidModule,
 	defaultBuilderRuntime,
+	UnwrapConfig,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath, ResolvedParamsToArgs } from "../tasks/lib.js"
@@ -27,12 +28,12 @@ import { type } from "arktype"
 import { ActorSubclass } from "../types/actor.js"
 
 export type RemoteCanisterConfig = {
-	canisterId: string
-	candid: string
+	readonly canisterId: string
+	readonly candid: string
 }
 
 export type RemoteCanisterScope<
-	_SERVICE = any,
+	_SERVICE = unknown,
 	D extends Record<string, Task> = Record<string, Task>,
 	P extends Record<string, Task> = Record<string, Task>,
 > = {
@@ -83,11 +84,7 @@ export type RemoteDeployTaskArgs = ResolvedParamsToArgs<
 	typeof remoteDeployParams
 >
 
-export const makeRemoteDeployTask = <_SERVICE>(
-	canisterConfigOrFn:
-		| ((args: { ctx: TaskCtx }) => Promise<RemoteCanisterConfig>)
-		| ((args: { ctx: TaskCtx }) => RemoteCanisterConfig)
-		| RemoteCanisterConfig,
+export const makeRemoteDeployTask = <_SERVICE = unknown>(
 ): RemoteDeployTask<_SERVICE> => {
 	const builderRuntime = defaultBuilderRuntime
 	return {
@@ -334,17 +331,25 @@ export const makeRemoteBindingsTask = (): BindingsTask => {
 	}
 }
 
+type ResolveService<T> =
+	UnwrapConfig<T> extends { candid: infer S }
+		? S extends keyof IceCanisterPaths
+			? IceCanisterPaths[S]
+			: unknown
+		: unknown
+
 export class RemoteCanisterBuilder<
-	_SERVICE = unknown,
-	Config extends RemoteCanisterConfig = RemoteCanisterConfig,
+	const Config extends RemoteCanisterConfig = RemoteCanisterConfig,
+	_SERVICE = ResolveService<Config>,
 	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: RemoteCanisterScope<_SERVICE>
 
-	constructor(
-		scope: RemoteCanisterScope<_SERVICE>,
-	) {
+	constructor(scope: RemoteCanisterScope<_SERVICE>) {
 		this.#scope = scope
+	}
+	as<T>(): RemoteCanisterBuilder<Config, T, TCtx> {
+		return this as unknown as RemoteCanisterBuilder<Config, T, TCtx>
 	}
 
 	make(): RemoteCanisterScope<_SERVICE> {
@@ -360,13 +365,13 @@ export class RemoteCanisterBuilder<
 }
 
 export const remoteCanister = <
-	_SERVICE = unknown,
+	const Config extends RemoteCanisterConfig,
 	TCtx extends TaskCtx = TaskCtx,
+	_SERVICE = ResolveService<Config>,
 >(
 	canisterConfigOrFn:
-		| RemoteCanisterConfig
-		| ((args: { ctx: TCtx }) => RemoteCanisterConfig)
-		| ((args: { ctx: TCtx }) => Promise<RemoteCanisterConfig>),
+		| Config
+		| ((args: { ctx: TCtx }) => Config | Promise<Config>),
 ) => {
 	const config = makeConfigTask(canisterConfigOrFn as any)
 
@@ -379,14 +384,10 @@ export const remoteCanister = <
 		children: {
 			config,
 			bindings: makeRemoteBindingsTask(),
-			deploy: makeRemoteDeployTask<_SERVICE>(
-				canisterConfigOrFn as any,
-			),
+			deploy: makeRemoteDeployTask(),
 			status: makeCanisterStatusTask([Tags.REMOTE]),
 		},
 	} satisfies RemoteCanisterScope<_SERVICE>
 
-	return new RemoteCanisterBuilder<_SERVICE, RemoteCanisterConfig, TCtx>(
-		initialScope,
-	)
+	return new RemoteCanisterBuilder<Config, _SERVICE, TCtx>(initialScope)
 }

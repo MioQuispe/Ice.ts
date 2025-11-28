@@ -25,6 +25,7 @@ import {
 	ValidProvidedDeps,
 	makeLoggerLayer,
 	defaultBuilderRuntime,
+    UnwrapConfig,
 } from "./lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import { getNodeByPath } from "../tasks/lib.js"
@@ -49,9 +50,9 @@ import { ActorSubclass } from "../types/actor.js"
 import { decodeText, runFold, Stream } from "effect/Stream"
 
 export type RustCanisterConfig = {
-	src: string // Path to Cargo.toml
-	candid: string // Path to .did file
-	canisterId?: string
+	readonly src: string // Path to Cargo.toml
+	readonly candid: string // Path to .did file
+	readonly canisterId?: string
 }
 
 export type RustCanisterScope<
@@ -742,14 +743,20 @@ type ArgsFields<
 		| ((args: I) => Promise<Uint8Array<ArrayBufferLike>>)
 }
 
+type ResolveService<T> = UnwrapConfig<T> extends { candid: infer S }
+	? S extends keyof IceCanisterPaths
+		? IceCanisterPaths[S]
+		: unknown
+	: unknown
+
 export class RustCanisterBuilder<
 	I,
 	U,
 	S extends RustCanisterScope<_SERVICE, I, U, D, P>,
 	D extends Record<string, Task>,
 	P extends Record<string, Task>,
-	Config extends RustCanisterConfig,
-	_SERVICE = unknown,
+	const Config extends RustCanisterConfig,
+	_SERVICE = ResolveService<Config>,
 	TCtx extends TaskCtx = TaskCtx,
 > {
 	#scope: S
@@ -763,6 +770,18 @@ export class RustCanisterBuilder<
 		this.#scope = scope
 		this.#installArgs = installArgs
 		this.#upgradeArgs = upgradeArgs
+	}
+	as<T>(): RustCanisterBuilder<
+		I,
+		U,
+		RustCanisterScope<T, I, U, D, P>,
+		D,
+		P,
+		Config,
+		T,
+		TCtx
+	> {
+		return this as any
 	}
 	create(
 		canisterConfigOrFn:
@@ -1113,15 +1132,15 @@ export class RustCanisterBuilder<
 }
 
 export const rustCanister = <
-	_SERVICE = unknown,
+	const Config extends RustCanisterConfig,
+	TCtx extends TaskCtx = TaskCtx,
+	_SERVICE = ResolveService<Config>,
 	I = unknown,
 	U = unknown,
-	TCtx extends TaskCtx = TaskCtx,
 >(
 	canisterConfigOrFn:
-		| RustCanisterConfig
-		| ((args: { ctx: TCtx }) => RustCanisterConfig)
-		| ((args: { ctx: TCtx }) => Promise<RustCanisterConfig>),
+		| Config
+		| ((args: { ctx: TCtx }) => Config | Promise<Config>),
 ) => {
 	const config = makeConfigTask(canisterConfigOrFn as any)
 	const install_args = makeInstallArgsTask<_SERVICE, I, U, {}, {}>(
@@ -1161,7 +1180,7 @@ export const rustCanister = <
 		RustCanisterScope<_SERVICE, I, U, {}, {}>,
 		{},
 		{},
-		RustCanisterConfig,
+		Config,
 		_SERVICE,
 		TCtx
 	>(initialScope, installArgs, upgradeArgs)

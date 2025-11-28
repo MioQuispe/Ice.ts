@@ -82,6 +82,7 @@ import { NodeSdk } from "@effect/opentelemetry"
 import { ICReplica } from "../services/ic-replica.js"
 import { FileSystem } from "@effect/platform"
 import { Identity } from "@icp-sdk/core/agent"
+import { generateIceEnv } from "../utils/envGenerator.js"
 // import { uiTask } from "./ui/index.js"
 
 export const runTaskByPath = Effect.fn("runTaskByPath")(function* (
@@ -719,6 +720,10 @@ const deployRun = async ({
 				// console.log(`Completed ${update.taskPath}`)
 			}
 		})
+
+        // TODO: optimize, add to runTasks all at once
+		// Generate Type Defs after tasks complete
+		yield* generateIceEnv()
 
 		// TODO: use finalizer??
 		yield* Effect.tryPromise({
