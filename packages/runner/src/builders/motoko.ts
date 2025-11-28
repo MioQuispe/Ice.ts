@@ -493,6 +493,7 @@ export type MotokoBuildTask = CachedTask<
 	{
 		taskPath: string
 		src: Array<FileDigest>
+		configSrc: string
 		depCacheKeys: Record<string, string | undefined>
 	}
 >
@@ -581,7 +582,8 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 			// TODO: pocket-ic could be restarted?
 			const installInput = {
 				taskPath: input.taskPath,
-				depsHash: hashJson(input.depCacheKeys),
+				// depsHash: hashJson(input.depCacheKeys),
+				configSrc: input.configSrc,
 				// TODO: should we hash all fields though?
 				srcHash: hashJson(input.src.map((s) => s.sha256)),
 			}
@@ -620,6 +622,7 @@ export const makeMotokoBuildTask = <C extends MotokoCanisterConfig>(
 					const input = {
 						taskPath,
 						src: srcDigests,
+						configSrc: canisterConfig.src,
 						depCacheKeys,
 					}
 					return input

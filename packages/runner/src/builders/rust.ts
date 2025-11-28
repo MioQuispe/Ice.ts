@@ -402,6 +402,9 @@ export type RustBuildTask = CachedTask<
 		taskPath: string
 		src: Array<FileDigest>
 		cargoToml: FileDigest
+		candid: FileDigest
+		configSrc: string
+		configCandid: string
 		depCacheKeys: Record<string, string | undefined>
 	}
 >
@@ -623,11 +626,14 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 		computeCacheKey: (input) => {
 			const buildInput = {
 				taskPath: input.taskPath,
-				depsHash: hashJson(input.depCacheKeys),
+				// depsHash: hashJson(input.depCacheKeys),
+				configSrc: input.configSrc,
+				configCandid: input.configCandid,
 				srcHash: hashJson(
 					input.src.map((s) => `${s.sha256}-${s.mtimeMs}`),
 				),
 				cargoTomlHash: input.cargoToml.sha256,
+				candidHash: input.candid.sha256,
 			}
 			const cacheKey = hashJson(buildInput)
 			return cacheKey
@@ -679,10 +685,23 @@ export const makeRustBuildTask = <C extends RustCanisterConfig>(
 						)
 						srcDigests.push(srcDigest)
 					}
+
+					const candidPath = path.resolve(
+						taskCtx.appDir,
+						canisterConfig.candid,
+					)
+					const { digest: candidDigest } = yield* isArtifactCached(
+						candidPath,
+						undefined,
+					)
+
 					const input = {
 						taskPath,
 						src: srcDigests,
 						cargoToml: cargoTomlDigest,
+						candid: candidDigest,
+						configSrc: canisterConfig.src,
+						configCandid: canisterConfig.candid,
 						depCacheKeys,
 					}
 					return input

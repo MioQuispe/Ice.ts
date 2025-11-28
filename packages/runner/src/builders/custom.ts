@@ -436,6 +436,8 @@ export type CustomBuildTask = Omit<
 			taskPath: string
 			wasm: FileDigest
 			candid: FileDigest
+			configWasm: string
+			configCandid: string
 			depCacheKeys: Record<string, string | undefined>
 		}
 	>,
@@ -457,7 +459,7 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 	// 	  }) => Promise<CustomCanisterConfig>)
 	// 	| ((args: { ctx: TaskCtxShape; deps: P }) => CustomCanisterConfig)
 	// 	| CustomCanisterConfig,
-): BuildTask => {
+): CustomBuildTask => {
 	const runtime = defaultBuilderRuntime
 	return {
 		_tag: "task",
@@ -541,7 +543,9 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 			const installInput = {
 				wasmHash: input.wasm.sha256,
 				candidHash: input.candid.sha256,
-				depsHash: hashJson(input.depCacheKeys),
+				// depsHash: hashJson(input.depCacheKeys),
+				configWasm: input.configWasm,
+				configCandid: input.configCandid,
 			}
 			const cacheKey = hashJson(installInput)
 			return cacheKey
@@ -590,6 +594,8 @@ export const makeCustomBuildTask = <P extends Record<string, unknown>>(
 						wasm: wasmDigest,
 						candid: candidDigest,
 						depCacheKeys,
+						configWasm: wasmPath,
+						configCandid: candidPath,
 					}
 					return input
 				})().pipe(
