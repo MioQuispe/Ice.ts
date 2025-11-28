@@ -31,7 +31,7 @@ import {
 	CanisterSettings,
 	CanisterCreateRangeError,
 	ReplicaError,
-	ReplicaServiceClass,
+	Replica,
 	CanisterStopError,
 	getCanisterInfoFromManagementCanister,
 } from "../replica.js"
@@ -73,7 +73,7 @@ const defaultPicConfig: CreateInstanceOptions = {
 	application: [{ state: { type: SubnetStateType.New } }],
 }
 
-export class PICReplica implements ReplicaServiceClass {
+export class PICReplica implements Replica {
 	public host: string
 	public port: number
 	public readonly ttlSeconds: number

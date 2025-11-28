@@ -1,6 +1,5 @@
 import { Data, Effect, Context, Layer, Ref } from "effect"
 import type {
-	BuilderResult,
 	ICEConfig,
 	ICEConfigFile,
 	ICEEnvironment,

@@ -25,7 +25,7 @@ import {
 	CanisterStatus,
 	type CanisterStatusResult,
 	InstallModes,
-	Replica,
+	ReplicaService,
 	AgentError,
 	CanisterStatusError,
 	CanisterCreateError,

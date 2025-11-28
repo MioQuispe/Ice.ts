@@ -10,7 +10,6 @@ import { loadCanisterId } from "../builders/lib.js"
 import { Tags } from "../builders/lib.js"
 import { TaskCtx } from "../tasks/lib.js"
 import type {
-  BuilderResult,
   Scope,
   Task,
   TaskTreeNode
@@ -88,7 +87,7 @@ const transformScopes = (
         ...builder,
         // TODO: remove _scope
         _scope: transformScopes(builder.make(), fn),
-      } as BuilderResult
+      }
     }),
     Match.tag("task", (task) => task),
     Match.orElse(() => taskTreeNode),

@@ -278,7 +278,7 @@ export class ReplicaStartError extends Data.TaggedError("ReplicaStartError")<{
 	readonly cause?: Error
 }> {}
 
-export type ReplicaServiceClass = {
+export type Replica = {
 	// TODO:
 	// topology: Topology
 	// subnet: Subnet?
@@ -326,15 +326,15 @@ export type ReplicaServiceClass = {
 	) => Promise<void>
 }
 
-export class Replica extends Context.Tag("Replica")<
-	Replica,
-	ReplicaServiceClass
+export class ReplicaService extends Context.Tag("Replica")<
+	ReplicaService,
+	Replica
 >() {}
 
 // TODO: unnecessary??
-export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
+export function layerFromAsyncReplica(replica: Replica) {
 	return Layer.scoped(
-		Replica,
+		ReplicaService,
 		Effect.acquireRelease(
 			Effect.tryPromise({
 				try: async () => {
@@ -378,8 +378,8 @@ export function layerFromAsyncReplica(replica: ReplicaServiceClass) {
 //   const svc = effectifyReplica(awaitAlreadyStartedInstance)
 //   const layer = Layer.succeed(DefaultReplica, svc)
 //
-export const layerFromStartedReplica = (replica: ReplicaServiceClass) =>
-	Layer.succeed(Replica, replica)
+export const layerFromStartedReplica = (replica: Replica) =>
+	Layer.succeed(ReplicaService, replica)
 
 /**
  * Result type for canister info from state tree queries.

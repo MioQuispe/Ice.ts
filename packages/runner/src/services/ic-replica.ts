@@ -27,9 +27,9 @@ import {
 	CanisterCreateError,
 	CanisterStopError,
 	CanisterDeleteError,
-	Replica,
+	ReplicaService,
 	AgentError,
-	type ReplicaServiceClass,
+	type Replica,
 	type CanisterInfo,
 	type InstallModes,
 	type CanisterSettings,
@@ -127,7 +127,7 @@ export class DfxError extends Data.TaggedError("DfxError")<{
 	readonly message: string
 }> {}
 
-export class ICReplica implements ReplicaServiceClass {
+export class ICReplica implements Replica {
 	public readonly host: string = "http://0.0.0.0"
 	public readonly port: number = 8080
 	public readonly manual?: boolean
@@ -773,7 +773,7 @@ const dfxReplicaImpl = Effect.gen(function* () {
 		host: "http://0.0.0.0",
 		port: 8080,
 	})
-	return Replica.of(service)
+	return ReplicaService.of(service)
 })
 
-export const DfxReplica = Layer.effect(Replica, dfxReplicaImpl)
+export const DfxReplica = Layer.effect(ReplicaService, dfxReplicaImpl)

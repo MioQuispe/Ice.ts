@@ -7,7 +7,7 @@ import { Principal } from "@icp-sdk/core/principal"
 import { makeTestEnvEffect } from "./setup.js"
 import fs from "node:fs"
 import { customCanister } from "../../src/builders/index.js"
-import { Replica } from "../../src/services/replica.js"
+import { ReplicaService } from "../../src/services/replica.js"
 
 import { idlFactory as exampleIdlFactory } from "../fixtures/canister/example.did.js"
 import type { _SERVICE as ExampleService } from "../fixtures/canister/example.did.ts"
@@ -84,7 +84,7 @@ describe("PocketIC persistence", () => {
 					Effect.provide(DeploymentsLayer),
 					// Effect.provide(ChildTaskRuntimeLayer),
 				)
-				const replica = yield* Replica
+				const replica = yield* ReplicaService
 				const identity = Ed25519KeyIdentity.generate()
 				console.log("creating actor")
 				const actor = yield* Effect.tryPromise({
@@ -148,7 +148,7 @@ describe("PocketIC persistence", () => {
 		const { runtime: runtimeB } = makeTestEnvEffect(0, globalArgs)
 		await runtimeB.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* Replica
+				const replica = yield* ReplicaService
 				const identity = Ed25519KeyIdentity.generate()
 				// Wait until canister becomes visible after instance restore
 				for (let i = 0; i < 50; i++) {
@@ -239,7 +239,7 @@ describe("PocketIC persistence", () => {
 		// read topology
 		const snapshotA = await runtimeA.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* Replica
+				const replica = yield* ReplicaService
 				const topo = yield* Effect.tryPromise({
 					try: () => replica.getTopology(),
 					catch: (e) => e as Error,
@@ -255,7 +255,7 @@ describe("PocketIC persistence", () => {
 		const { runtime: runtimeB } = makeTestEnvEffect(iceDirName)
 		const snapshotB = await runtimeB.runPromise(
 			Effect.gen(function* () {
-				const replica = yield* Replica
+				const replica = yield* ReplicaService
 				const topo = yield* Effect.tryPromise({
 					try: () => replica.getTopology(),
 					catch: (e) => e as Error,

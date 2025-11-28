@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option } from "effect"
 import { identityToPemEd25519, Ids } from "../ids.js"
 import { ICEUser } from "../types/types.js"
-import { Replica, ReplicaServiceClass } from "./replica.js"
+import { ReplicaService, Replica } from "./replica.js"
 import { TaskRuntimeError } from "../tasks/lib.js"
 import { Path, FileSystem } from "@effect/platform"
 import { Ed25519KeyIdentity } from "@dfinity/identity"
@@ -24,7 +24,7 @@ export type InitializedDefaultConfig = {
 		controller: string
 		treasury: string
 	}
-	replica: ReplicaServiceClass
+	replica: Replica
 }
 
 export class DefaultConfig extends Context.Tag("DefaultConfig")<
@@ -47,7 +47,7 @@ export class DefaultConfig extends Context.Tag("DefaultConfig")<
 			//     },
 			// })
 
-			const defaultReplica = yield* Replica
+			const defaultReplica = yield* ReplicaService
 			// const icReplica = yield* ICReplica
 			const startIdentity = performance.now()
 			// const defaultUser = yield* Effect.tryPromise({

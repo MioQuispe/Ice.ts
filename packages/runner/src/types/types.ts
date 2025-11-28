@@ -1,17 +1,8 @@
 import type { StandardSchemaV1 } from "@standard-schema/spec"
-import type { ReplicaServiceClass } from "../services/replica.js"
+import type { Replica } from "../services/replica.js"
 import { TaskCancelled } from "../builders/lib.js"
 import { type TaskCtx } from "../services/taskRuntime.js"
 import type { Identity } from "@icp-sdk/core/agent"
-
-export type ReplicaConfig = {
-	// TODO: use pocket-ic subnet config
-	subnet: "system" | "application" | "verified_application"
-	// type?: "ephemeral" | "persistent"
-	bitcoin?: boolean
-	canister_http?: boolean
-	type: "pocketic" | "dfx"
-}
 
 export type ICEUser = {
 	identity: Identity
@@ -29,7 +20,7 @@ export type ICEConfig<
 	R extends ICERoles<U> = ICERoles<U>,
 > = {
 	network: string
-	replica?: ReplicaServiceClass
+	replica?: Replica
 	users?: U
 	roles?: R
 }
@@ -137,12 +128,6 @@ export type Scope = {
 	children: Record<string, TaskTreeNode>
 	// this is just the modules default export
 	defaultTask?: string
-}
-
-export type BuilderResult = {
-	_tag: "builder"
-	make: () => Task | Scope
-	[key: string]: any
 }
 
 export type TaskTreeNode = Task | Scope

@@ -19,7 +19,7 @@ import {
 	CanisterStatus,
 	CanisterStatusError,
 	layerFromAsyncReplica,
-	Replica,
+	ReplicaService,
 	ReplicaError,
 } from "../services/replica.js"
 import {

@@ -35,9 +35,9 @@ import { DefaultConfig, InitializedDefaultConfig } from "./defaultConfig.js"
 import { Moc, MocError } from "./moc.js"
 import {
 	AgentError,
-	Replica,
+	ReplicaService,
 	ReplicaError,
-	ReplicaServiceClass,
+	Replica,
 	ReplicaStartError,
 } from "./replica.js"
 import type { ICEGlobalArgs } from "../types/types.js"
@@ -70,7 +70,7 @@ export type DefaultICEConfig = {
 		treasury: string
 		[name: string]: string
 	}
-	replica: ReplicaServiceClass
+	replica: Replica
 }
 
 export type DefaultRoles = "deployer" | "minter" | "controller" | "treasury"
@@ -96,7 +96,7 @@ export type TaskCtxBase<
 	}
 
 	readonly network: string
-	readonly replica: ReplicaServiceClass
+	readonly replica: Replica
 
 	readonly args: A
 	readonly taskPath: string
@@ -177,14 +177,14 @@ export const makeLoggerLayer = (logLevel: "debug" | "info" | "error") =>
 export class TaskRuntime extends Context.Tag("TaskRuntime")<
 	TaskRuntime,
 	{
-		replica: ReplicaServiceClass
+		replica: Replica
 		runtime: ManagedRuntime.ManagedRuntime<
 			| OtelTracer
 			| Resource
 			| NodeContext.NodeContext
 			| TaskRegistry
 			| KeyValueStore.KeyValueStore
-			| Replica
+			| ReplicaService
 			| DefaultConfig
 			| Moc
 			| CanisterIdsService
@@ -206,7 +206,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 			| NodeContext.NodeContext
 			| TaskRegistry
 			| KeyValueStore.KeyValueStore
-			| Replica
+			| ReplicaService
 			| DefaultConfig
 			| Moc
 			| CanisterIdsService
@@ -326,7 +326,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					iceDirPath: iceDirPath,
 				}
 
-				const ReplicaService = Layer.succeed(Replica, replica)
+				const ReplicaLayer = Layer.succeed(ReplicaService, replica)
 				const DefaultConfigService = Layer.succeed(
 					DefaultConfig,
 					defaultConfig,
@@ -336,7 +336,7 @@ export class TaskRuntime extends Context.Tag("TaskRuntime")<
 					telemetryLayer,
 					NodeContext.layer,
 					TaskRegistryLayer,
-					ReplicaService,
+					ReplicaLayer,
 					DefaultConfigService,
 					// DefaultConfig is already provided from parent layer, no need to recreate it
 					Moc.Live.pipe(Layer.provide(NodeContext.layer)),
