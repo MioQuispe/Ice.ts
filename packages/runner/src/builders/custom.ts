@@ -8,7 +8,7 @@ import type {
 } from "../types/types.js"
 // import mo from "motoko"
 import { FileSystem, Path } from "@effect/platform"
-import { InstallModes } from "../services/replica.js"
+import { InstallModes, CanisterSettings } from "../services/replica.js"
 import {
 	BindingsTask,
 	BuildTask,
@@ -94,6 +94,7 @@ export type CustomCanisterConfig = {
 	readonly wasm: string
 	readonly candid: string
 	readonly canisterId?: string
+	readonly settings?: CanisterSettings
 }
 
 export const deployParams = {

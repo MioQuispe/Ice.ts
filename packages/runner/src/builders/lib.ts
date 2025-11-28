@@ -33,6 +33,7 @@ import {
 	CanisterStopError,
 	CanisterDeleteError,
 	CanisterInstallError,
+	CanisterSettings,
 } from "../services/replica.js"
 import { TaskRegistry } from "../services/taskRegistry.js"
 import type {
@@ -199,7 +200,7 @@ export const makeConfigTask = <
 		encode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_encode")(function* () {
-					return JSON.stringify(value)
+					return yield* encodeWithBigInt(value)
 				})().pipe(
 					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
 					Effect.annotateLogs("path", taskCtx.taskPath + ".encode"),
@@ -209,7 +210,7 @@ export const makeConfigTask = <
 		decode: (taskCtx, value) =>
 			runtime.runPromise(
 				Effect.fn("task_decode")(function* () {
-					return JSON.parse(value as string)
+					return (yield* decodeWithBigInt(value as string)) as Config
 				})().pipe(
 					Effect.provide(makeLoggerLayer(taskCtx.logLevel)),
 					Effect.annotateLogs("path", taskCtx.taskPath + ".decode"),
@@ -252,6 +253,7 @@ export const makeConfigTask = <
 
 export type CreateConfig = {
 	canisterId?: string
+	settings?: CanisterSettings
 }
 
 export const makeCreateTask = <Config extends CreateConfig>(
@@ -300,6 +302,7 @@ export const makeCreateTask = <Config extends CreateConfig>(
 					// 	canisterConfigOrFn,
 					// )
 					const configCanisterId = canisterConfig?.canisterId
+					const configSettings = canisterConfig?.settings
 					// TODO: handle all edge cases related to this. what happens
 					// if the user provides a new canisterId in the config? and so on
 					// and how about mainnet?
@@ -383,6 +386,9 @@ export const makeCreateTask = <Config extends CreateConfig>(
 									replica.createCanister({
 										canisterId: resolvedCanisterId,
 										identity,
+										...(configSettings
+											? { settings: configSettings }
+											: {}),
 									}),
 								catch: (e) =>
 									e as
@@ -441,6 +447,12 @@ export const makeCreateTask = <Config extends CreateConfig>(
 													replica.createCanister({
 														canisterId: undefined,
 														identity,
+														...(configSettings
+															? {
+																	settings:
+																		configSettings,
+																}
+															: {}),
 													}),
 												// again: don't wrap, preserve tag
 												catch: (e) =>
@@ -1568,11 +1580,9 @@ export const resolveMode = (
 								: "install"
 					},
 					onNone: () => {
-						// Module present but no history: if current funcs differ, treat as upgrade intent
-						return upgradeArgsHash !== installArgsHash
-							? "upgrade"
-							: "reinstall"
-						// return "reinstall"
+						// Module present but no history: assume upgrade to be safe (preserve state)
+						// The user can force reinstall if desired
+						return "upgrade"
 					},
 				})
 			}

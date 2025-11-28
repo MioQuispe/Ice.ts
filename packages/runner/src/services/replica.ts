@@ -171,6 +171,23 @@ export const CanisterStatus = {
 	OUT_OF_CYCLES: "out_of_cycles",
 } as const
 
+export type LogVisibility =
+	| { controllers: null }
+	| { public: null }
+	| { allowed_viewers: string[] }
+
+export type CanisterSettings = {
+	controllers?: string[]
+	freezing_threshold?: bigint
+	memory_allocation?: bigint
+	compute_allocation?: bigint
+	reserved_cycles_limit?: bigint
+	wasm_memory_limit?: bigint
+	log_visibility?: LogVisibility
+	cycles?: bigint
+	sender?: string
+}
+
 type log_visibility =
 	| { controllers: null }
 	| { public: null }
@@ -294,6 +311,7 @@ export type ReplicaServiceClass = {
 	createCanister: (params: {
 		canisterId: string | undefined
 		identity: Identity
+		settings?: CanisterSettings
 	}) => Promise<string> // returns canister id
 	createActor: <_SERVICE>(params: {
 		canisterId: string

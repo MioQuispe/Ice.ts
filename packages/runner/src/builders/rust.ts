@@ -7,7 +7,7 @@ import {
 	ResolvedParamsToArgs,
 	TaskParamsToArgs,
 } from "../tasks/lib.js"
-import { InstallModes } from "../services/replica.js"
+import { InstallModes, CanisterSettings } from "../services/replica.js"
 import {
 	AllowedDep,
 	CreateTask,
@@ -53,6 +53,7 @@ export type RustCanisterConfig = {
 	readonly src: string // Path to Cargo.toml
 	readonly candid: string // Path to .did file
 	readonly canisterId?: string
+	readonly settings?: CanisterSettings
 }
 
 export type RustCanisterScope<

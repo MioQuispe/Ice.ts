@@ -9,7 +9,7 @@ import {
 	ResolvedParamsToArgs,
 	TaskParamsToArgs,
 } from "../tasks/lib.js"
-import { InstallModes } from "../services/replica.js"
+import { InstallModes, CanisterSettings } from "../services/replica.js"
 import {
 	AllowedDep,
 	CreateTask,
@@ -54,6 +54,7 @@ import { ActorSubclass } from "../types/actor.js"
 export type MotokoCanisterConfig = {
 	readonly src: string
 	readonly canisterId?: string
+	readonly settings?: CanisterSettings
 }
 
 export type MotokoCanisterScope<

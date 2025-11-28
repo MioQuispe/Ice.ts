@@ -670,15 +670,17 @@ const printDeploymentSummary = (
 	> = {}
 
 	// Helper to prioritize Fresh status over Cached status
-	// If we already have a 'Fresh' (cached=false) entry, we keep it.
-	// If current is cached/undefined, we accept the new status.
+	// We prioritize Fresh over Cached, and having a Mode over not having one.
 	const updateStatus = (
 		current: { cached: boolean; mode?: string } | undefined,
 		incoming: { cached: boolean; mode?: string },
 	) => {
 		if (!current) return incoming
-		if (!current.cached) return current // Stay fresh
-		return incoming // Upgrade to fresh if incoming is fresh, or stay cached
+
+		const score = (s: { cached: boolean; mode?: string }) =>
+			(s.cached ? 0 : 2) + (s.mode ? 1 : 0)
+
+		return score(incoming) > score(current) ? incoming : current
 	}
 
 	// 1. Aggregate Span Data

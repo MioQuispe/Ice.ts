@@ -32,6 +32,8 @@ import {
 	type ReplicaServiceClass,
 	type CanisterInfo,
 	type InstallModes,
+	type CanisterSettings,
+	type LogVisibility,
 	getCanisterInfoFromStateTree,
 } from "./replica.js"
 import {
@@ -514,9 +516,11 @@ export class ICReplica implements ReplicaServiceClass {
 	public async createCanister({
 		canisterId,
 		identity,
+		settings,
 	}: {
 		canisterId: string | undefined
 		identity: Identity
+		settings?: CanisterSettings
 	}): Promise<string> {
 		// Optimistic invalidation before we start, just in case
 		if (canisterId) {
@@ -540,22 +544,63 @@ export class ICReplica implements ReplicaServiceClass {
 					return canisterId
 				}
 			}
-			const settings = [
+			const creationSettings = [
 				{
-					compute_allocation: Opt<bigint>(),
-					memory_allocation: Opt<bigint>(),
-					freezing_threshold: Opt<bigint>(),
-					controllers: Opt<Principal[]>([controller]),
-					reserved_cycles_limit: Opt<bigint>(),
-					log_visibility: Opt<log_visibility>(),
-					wasm_memory_limit: Opt<bigint>(),
+					compute_allocation: settings?.compute_allocation
+						? Opt<bigint>(settings.compute_allocation)
+						: Opt<bigint>(),
+					memory_allocation: settings?.memory_allocation
+						? Opt<bigint>(settings.memory_allocation)
+						: Opt<bigint>(),
+					freezing_threshold: settings?.freezing_threshold
+						? Opt<bigint>(settings.freezing_threshold)
+						: Opt<bigint>(),
+					controllers: settings?.controllers
+						? Opt<Principal[]>(
+								settings.controllers.map((c) =>
+									Principal.fromText(c),
+								),
+							)
+						: Opt<Principal[]>([controller]),
+					reserved_cycles_limit: settings?.reserved_cycles_limit
+						? Opt<bigint>(settings.reserved_cycles_limit)
+						: Opt<bigint>(),
+					log_visibility: settings?.log_visibility
+						? Opt<log_visibility>(
+								"allowed_viewers" in settings.log_visibility
+									? {
+											allowed_viewers:
+												settings.log_visibility.allowed_viewers.map(
+													(v) =>
+														Principal.fromText(
+															v,
+														),
+												),
+										}
+									: (settings.log_visibility as log_visibility),
+							)
+						: Opt<log_visibility>(),
+					wasm_memory_limit: settings?.wasm_memory_limit
+						? Opt<bigint>(settings.wasm_memory_limit)
+						: Opt<bigint>(),
 				},
 			] as [canister_settings]
+			// interface canister_settings {
+			//     freezing_threshold: [] | [bigint];
+			//     controllers: [] | [Principal[]];
+			//     reserved_cycles_limit: [] | [bigint];
+			//     log_visibility: [] | [{ ... 1 more } | { ... 1 more } | { ... 1 more }];
+			//     wasm_memory_limit: [] | [bigint];
+			//     memory_allocation: [] | [bigint];
+			//     compute_allocation: [] | [bigint];
+			// }
 			if (this.isDev) {
 				const createResult =
 					await (mgmt.provisional_create_canister_with_cycles({
-						settings,
-						amount: Opt<bigint>(1_000_000_000_000_000_000n),
+						settings: creationSettings,
+						amount: Opt<bigint>(
+							settings?.cycles ?? 1_000_000_000_000_000_000n,
+						),
 						specified_id: Opt<Principal>(
 							canisterId
 								? Principal.fromText(canisterId)
@@ -576,10 +621,11 @@ export class ICReplica implements ReplicaServiceClass {
 						subaccount: [],
 					},
 					created_at_time: [],
-					amount: 500_000_000_000n,
+                    // TODO: Important! Check what default should be here!
+					amount: settings?.cycles ?? 500_000_000_000n,
 					creation_args: Opt<CmcCreateCanisterArgs>({
 						subnet_selection: [],
-						settings: settings,
+						settings: creationSettings,
 					}),
 				})
 				if ("Ok" in createResult) {

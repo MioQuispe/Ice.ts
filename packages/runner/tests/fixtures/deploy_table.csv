@@ -3,7 +3,7 @@ auto,FALSE,FALSE,FALSE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,"first deplo
 auto,TRUE,FALSE,FALSE,FALSE,FALSE,FALSE,install,install,FALSE,OK,same as above. technically this cant happen since installArgs cant have changed without a previous cached result
 auto,FALSE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,same as above. technically this cant happen since upgradeArgs cant have changed without a previous cached result
 auto,FALSE,FALSE,TRUE,FALSE,FALSE,FALSE,undefined,install,FALSE,OK,first deploy on existing but empty canister
-auto,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,reinstall,FALSE,OK,same as above. 
+auto,FALSE,FALSE,TRUE,TRUE,FALSE,FALSE,undefined,upgrade,FALSE,OK,no cache but module present, so upgrade. 
 auto,TRUE,TRUE,FALSE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,"both args changed, but no canister exists. just install"
 auto,TRUE,FALSE,TRUE,FALSE,FALSE,FALSE,install,install,FALSE,OK,
 auto,FALSE,TRUE,TRUE,FALSE,FALSE,FALSE,upgrade,install,FALSE,OK,just install. cant upgrade empty canister

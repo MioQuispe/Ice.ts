@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises"
 import { Principal } from "@icp-sdk/core/principal"
 import { type Identity } from "@icp-sdk/core/agent"
 import {
+	CreateCanisterOptions,
 	CreateInstanceOptions,
 	IcpConfigFlag,
 	PocketIc,
@@ -27,6 +28,7 @@ import {
 	CanisterStatusError,
 	CanisterStatus,
 	CanisterInfo,
+	CanisterSettings,
 	CanisterCreateRangeError,
 	ReplicaError,
 	ReplicaServiceClass,
@@ -70,7 +72,6 @@ const defaultPicConfig: CreateInstanceOptions = {
 	sns: { state: { type: SubnetStateType.New } },
 	application: [{ state: { type: SubnetStateType.New } }],
 }
-
 
 export class PICReplica implements ReplicaServiceClass {
 	public host: string
@@ -132,9 +133,9 @@ export class PICReplica implements ReplicaServiceClass {
 		const start = performance.now()
 		this.ctx = ctx
 
-        // TODO: strip protocol from host
-        const hostUrl = this.host.replace(/^https?:\/\//, "")
-        // const hostUrl = String.
+		// TODO: strip protocol from host
+		const hostUrl = this.host.replace(/^https?:\/\//, "")
+		// const hostUrl = String.
 		try {
 			let releaseSpawnLock
 			if (!this.manual) {
@@ -146,8 +147,8 @@ export class PICReplica implements ReplicaServiceClass {
 					network: ctx.network,
 					host: hostUrl,
 					port: this.port,
-                    // TODO: ? toggles mainnet flag simply?
-                    isDev: true,
+					// TODO: ? toggles mainnet flag simply?
+					isDev: true,
 				})
 				// spawn lock is inside here. how can we cleanest extend it?
 				const spawnLockPath = path.resolve(
@@ -161,16 +162,21 @@ export class PICReplica implements ReplicaServiceClass {
 				releaseSpawnLock = await acquireSpawnLock(spawnLockPath)
 				await monitor.start()
 				this.monitor = monitor
-                // TODO: clean up
+				// TODO: clean up
 				this.host = monitor.host
 				this.port = monitor.port
 			}
 
-            // TODO: clean up
+			// TODO: clean up
 			const baseUrl = `http://${hostUrl}:${this.port}`
 
 			const stateRoot = path.resolve(
-				path.join(this.ctx.iceDirPath, "networks", ctx.network, "replica-state"),
+				path.join(
+					this.ctx.iceDirPath,
+					"networks",
+					ctx.network,
+					"replica-state",
+				),
 			)
 			const { dir: effectiveStateDir, incomplete } =
 				await resolveEffectiveStateDir(stateRoot)
@@ -227,7 +233,7 @@ export class PICReplica implements ReplicaServiceClass {
 		args: {
 			scope: "background" | "foreground"
 		} = { scope: "foreground" },
-        ctx?: ReplicaContext,
+		ctx?: ReplicaContext,
 	): Promise<void> {
 		if (this.monitor) {
 			await this.monitor.stop({ scope: args.scope }) //???
@@ -340,87 +346,91 @@ export class PICReplica implements ReplicaServiceClass {
 		const fetchPromise = (async () => {
 			try {
 				const mgmt = await this.getMgmt(identity)
-				const stateTreeInfo = await getCanisterInfoFromManagementCanister(
-					mgmt,
-					canisterId,
-					identity,
-				)
-			// If canister not found, return early
-			if (stateTreeInfo.status === CanisterStatus.NOT_FOUND) {
-				return { status: CanisterStatus.NOT_FOUND } as const
-			}
-			// Get full info from management canister if we're a controller
-			// and status allows it (not out_of_cycles or not_controller)
-			if (
-				stateTreeInfo.status !== CanisterStatus.NOT_CONTROLLER &&
-				stateTreeInfo.status !== CanisterStatus.OUT_OF_CYCLES
-			) {
-				try {
-					const result = await mgmt.canister_status({
-						canister_id: Principal.fromText(canisterId),
-					})
-					const key = Object.keys(result.status)[0]
-					if (key === CanisterStatus.RUNNING) {
-						const fullInfo = {
-							...result,
-							status: CanisterStatus.RUNNING,
-						} as CanisterInfo
-						return fullInfo
-					}
-					if (key === CanisterStatus.STOPPED) {
-						const fullInfo = {
-							...result,
-							status: CanisterStatus.STOPPED,
-						} as CanisterInfo
-						return fullInfo
-					}
-					if (key === CanisterStatus.STOPPING) {
-						const fullInfo = {
-							...result,
-							status: CanisterStatus.STOPPING,
-						} as CanisterInfo
-						return fullInfo
-					}
-				} catch (error) {
-					// Fall through to return minimal info
+				const stateTreeInfo =
+					await getCanisterInfoFromManagementCanister(
+						mgmt,
+						canisterId,
+						identity,
+					)
+				// If canister not found, return early
+				if (stateTreeInfo.status === CanisterStatus.NOT_FOUND) {
+					return { status: CanisterStatus.NOT_FOUND } as const
 				}
-			}
-			// Return minimal info for cases where we can't get full info
-			const minimalInfo = {
-				status: stateTreeInfo.status as CanisterStatus,
-				memory_size: 0n,
-				cycles: 0n,
-				settings: {
-					freezing_threshold: 0n,
-					controllers: stateTreeInfo.controllers.map((c) =>
-						Principal.fromText(c),
-					),
-					reserved_cycles_limit: 0n,
-					log_visibility: { controllers: null },
-					wasm_memory_limit: 0n,
-					memory_allocation: 0n,
-					compute_allocation: 0n,
-				},
-				query_stats: {
-					response_payload_bytes_total: 0n,
-					num_instructions_total: 0n,
-					num_calls_total: 0n,
-					request_payload_bytes_total: 0n,
-				},
-				idle_cycles_burned_per_day: 0n,
-				module_hash:
-					stateTreeInfo.module_hash.length > 0
-						? [
-								Array.from(
-									Buffer.from(
-										stateTreeInfo.module_hash[0]!.replace(/^0x/, ""),
-										"hex",
+				// Get full info from management canister if we're a controller
+				// and status allows it (not out_of_cycles or not_controller)
+				if (
+					stateTreeInfo.status !== CanisterStatus.NOT_CONTROLLER &&
+					stateTreeInfo.status !== CanisterStatus.OUT_OF_CYCLES
+				) {
+					try {
+						const result = await mgmt.canister_status({
+							canister_id: Principal.fromText(canisterId),
+						})
+						const key = Object.keys(result.status)[0]
+						if (key === CanisterStatus.RUNNING) {
+							const fullInfo = {
+								...result,
+								status: CanisterStatus.RUNNING,
+							} as CanisterInfo
+							return fullInfo
+						}
+						if (key === CanisterStatus.STOPPED) {
+							const fullInfo = {
+								...result,
+								status: CanisterStatus.STOPPED,
+							} as CanisterInfo
+							return fullInfo
+						}
+						if (key === CanisterStatus.STOPPING) {
+							const fullInfo = {
+								...result,
+								status: CanisterStatus.STOPPING,
+							} as CanisterInfo
+							return fullInfo
+						}
+					} catch (error) {
+						// Fall through to return minimal info
+					}
+				}
+				// Return minimal info for cases where we can't get full info
+				const minimalInfo = {
+					status: stateTreeInfo.status as CanisterStatus,
+					memory_size: 0n,
+					cycles: 0n,
+					settings: {
+						freezing_threshold: 0n,
+						controllers: stateTreeInfo.controllers.map((c) =>
+							Principal.fromText(c),
+						),
+						reserved_cycles_limit: 0n,
+						log_visibility: { controllers: null },
+						wasm_memory_limit: 0n,
+						memory_allocation: 0n,
+						compute_allocation: 0n,
+					},
+					query_stats: {
+						response_payload_bytes_total: 0n,
+						num_instructions_total: 0n,
+						num_calls_total: 0n,
+						request_payload_bytes_total: 0n,
+					},
+					idle_cycles_burned_per_day: 0n,
+					module_hash:
+						stateTreeInfo.module_hash.length > 0
+							? [
+									Array.from(
+										Buffer.from(
+											stateTreeInfo.module_hash[0]!.replace(
+												/^0x/,
+												"",
+											),
+											"hex",
+										),
 									),
-								),
-							]
-						: [],
-				reserved_cycles: 0n,
-			} as CanisterInfo
+								]
+							: [],
+					reserved_cycles: 0n,
+				} as CanisterInfo
 				return minimalInfo
 			} catch (error) {
 				if (
@@ -456,9 +466,10 @@ export class PICReplica implements ReplicaServiceClass {
 	async createCanister(params: {
 		canisterId: string | undefined
 		identity: Identity
+		settings?: CanisterSettings
 	}): Promise<string> {
 		assertStarted(this.pic, "PICReplica.createCanister")
-		const { canisterId, identity } = params
+		const { canisterId, identity, settings } = params
 		const controller = identity.getPrincipal()
 
 		// Optimistic invalidation before we start, just in case
@@ -511,13 +522,43 @@ export class PICReplica implements ReplicaServiceClass {
 			: undefined
 
 		try {
-			const created = await this.pic!.createCanister({
-				controllers: [controller],
-				cycles: 1_000_000_000_000_000_000n,
+			const createCanisterSettings: CreateCanisterOptions = {
+				controllers: settings?.controllers
+					? settings.controllers.map((c) => Principal.fromText(c))
+					: [controller],
+				cycles: settings?.cycles ?? 1_000_000_000_000_000_000n,
 				...(targetCanisterId ? { targetCanisterId } : {}),
 				...(targetSubnetId ? { targetSubnetId } : {}),
-				sender: identity.getPrincipal(),
-			})
+				sender: settings?.sender
+					? Principal.fromText(settings.sender)
+					: identity.getPrincipal(),
+				...(settings?.compute_allocation
+					? { computeAllocation: settings.compute_allocation }
+					: {}),
+				...(settings?.memory_allocation
+					? { memoryAllocation: settings.memory_allocation }
+					: {}),
+				...(settings?.freezing_threshold
+					? { freezingThreshold: settings.freezing_threshold }
+					: {}),
+				...(settings?.reserved_cycles_limit
+					? { reservedCyclesLimit: settings.reserved_cycles_limit }
+					: {}),
+			}
+			// interface CreateCanisterOptions {
+			//     cycles?: bigint;
+			//     sender?: Principal;
+			//     targetSubnetId?: Principal;
+			//     targetCanisterId?: Principal;
+			//     controllers?: Principal[];
+			//     computeAllocation?: bigint;
+			//     memoryAllocation?: bigint;
+			//     freezingThreshold?: bigint;
+			//     reservedCyclesLimit?: bigint;
+			// }
+			const created = await this.pic!.createCanister(
+				createCanisterSettings,
+			)
 			const newCanisterId = created.toText()
 			// Invalidate the new ID to ensure next read gets fresh data
 			this.invalidateCache(newCanisterId, identity)
@@ -719,12 +760,6 @@ export class PICReplica implements ReplicaServiceClass {
 				arg: encodedArgs,
 				canister_id: Principal.fromText(canisterId),
 				mode: modePayload,
-				// mode:
-				// 	mode === "reinstall"
-				// 		? { reinstall: null }
-				// 		: mode === "upgrade"
-				// 			? { upgrade: null }
-				// 			: { install: null },
 				wasm_module: new Uint8Array(wasm),
 			})
 			await this.client!.updateCall({
@@ -747,12 +782,6 @@ export class PICReplica implements ReplicaServiceClass {
 						arg: encodedArgs,
 						canister_id: Principal.fromText(canisterId),
 						mode: modePayloadNonEAP,
-						// mode:
-						// 	mode === "reinstall"
-						// 		? { reinstall: null }
-						// 		: mode === "upgrade"
-						// 			? { upgrade: null }
-						// 			: { install: null },
 						wasm_module: new Uint8Array(wasm),
 					})
 					await this.client!.updateCall({
