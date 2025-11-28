@@ -36,7 +36,12 @@ import {
 	TaskRuntime,
 } from "../services/taskRuntime.js"
 import { InFlight } from "../services/inFlight.js"
-import { hashJson, TaskCancelled, isTaskCancelled } from "../builders/lib.js"
+import {
+	hashJson,
+	TaskCancelled,
+	isTaskCancelled,
+	Tags,
+} from "../builders/lib.js"
 import { FiberFailure } from "effect/Runtime"
 import { Failure, isFailure } from "effect/Exit"
 export type ParamsToArgs<
@@ -309,108 +314,6 @@ export const resolveArgsMap = (
 ) =>
 	Effect.gen(function* () {
 		let argsMap: Record<string, unknown> = {}
-		// breaks if dynamic call with empty args
-
-		// const hasCliTaskArgs =
-		// 	Boolean(Object.keys(cliTaskArgs.namedArgs).length) ||
-		// 	Boolean(cliTaskArgs.positionalArgs.length)
-
-		// if (isRootTask && hasCliTaskArgs) {
-		//     // TODO: check params. not args.
-
-		// 	// convert cliTaskArgs to argsMap
-		// 	for (const [argName, arg] of Object.entries(
-		// 		cliTaskArgs.namedArgs,
-		// 	)) {
-		// 		const param = task.namedParams[argName]
-		// 		if (!param) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing parameter: ${argName}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveArg(param, arg)
-		// 		argsMap[argName] = resolvedArg
-		// 	}
-		// 	for (const [index, arg] of cliTaskArgs.positionalArgs.entries()) {
-		// 		const param = task.positionalParams[index]
-		// 		if (!param) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing positional parameter: ${index}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveArg(param, arg)
-		// 		argsMap[param.name] = resolvedArg
-		// 	}
-		// } else {
-		// 	// TODO: we need to check all params. not args. because they may be empty
-		// 	// and we still want the default values
-		// 	// dynamic calls from other tasks
-		// 	const argsArray = Object.entries(task.args)
-		// 	for (const [argName, arg] of argsArray) {
-		// 		const param = task.params[argName]
-		// 		if (!param) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing parameter: ${argName}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveArg(param, arg)
-		// 		argsMap[argName] = resolvedArg
-		// 	}
-		// }
-
-		// if (isRootTask && hasCliTaskArgs) {
-		// 	// TODO: check params. not args.
-
-		// 	// convert cliTaskArgs to argsMap
-		// 	for (const [paramName, param] of Object.entries(task.namedParams)) {
-		// 		const arg = cliTaskArgs.namedArgs[paramName]
-
-		// 		if (!arg && !param.isOptional) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing parameter: ${paramName}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveCliArg(param, arg)
-		// 		argsMap[paramName] = resolvedArg
-		// 	}
-		// 	for (const [index, param] of task.positionalParams.entries()) {
-		// 		const arg = cliTaskArgs.positionalArgs[index]
-		// 		if (!arg && !param.isOptional) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing positional parameter: ${index}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveCliArg(param, arg)
-		// 		argsMap[param.name] = resolvedArg
-		// 	}
-		// } else {
-		// 	// TODO: we need to check all params. not args. because they may be empty
-		// 	// and we still want the default values
-		// 	// dynamic calls from other tasks
-		// 	const paramsArray = Object.entries(task.params)
-		// 	for (const [paramName, param] of paramsArray) {
-		// 		const arg = task.args?.[paramName]
-		// 		if (!arg && !param.isOptional) {
-		// 			return yield* Effect.fail(
-		// 				new TaskArgsParseError({
-		// 					message: `Missing parameter: ${paramName}`,
-		// 				}),
-		// 			)
-		// 		}
-		// 		const resolvedArg = yield* resolveArg(param, arg)
-		// 		argsMap[paramName] = resolvedArg
-		// 	}
-		// }
 		// TODO: we need to check all params. not args. because they may be empty
 		// and we still want the default values
 		// dynamic calls from other tasks
@@ -700,10 +603,10 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 			yield* Effect.logDebug(`[TASK_START] Task entered: ${taskPath}`)
 			yield* Effect.annotateCurrentSpan({
 				taskPath,
+                tags: task.tags,
 				dependencies: Object.keys(task.dependencies),
 			})
 
-			// TODO: not sure if this is correct
 			const inflightKey = hashJson({
 				taskPath: taskPath,
 				taskArgs: task.args,
@@ -1025,6 +928,16 @@ export const makeTaskEffects = Effect.fn("make_task_effects")(function* (
 					const currentDeferred = deferredMap.get(taskResult.taskId)
 					if (currentDeferred) {
 						yield* Deferred.succeed(currentDeferred, taskResult)
+					}
+
+					// Annotate resolvedMode for install tasks from result (single place for all paths)
+					if (task.tags.includes(Tags.INSTALL)) {
+						const installResult = taskResult.result as { mode?: string } | undefined
+						if (installResult && "mode" in installResult && installResult.mode) {
+							yield* Effect.annotateCurrentSpan({
+								resolvedMode: installResult.mode,
+							})
+						}
 					}
 
 					// TODO: yield instead?

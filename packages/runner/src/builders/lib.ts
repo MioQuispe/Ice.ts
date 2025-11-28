@@ -1048,7 +1048,6 @@ export const Tags = {
 	INSTALL: "$$ice/canister/install",
 	INSTALL_ARGS: "$$ice/canister/install_args",
 	CONFIG: "$$ice/canister/config",
-	// UPGRADE: "$$ice/canister/upgrade",
 	BINDINGS: "$$ice/canister/bindings",
 	DEPLOY: "$$ice/canister/deploy",
 	STOP: "$$ice/canister/stop",

@@ -647,6 +647,159 @@ const initCommand = defineCommand({
 	},
 })
 
+// Helper to strip ANSI color codes for proper width calculation
+const stripAnsi = (str: string) => str.replace(/\x1B[[(?];?[\d;]*[a-zA-Z]/g, "")
+
+const printDeploymentSummary = (
+	spans: Array<{
+		name: string
+		attributes?: Record<string, unknown>
+	}>,
+	canisterIds: Record<string, Record<string, string>>,
+	network: string,
+) => {
+	const rows: Record<
+		string,
+		{
+			id: string
+			create?: { cached: boolean }
+			build?: { cached: boolean }
+			bindings?: { cached: boolean }
+			install?: { cached: boolean; mode?: string }
+		}
+	> = {}
+
+	// Helper to prioritize Fresh status over Cached status
+	// If we already have a 'Fresh' (cached=false) entry, we keep it.
+	// If current is cached/undefined, we accept the new status.
+	const updateStatus = (
+		current: { cached: boolean; mode?: string } | undefined,
+		incoming: { cached: boolean; mode?: string },
+	) => {
+		if (!current) return incoming
+		if (!current.cached) return current // Stay fresh
+		return incoming // Upgrade to fresh if incoming is fresh, or stay cached
+	}
+
+	// 1. Aggregate Span Data
+	for (const span of spans) {
+		if (span.name !== "task_execute_effect") continue
+		const tags = (span.attributes?.["tags"] as string[]) || []
+
+		if (!tags.includes(Tags.CANISTER)) continue
+
+		const taskPath = span.attributes?.["taskPath"] as string
+		if (!taskPath) continue
+
+		const canisterName = taskPath.split(":")[0]
+		if (!canisterName) {
+			continue
+		}
+
+		if (!rows[canisterName]) {
+			rows[canisterName] = {
+				id: canisterIds[canisterName]?.[network] ?? "",
+			}
+		}
+		const row = rows[canisterName]
+
+		// Fix: "Fresh" means neither CacheHit nor Inflight
+		const isCached =
+			span.attributes?.["cacheHit"] === true ||
+			span.attributes?.["inflight"] === true
+
+		const status = { cached: isCached }
+
+		if (tags.includes(Tags.CREATE)) {
+			row.create = updateStatus(row.create, status)
+		} else if (tags.includes(Tags.BUILD)) {
+			row.build = updateStatus(row.build, status)
+		} else if (tags.includes(Tags.BINDINGS)) {
+			row.bindings = updateStatus(row.bindings, status)
+		} else if (tags.includes(Tags.INSTALL)) {
+			const mode = span.attributes?.["resolvedMode"] as string | undefined
+			const installStatus =
+				mode !== undefined
+					? { cached: isCached, mode }
+					: { cached: isCached }
+			row.install = updateStatus(row.install, installStatus)
+		}
+	}
+
+	// 2. Dynamic Sizing & Rendering
+	const maxNameLen = Math.max(
+		...Object.keys(rows).map((n) => n.length),
+		"Canister".length,
+	)
+
+	// Columns: Canister | ID | Crea | Buil | Bind | Install
+	const colWidths = [maxNameLen + 2, 29, 6, 6, 6, 12]
+
+	const cell = (
+		text: string,
+		width: number,
+		colorFn?: (s: string) => string,
+	) => {
+		// Calculate padding based on visible length (stripping ANSI)
+		const visibleLen = stripAnsi(text).length
+		const padLen = Math.max(0, width - visibleLen)
+		const content = text + " ".repeat(padLen)
+		return colorFn ? colorFn(content) : content
+	}
+
+	const border = color.dim(
+		"─".repeat(colWidths.reduce((a, b) => a + b + 3, 1)),
+	)
+	const headers = ["Canister", "ID", "Crea", "Buil", "Bind", "Install"]
+
+	console.log("")
+	console.log(border)
+	console.log(
+		" " +
+			headers
+				.map((h, i) => color.bold(cell(h, colWidths[i]!)))
+				.join(color.dim(" │ ")),
+	)
+	console.log(border)
+
+	for (const [name, data] of Object.entries(rows)) {
+		const renderStatus = (status?: { cached: boolean }) => {
+			if (!status) return cell("-", 6, color.dim)
+			return status.cached
+				? cell("⚡", 6, color.dim)
+				: cell("✔", 6, color.green)
+		}
+
+		const renderInstall = (status?: { cached: boolean; mode?: string }) => {
+			if (!status) return cell("-", 12, color.dim)
+
+			const modeStr = status.mode
+				? status.mode.charAt(0).toUpperCase() + status.mode.slice(1)
+				: "Install"
+
+			if (status.cached) return cell("⚡", 12, color.dim)
+			return cell(modeStr, 12, color.green)
+		}
+
+		console.log(
+			" " +
+				cell(name, colWidths[0]!) +
+				color.dim(" │ ") +
+				cell(data.id || "Not Created", colWidths[1]!) +
+				color.dim(" │ ") +
+				renderStatus(data.create) +
+				color.dim(" │ ") +
+				renderStatus(data.build) +
+				color.dim(" │ ") +
+				renderStatus(data.bindings) +
+				color.dim(" │ ") +
+				renderInstall(data.install),
+		)
+	}
+	console.log(border)
+	console.log("")
+}
+
 const deployRun = async ({
 	globalArgs,
 	cliTaskArgs,
@@ -721,7 +874,7 @@ const deployRun = async ({
 			}
 		})
 
-        // TODO: optimize, add to runTasks all at once
+		// TODO: optimize, add to runTasks all at once
 		// Generate Type Defs after tasks complete
 		yield* generateIceEnv()
 
@@ -823,6 +976,13 @@ const deployRun = async ({
 				"",
 			].join("\n"),
 		)
+
+		// Print deployment summary
+		const canisterIdsService = yield* CanisterIdsService
+		const ids = yield* canisterIdsService.getCanisterIds()
+
+		printDeploymentSummary(spans, ids, config.network)
+
 		s.stop("Deployed all canisters")
 	})()
 	// .pipe(
