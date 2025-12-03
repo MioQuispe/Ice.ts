@@ -1,11 +1,15 @@
-![image](https://github.com/user-attachments/assets/90c9aaeb-8421-4595-bd29-89b046636dda)
 
 # Ice.ts
+
 Typescript-native tooling & deployments for the IC. A task runner like hardhat.
 
 ```bash
 npm i -S @ice.ts/runner @ice.ts/canisters
 ````
+
+![image](https://github.com/user-attachments/assets/90c9aaeb-8421-4595-bd29-89b046636dda)
+
+## Why Ice?
 
 - **Npm install canister**: Install & distribute canisters via npm, leverage the ecosystem of node.js in your tasks
 
