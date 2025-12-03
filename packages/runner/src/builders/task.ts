@@ -272,8 +272,24 @@ const matchParam = match
  * A builder for defining ICE tasks with typed parameters, dependencies, and execution logic.
  *
  * This class is not instantiated directly. Use the {@link task} function to start building a task.
+ *
+ * @example
+ * ```typescript
+ * import { task } from "@ice.ts/runner"
+ *
+ * export const greet = task("greet")
+ *   .params({
+ *     name: { type: "string", default: "World" }
+ *   })
+ *   .run(async ({ args }) => {
+ *     console.log(`Hello, ${args.name}!`)
+ *   })
+ *   .make()
+ * ```
+ *
+ * @group Essentials
  */
-class TaskBuilder<
+export class TaskBuilder<
 	T extends Task,
 	TP extends Record<string, TaskParam>,
 	TCtx extends TaskCtx = TaskCtx,

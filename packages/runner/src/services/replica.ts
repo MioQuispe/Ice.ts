@@ -1,5 +1,6 @@
 import { Effect, Context, Data, Layer } from "effect"
 import type { ActorSubclass, HttpAgent, Identity } from "@icp-sdk/core/agent"
+import { IDL } from "@icp-sdk/core/candid"
 import type { canister_status_result } from "src/canisters/management_latest/management.types.js"
 import { Principal } from "@icp-sdk/core/principal"
 import { type } from "arktype"
@@ -177,17 +178,38 @@ export type LogVisibility =
 	| { allowed_viewers: string[] }
 
 /**
- * @group Canister Definitions
+ * Settings for creating or updating a canister.
+ *
+ * @example
+ * ```typescript
+ * const settings: CanisterSettings = {
+ *   controllers: ["aaaaa-aa", "bbbbb-bb"],
+ *   compute_allocation: 10n,
+ *   memory_allocation: 1_000_000_000n,
+ *   freezing_threshold: 2_592_000n, // 30 days in seconds
+ * }
+ * ```
+ *
+ * @group Config & Environment
  */
 export type CanisterSettings = {
+	/** Array of principal IDs that can control this canister. */
 	controllers?: string[]
+	/** Freezing threshold in seconds. Canister freezes if cycles drop below this. */
 	freezing_threshold?: bigint
+	/** Memory allocation in bytes. Reserves memory for the canister. */
 	memory_allocation?: bigint
+	/** Compute allocation percentage (0-100). Higher means more execution priority. */
 	compute_allocation?: bigint
+	/** Maximum reserved cycles limit. */
 	reserved_cycles_limit?: bigint
+	/** Maximum Wasm memory limit in bytes. */
 	wasm_memory_limit?: bigint
+	/** Log visibility setting. */
 	log_visibility?: LogVisibility
+	/** Initial cycles to add to the canister. */
 	cycles?: bigint
+	/** The sender principal for the operation. */
 	sender?: string
 }
 
@@ -281,55 +303,102 @@ export class ReplicaStartError extends Data.TaggedError("ReplicaStartError")<{
 	readonly cause?: Error
 }> {}
 
+// ============================================================================
+// REPLICA PARAMETER INTERFACES
+// ============================================================================
+
 /**
- * @group Environment
+ * Parameters for installing code to a canister.
+ * @group Config & Environment
+ */
+export interface InstallCodeParams {
+	/** The canister ID to install code to. */
+	canisterId: string
+	/** The compiled Wasm module bytes. */
+	wasm: Uint8Array
+	/** Candid-encoded initialization arguments. */
+	encodedArgs: Uint8Array
+	/** The identity to use for the call. */
+	identity: Identity
+	/** The install mode: "install", "upgrade", or "reinstall". */
+	mode: InstallModes
+}
+
+/**
+ * Parameters for querying canister status.
+ * @group Config & Environment
+ */
+export interface GetCanisterStatusParams {
+	/** The canister ID to query. */
+	canisterId: string
+	/** The identity to use for the call. */
+	identity: Identity
+}
+
+/**
+ * Parameters for creating a canister.
+ * @group Config & Environment
+ */
+export interface CreateCanisterParams {
+	/** Optional specific canister ID. If undefined, one will be generated. */
+	canisterId: string | undefined
+	/** The identity to use for the call (will be initial controller). */
+	identity: Identity
+	/** Optional canister settings (controllers, cycles, etc.). */
+	settings?: CanisterSettings
+}
+
+/**
+ * Parameters for creating an actor to interact with a canister.
+ * @group Config & Environment
+ */
+export interface CreateActorParams {
+	/** The canister ID to create an actor for. */
+	canisterId: string
+	/** The Candid interface factory (from .did.js file). */
+	canisterDID: { idlFactory: IDL.InterfaceFactory }
+	/** The identity to use for calls. */
+	identity: Identity
+}
+
+/**
+ * Options for stopping a replica.
+ * @group Config & Environment
+ */
+export interface StopOptions {
+	/** Whether to stop background or foreground processes. */
+	scope?: "background" | "foreground"
+}
+
+/**
+ * The interface for a replica connection (local or remote).
+ * @group Config & Environment
  */
 export type Replica = {
-	// TODO:
-	// topology: Topology
-	// subnet: Subnet?
+	/** The host URL of the replica. */
 	host: string
+	/** The port number of the replica. */
 	port: number
-	installCode: (params: {
-		canisterId: string
-		wasm: Uint8Array
-		encodedArgs: Uint8Array
-		identity: Identity
-		mode: InstallModes
-		// TODO: progress callback?
-	}) => Promise<void>
-	getCanisterStatus: (params: {
-		canisterId: string
-		identity: Identity
-	}) => Promise<CanisterStatus>
-	getCanisterInfo: (params: {
-		canisterId: string
-		identity: Identity
-	}) => Promise<CanisterInfo>
-	stopCanister: (params: {
-		canisterId: string
-		identity: Identity
-	}) => Promise<void>
-	removeCanister: (params: {
-		canisterId: string
-		identity: Identity
-	}) => Promise<void>
-	createCanister: (params: {
-		canisterId: string | undefined
-		identity: Identity
-		settings?: CanisterSettings
-	}) => Promise<string> // returns canister id
-	createActor: <_SERVICE>(params: {
-		canisterId: string
-		canisterDID: any
-		identity: Identity
-	}) => Promise<ActorSubclass<_SERVICE>>
+	/** Installs Wasm code to a canister. */
+	installCode: (params: InstallCodeParams) => Promise<void>
+	/** Gets the status of a canister (running, stopped, etc.). */
+	getCanisterStatus: (params: GetCanisterStatusParams) => Promise<CanisterStatus>
+	/** Gets detailed information about a canister. */
+	getCanisterInfo: (params: GetCanisterStatusParams) => Promise<CanisterInfo>
+	/** Stops a running canister. */
+	stopCanister: (params: GetCanisterStatusParams) => Promise<void>
+	/** Removes/deletes a canister. */
+	removeCanister: (params: GetCanisterStatusParams) => Promise<void>
+	/** Creates a new canister, returns the canister ID. */
+	createCanister: (params: CreateCanisterParams) => Promise<string>
+	/** Creates a typed actor for interacting with a canister. */
+	createActor: <_SERVICE>(params: CreateActorParams) => Promise<ActorSubclass<_SERVICE>>
+	/** Gets the subnet topology. */
 	getTopology: () => Promise<SubnetTopology[]>
+	/** Starts the replica. */
 	start: (ctx: ReplicaContext) => Promise<void>
-	stop: (
-		args?: { scope: "background" | "foreground" },
-		ctx?: ReplicaContext,
-	) => Promise<void>
+	/** Stops the replica. */
+	stop: (args?: StopOptions, ctx?: ReplicaContext) => Promise<void>
 }
 
 export class ReplicaService extends Context.Tag("Replica")<

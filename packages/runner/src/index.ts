@@ -5,8 +5,7 @@ import type {
 
 /**
  * Optional type wrapper, commonly used for Motoko optional values.
- *
- * @group Utilities
+ * @internal
  */
 export { Opt } from "./types/types.js"
 
@@ -59,7 +58,7 @@ export { canister } from "./builders/index.js"
  *
  * @group Essentials
  */
-export { task } from "./builders/index.js"
+export { task, TaskBuilder } from "./builders/index.js"
 
 /**
  * Creates a logical grouping of tasks or canisters.
@@ -83,6 +82,9 @@ export { task } from "./builders/index.js"
  */
 export { scope } from "./builders/index.js"
 
+/**
+ * @internal
+ */
 export type { CanisterScopeSimple } from "./builders/lib.js"
 /**
  * @group Canister Definitions
@@ -130,15 +132,25 @@ export type {
  * const user = await Ids.fromPem(pem)
  * ```
  *
- * @group Environment
+ * @group Config & Environment
  */
 export { Ids } from "./ids.js"
 
+/**
+ * @internal
+ */
 export type { InstallModes } from "./services/replica.js"
 /**
- * @group Execution Context
+ * Interface for module augmentation to extend TaskCtx with user-specific types.
+ * @group Config & Environment
  */
 export type { TaskCtxExtension } from "./services/taskRuntime.js"
+
+/**
+ * Deployment metadata for a canister.
+ * @group Config & Environment
+ */
+export type { Deployment } from "./services/deployments.js"
 
 /**
  * Represents a local PocketIC replica environment.
@@ -154,7 +166,7 @@ export type { TaskCtxExtension } from "./services/taskRuntime.js"
  * })
  * ```
  *
- * @group Environment
+ * @group Config & Environment
  */
 export { PICReplica } from "./services/pic/pic.js"
 
@@ -170,6 +182,8 @@ export { PICReplica } from "./services/pic/pic.js"
  *   isDev: false,
  * })
  * ```
+ *
+ * @group Config & Environment
  */
 export { ICReplica } from "./services/ic-replica.js"
 
@@ -181,25 +195,52 @@ export { type CreateInstanceOptions } from "@dfinity/pic"
 
 // Export additional types for user configs
 /**
- * @group Environment
+ * @group Config & Environment
  */
 export type {
 	ICEConfig,
 	ICEGlobalArgs,
 	ICEEnvironment,
 	TaskTree,
+	TaskTreeNode,
 	Scope,
 	Task,
 	ICEUser,
 	InferIceConfig,
+	IceTag,
 } from "./types/types.js"
 
 /**
- * @group Utilities
+ * Represents the interface for a replica (local or remote).
+ * @group Config & Environment
+ */
+export type {
+	Replica,
+	InstallCodeParams,
+	GetCanisterStatusParams,
+	CreateCanisterParams,
+	CreateActorParams,
+	StopOptions,
+	CanisterSettings,
+} from "./services/replica.js"
+
+/**
+ * Task parameter types for defining CLI inputs.
+ * @group Essentials
+ */
+export type {
+	TaskParam,
+	NamedParam,
+	PositionalParam,
+	BuiltInTaskType,
+} from "./types/types.js"
+
+/**
+ * @internal
  */
 export type { Principal } from "@dfinity/principal"
 /**
- * @group Utilities
+ * @internal
  */
 export type { Identity } from "@dfinity/agent"
 
@@ -239,17 +280,17 @@ export type { Identity } from "@dfinity/agent"
  *
  * export default Ice(async (env) => {
  *   // Load an identity from a PEM file
- *   const pem = await fs.readFile("./deployer.pem", "utf8")
- *   const deployer = await Ids.fromPem(pem)
+ *   const pem = await fs.readFile("./admin.pem", "utf8")
+ *   const admin = await Ids.fromPem(pem)
  *
  *   return {
  *     network: "local",
  *     replica: new PICReplica({ port: 8080 }),
  *     users: {
- *       default: deployer
+ *       admin
  *     },
  *     roles: {
- *       admin: "default"
+ *       deployer: "admin"
  *     }
  *   }
  * })
@@ -259,7 +300,7 @@ export type { Identity } from "@dfinity/agent"
  */
 export const Ice = <C extends ICEConfig>(
 	configFn: (globalArgs: ICEGlobalArgs) => Promise<C> | C,
-) => {
+): IceConfigLoader<C> => {
 	return async (globalArgs: ICEGlobalArgs) => {
 		const configResult =
 			typeof configFn === "function" ? configFn(globalArgs) : configFn
@@ -269,6 +310,15 @@ export const Ice = <C extends ICEConfig>(
 		return config
 	}
 }
+
+/**
+ * The return type of the `Ice()` configuration wrapper.
+ * A function that takes global arguments and returns a resolved configuration.
+ * @group Config & Environment
+ */
+export type IceConfigLoader<C extends ICEConfig> = (
+	globalArgs: ICEGlobalArgs,
+) => Promise<C>
 // TODO: figure out programmatic use & APIs
 /**
  * Internal CLI runner entrypoint.
@@ -289,6 +339,6 @@ export { runCli } from "./cli/index.js"
  * }
  * ```
  *
- * @group Execution Context
+ * @group Essentials
  */
 export type { TaskCtx } from "./services/taskRuntime.js"

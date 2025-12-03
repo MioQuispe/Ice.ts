@@ -1,0 +1,24 @@
+{
+    "$schema": "https://typedoc.org/schema.json",
+	"entryPoints": [
+		"../runner/src/docs-entry.ts"
+	],
+	"out": "reference",
+	"plugin": ["typedoc-plugin-markdown"],
+	"name": "API Reference",
+	"readme": "none",
+    "entryFileName": "index.md",
+	"hideBreadcrumbs": true,
+    "cleanOutputDir": true,
+    "flattenOutputFiles": false,
+    "parametersFormat": "table",
+    "enumMembersFormat": "table",
+    "typeDeclarationFormat": "table",
+	"exclude": [
+		"**/node_modules/**",
+		"**/*schema*" 
+	],
+    "skipErrorChecking": true,
+    "excludeInternal": true,
+    "maxTypeConversionDepth": 5
+}

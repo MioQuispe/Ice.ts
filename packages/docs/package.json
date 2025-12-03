@@ -1,20 +1,19 @@
 {
   "name": "@ice.ts/docs",
-  "version": "0.0.1",
-  "description": "Documentation for ICE",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "vocs dev",
-    "build": "vocs build",
-    "preview": "vocs preview"
-  },
-  "dependencies": {
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "vocs": "^1.0.0-alpha.61"
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "gen:api": "typedoc --options typedoc.runner.json"
   },
   "devDependencies": {
-    "@types/react": "^18.2.7",
-    "@types/react-dom": "^18.2.4",
-    "typescript": "^5.0.4"
+    "typedoc": "^0.28.14",
+    "typedoc-plugin-markdown": "^4.9.0",
+    "vitepress": "^1.4.1",
+    "typescript": "^5.6.3"
   }
 }
+

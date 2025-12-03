@@ -193,21 +193,48 @@ type ResolvedConfig = TaskCtxExtension &
 /**
  * Interface for module augmentation to extend TaskCtx with user-specific types.
  *
+ * Use this to get full autocompletion for your config's `users` and `roles` in tasks.
+ *
  * @example
  * ```typescript
+ * // ice.config.ts
+ * import { Ice, Ids, PICReplica, InferIceConfig, task } from "@ice.ts/runner"
+ *
+ * // Define your config
+ * const ice = Ice({
+ *   network: "local",
+ *   replica: new PICReplica(),
+ *   users: {
+ *     alice: Ids.fromDfx("alice"),
+ *     bob: Ids.fromDfx("bob"),
+ *   },
+ * })
+ *
+ * // Augment the module so TaskCtx knows your config shape
  * declare module "@ice.ts/runner" {
  *   interface TaskCtxExtension extends InferIceConfig<typeof ice> {}
  * }
+ *
+ * // Now ctx.users and ctx.roles have full autocompletion!
+ * export const greet = task("Greet Admin")
+ *   .run(async (ctx) => {
+ *     // ctx.users.alice, ctx.users.bob are available
+ *     console.log(`Alice's principal: ${ctx.users.alice.principal}`)
+ *     console.log(`Bob's principal: ${ctx.users.bob.principal}`)
+ *   })
+ *   .make()
+ *
+ * export default ice
  * ```
  *
- * @group Execution Context
+ * @group Config & Environment
  */
 export interface TaskCtxExtension {}
 
 /**
  * The full execution context available to tasks and canister hooks.
  *
- * @group Execution Context
+ * @group Essentials
  */
 export type TaskCtx<
 	A extends Record<string, unknown> = {},

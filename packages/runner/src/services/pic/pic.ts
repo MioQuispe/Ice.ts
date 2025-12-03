@@ -34,6 +34,11 @@ import {
 	Replica,
 	CanisterStopError,
 	getCanisterInfoFromManagementCanister,
+	type InstallCodeParams,
+	type GetCanisterStatusParams,
+	type CreateCanisterParams,
+	type CreateActorParams,
+	type StopOptions,
 } from "../replica.js"
 import { idlFactory } from "../../canisters/management_latest/management.did.js"
 import { sha256 } from "js-sha256"
@@ -77,7 +82,7 @@ const defaultPicConfig: CreateInstanceOptions = {
  * Implementation of the Replica for PocketIC.
  * Manages a local PocketIC instance for testing and development.
  *
- * @group Environment
+ * @group Config & Environment
  */
 export class PICReplica implements Replica {
 	public host: string
@@ -245,13 +250,11 @@ export class PICReplica implements Replica {
 	}
 
 	async stop(
-		args: {
-			scope: "background" | "foreground"
-		} = { scope: "foreground" },
+		args: StopOptions = { scope: "foreground" },
 		ctx?: ReplicaContext,
 	): Promise<void> {
 		if (this.monitor) {
-			await this.monitor.stop({ scope: args.scope }) //???
+			await this.monitor.stop({ scope: args.scope ?? "foreground" })
 		} else {
 			await this.stopExistingMonitor(ctx ?? this.ctx)
 		}
@@ -310,10 +313,7 @@ export class PICReplica implements Replica {
 		return mgmt
 	}
 
-	async getCanisterStatus(params: {
-		canisterId: string
-		identity: Identity
-	}): Promise<CanisterStatus> {
+	async getCanisterStatus(params: GetCanisterStatusParams): Promise<CanisterStatus> {
 		const { canisterId, identity } = params
 		assertStarted(this.client, "PICReplica.getCanisterStatus")
 		try {
@@ -332,10 +332,7 @@ export class PICReplica implements Replica {
 		}
 	}
 
-	async getCanisterInfo(params: {
-		canisterId: string
-		identity: Identity
-	}): Promise<CanisterInfo> {
+	async getCanisterInfo(params: GetCanisterStatusParams): Promise<CanisterInfo> {
 		const { canisterId, identity } = params
 		assertStarted(this.client, "PICReplica.getCanisterInfo")
 		if (!canisterId) {
@@ -478,11 +475,7 @@ export class PICReplica implements Replica {
 		return result
 	}
 
-	async createCanister(params: {
-		canisterId: string | undefined
-		identity: Identity
-		settings?: CanisterSettings
-	}): Promise<string> {
+	async createCanister(params: CreateCanisterParams): Promise<string> {
 		assertStarted(this.pic, "PICReplica.createCanister")
 		const { canisterId, identity, settings } = params
 		const controller = identity.getPrincipal()
@@ -596,10 +589,7 @@ export class PICReplica implements Replica {
 		}
 	}
 
-	async stopCanister(params: {
-		canisterId: string
-		identity: Identity
-	}): Promise<void> {
+	async stopCanister(params: GetCanisterStatusParams): Promise<void> {
 		const mgmt = await this.getMgmt(params.identity)
 		try {
 			await mgmt.stop_canister({
@@ -615,10 +605,7 @@ export class PICReplica implements Replica {
 		}
 	}
 
-	async removeCanister(params: {
-		canisterId: string
-		identity: Identity
-	}): Promise<void> {
+	async removeCanister(params: GetCanisterStatusParams): Promise<void> {
 		const mgmt = await this.getMgmt(params.identity)
 		try {
 			await mgmt.delete_canister({
@@ -634,13 +621,7 @@ export class PICReplica implements Replica {
 		}
 	}
 
-	async installCode(params: {
-		canisterId: string
-		wasm: Uint8Array
-		encodedArgs: Uint8Array
-		identity: Identity
-		mode: "install" | "upgrade" | "reinstall"
-	}): Promise<void> {
+	async installCode(params: InstallCodeParams): Promise<void> {
 		assertStarted(this.pic, "PICReplica.installCode")
 		const { canisterId, wasm, encodedArgs, identity, mode } = params
 		const mgmt = await this.getMgmt(identity)
@@ -826,11 +807,7 @@ export class PICReplica implements Replica {
 		}
 	}
 
-	async createActor<_SERVICE>(params: {
-		canisterId: string
-		canisterDID: any
-		identity: Identity
-	}): Promise<ActorSubclass<_SERVICE>> {
+	async createActor<_SERVICE>(params: CreateActorParams): Promise<ActorSubclass<_SERVICE>> {
 		assertStarted(this.client, "PICReplica.createActor")
 		const actor = this.pic!.createActor(
 			params.canisterDID.idlFactory,

@@ -1,205 +1,226 @@
 ![image](https://github.com/user-attachments/assets/90c9aaeb-8421-4595-bd29-89b046636dda)
 
+# Ice.ts
+Typescript-native tooling & deployments for the IC. A task runner like hardhat.
 
-# ICE
+```bash
+npm i -S @ice.ts/runner @ice.ts/canisters
+````
 
-ICE is a powerful task runner and CLI tool for the Internet Computer (similar to hardhat). With ICE, you can create composable workflows, simplify complex setups, and manage canister deployments using TypeScript instead of bash, taking the development experience of the Internet Computer to the next level.
+- **Npm install canister**: Install & distribute canisters via npm, leverage the ecosystem of node.js in your tasks
 
-## Features
+- **Web2-style DX**: No global dependencies. Just `npm install` and run. Everything stays local to the project.
 
-- **Composable**: Easily build complex workflows.
-- **Type-Safe**: Get instant feedback on configuration errors.
-- **NPM Canisters**: Install popular canisters (ICRC1, Ledger, NFID, Internet Identity) with zero setup.
-- **Smart Context & dependencies**: Automatic setup of actors, users, and other env variables from inside your scripts
-- **VSCode Extension**: Run tasks directly in your editor with inline results.
+- **Convenient APIs**: Access to users & replica inside tasks via `ctx`. Access dependencies inside `installArgs()`.
+
+- **Type-safe**:  No manual candid strings. Catch errors in your editor with full autocomplete for canister methods.
+
+- **Composable**: Easily combine multiple project setups without conflicts. Just import like normally.
+
+- **Simple yet Extensible**: A small but powerful API-surface. Easy to learn, yet fully programmable for more advanced use cases.
+
+---
 
 ## Quick Start
 
-1. Install the necessary packages:
-   ```bash
-   npm i -S @ice.ts/runner @ice.ts/canisters
-   ```
+### 1. Install
 
-2. Create an `ice.config.ts` file in your project root:
-   ```typescript
-   import { motokoCanister } from '@ice.ts/runner'
+```bash
+npm i -S @ice.ts/runner @ice.ts/canisters
+````
 
-   export const my_canister = motokoCanister({
-     src: 'canisters/my_canister/main.mo',
-   })
-   ```
+### 2\. Configure (`ice.config.ts`)
 
-3. Now its available under the exported name:
-   ```bash
-   npx ice run my_canister
-   ```
+Create an `ice.config.ts` file. This is the entry point for your environment.
 
-4. Or deploy all canisters:
-   ```bash
-   npx ice
-   ```
+```typescript
+import { Ice, PICReplica, Ids } from '@ice.ts/runner';
 
+export default Ice(async () => ({
+  network: 'local',
+  replica: new PICReplica({ port: 8080 }),
+  users: {
+    // Optional, use an existing identity:
+    default: await Ids.fromDfx("default"),
+    // Or:
+    // default: await Ids.fromPem("....")
+  }
+}));
+```
 
-   ![Kapture 2025-02-24 at 16 28 03](https://github.com/user-attachments/assets/877aa26e-c8f6-4120-8cd5-df6276f1121d)
+### 3\. Define a Canister
 
-# Core concepts
+Export your canister definitions using the builder API.
+
+```typescript
+import { canister } from '@ice.ts/runner';
+
+export const backend = canister.motoko({
+  src: 'canisters/backend/main.mo',
+}).make();
+```
+
+### 4\. Run
+
+Ice automatically generates lifecycle tasks (create, build, bindings, install...) for your exported canisters.
+
+```bash
+# Deploy a specific canister
+npx ice run backend:deploy
+
+# Or deploy everything
+npx ice
+```
+
+-----
+
+# Core Concepts
 
 ## Tasks
 
-Tasks are the main building block of ICE. They are composable, type-safe and can depend on other tasks.
+Tasks are the main building block of Ice. They are composable, type-safe and can depend on other tasks.
 
-In this example ICE will make sure the icrc1_ledger is deployed and and its actor created, prior to running the task.
+In this example, Ice ensures the `ledger` is deployed before running the minting logic.
 
 ```typescript
-import { task } from "@ice.ts/runner"
+import { task } from "@ice.ts/runner";
 
-export const mint_tokens = task("mint tokens")
-  .deps({
-    icrc1_ledger,
-  })
-  .run(async ({ deps: { icrc1_ledger } }) => {
-    const symbol = await icrc1_ledger.actor.icrc1_symbol()
-    console.log(symbol)
-  })
-```
-
-Run the task:
-
-```bash
-npx ice run mint_tokens
+export const mint_tokens = task("Mint tokens to admin")
+  .deps({ ledger }) // Declare dependency
+  .run(async ({ ctx, deps }) => {
+     // deps.ledger is fully typed!
+     const { ledger } = deps;
+     
+     const result = await ledger.actor.icrc1_transfer({
+        to: { 
+            owner: Principal.from(ctx.users.admin.principal), 
+            subaccount: [] 
+        },
+        amount: 100_000n,
+        // ... types are checked here
+     });
+     if ("Ok" in result) {
+        console.log(`Minted at block: ${result.Ok}`);
+     }
+  }).make();
 ```
 
 ## Dependencies
 
-Define inter-canister or task dependencies easily.
+Define inter-canister dependencies easily.
 
 ```typescript
-import { motokoCanister } from "@ice.ts/runner"
+import { canister } from "@ice.ts/runner";
 
-// Create a canister that depends on another one
-export const my_other_canister = motokoCanister({
-  src: "canisters/my_other_canister/main.mo",
-})
-  .deps({ my_canister })
+// 1. The independent canister
+export const ledger = canister.rust({ /* ... */ }).make();
+
+// 2. The dependent canister
+export const dex = canister.motoko({ src: "..." })
+  .deps({ ledger }).make(); // Ensures ledger exists before dex deploys
 ```
 
-You can also declare requirements and provide them later:
+## Typed Install & Upgrade Arguments
+
+Stop wrangling manual Candid strings. Ice allows you to pass fully typed arguments based on your canister's interface.
 
 ```typescript
-export const MyCanister = () => motokoCanister({
-  src: "canisters/my_canister/main.mo",
-})
-   .dependsOn({ my_other_canister })
-```
-Later, we can provide it through .deps().
-You’ll get type-level warnings if dependencies aren’t met:
+import { canister } from "@ice.ts/runner";
 
-<img src="https://github.com/user-attachments/assets/eca864f2-69ce-4d15-b82b-67b1b5f9224f" height="100">
-
-
-## Install args
-
-Pass fully typed install arguments instead of manual candid strings.
-
-```typescript
-import { motokoCanister, task } from "@ice.ts/runner"
-
-export const my_other_canister = motokoCanister({
-  src: "canisters/my_other_canister/main.mo",
-})
-  .deps({ my_canister })
-  .installArgs(async ({ deps }) => {
-    const someVal = await deps.my_canister.actor.someMethod()
-    return [deps.my_canister.canisterId, someVal]
+export const backend = canister.motoko({ src: "..." })
+  .deps({ ledger })
+  .installArgs(async ({ ctx, deps }) => {
+     // TypeScript ensures you return the correct types
+     return [
+       ctx.users.admin.principal, // Arg 1: Admin
+       deps.ledger.canisterId     // Arg 2: Ledger ID
+     ];
   })
+  .upgradeArgs(({ ctx, deps }) => [])
+  .make();
 ```
 
-We get type-level warnings for invalid args
+## Context (`ctx`)
 
-<img src="https://github.com/user-attachments/assets/ce5b11db-810e-4a6b-b1b0-60421445cddf" height="120">
-
-
-## Context
-
-Every task and canister gets a shared context with env variables, user info, and more.
+Every task receives a shared context containing the environment state.
 
 ```typescript
-
-import { task } from "@ice.ts/runner";
-
-export const example_task = task("example task")
+export const check_balance = task("Check Balance")
   .run(async ({ ctx }) => {
-    console.log(ctx.users.default.principal)
-    console.log(ctx.users.default.accountId)
+    // Access identities
+    console.log(ctx.users.default.principal);
+    console.log(ctx.users.default.accountId);
+    
+    // Interact with the Replica
+    const status = 
+        await ctx.replica.getCanisterStatus({ 
+            canisterId: "some-principal", 
+            identity: ctx.users.default.identity 
+        });
+    
+    // Run other tasks dynamically
+    await ctx.runTask(some_other_task);
 
-    // Run another task dynamically
-    const result = await ctx.runTask(my_other_task)
-  })
+    // and more...
+  }).make();
 ```
 
-## Scope
+## Scopes
 
-Tasks can also be grouped into scopes for better organization.
+Group tasks into namespaces for better organization.
 
 ```typescript
 import { scope } from "@ice.ts/runner";
 import { NNSDapp, NNSGovernance } from "@ice.ts/canisters";
 
-export const my_custom_nns = scope("NNS canisters", {
-   nns_dapp: NNSDapp(),
-   nns_governance: NNSGovernance(),
-   // ...etc.
-})
+export const nns = scope({
+   dapp: NNSDapp().make(),
+   governance: NNSGovernance().make(),
+}).make();
 ```
 
-These can now be accessed in the following way:
+Usage:
 
 ```bash
-npx ice run my_custom_nns:nns_dapp
-npx ice run my_custom_nns:nns_governance:install
+npx ice run nns:governance:deploy
 ```
 
-## Pre-built canisters
+-----
 
-Use popular canisters with a single line of code. ICE provides ready-to-use setups for many common canisters.
+## Npm install canister
+
+Use popular ecosystem canisters with a single line of code. Ice provides ready-to-use builders.
 
 ```typescript
 import {
   InternetIdentity,
   ICRC1Ledger,
-  DIP721,
-  Ledger,
-  DIP20,
-  CapRouter,
   NNS,
-  CandidUI,
-  ICRC7NFT,
-  CyclesWallet,
-  CyclesLedger,
   NFID,
-} from "@ice.ts/canisters"
+  CyclesWallet
+} from "@ice.ts/canisters";
 
-export const nns = NNS()
-export const icrc7_nft = ICRC7NFT()
-export const nfid = NFID()
-// And more...
+// Just export them to use them
+export const ii = InternetIdentity().make();
+export const ledger = ICRC1Ledger().installArgs(() => [
+    // custom args, fully type-checked
+]).make();
+export const nfid = NFID().make();
 ```
-It's that easy.
 
-## 🔌 VSCode Extension
+-----
+
+## 🔌 VS Code Extension
 
 Install from the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=MioQuispe.vscode-ice-extension).
 
-
 - **Inline CodeLens:** Quickly execute tasks directly from your source code.
-- **Actor Call Results:** results are displayed inline in your code. No more console logs.
-
+- **Inline Results:** See execution output without switching context.
+-----
 ![Kapture 2025-02-23 at 22 16 11](https://github.com/user-attachments/assets/66bfbea1-ca18-4b1e-8b91-a16bf37d7aea)
 
 
-## Community & Support
+## Community
 
-Feel free to open an issue, PR or join the Discord and message me there.
-
-- [Discord](https://discord.gg/SdeC8PF69M)
-- [Twitter](https://twitter.com/antimaximal)
+  - [Discord](https://discord.gg/SdeC8PF69M)
+  - [Twitter](https://twitter.com/antimaximal)

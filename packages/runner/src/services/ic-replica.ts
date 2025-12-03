@@ -34,6 +34,11 @@ import {
 	type InstallModes,
 	type CanisterSettings,
 	type LogVisibility,
+	type InstallCodeParams,
+	type GetCanisterStatusParams,
+	type CreateCanisterParams,
+	type CreateActorParams,
+	type StopOptions,
 	getCanisterInfoFromStateTree,
 } from "./replica.js"
 import {
@@ -130,7 +135,7 @@ export class DfxError extends Data.TaggedError("DfxError")<{
 /**
  * Implementation of the Replica for the Internet Computer (Mainnet) or standard `dfx` local replica.
  *
- * @group Environment
+ * @group Config & Environment
  */
 export class ICReplica implements Replica {
 	public readonly host: string = "http://0.0.0.0"
@@ -264,13 +269,10 @@ export class ICReplica implements Replica {
 		return cyclesLedger
 	}
 
-	public async getCanisterStatus({
-		canisterId,
-		identity,
-	}: {
-		canisterId: string
-		identity: Identity
-	}): Promise<CanisterStatus> {
+	public async getCanisterStatus(
+		params: GetCanisterStatusParams,
+	): Promise<CanisterStatus> {
+		const { canisterId, identity } = params
 		try {
 			if (!canisterId) {
 				return CanisterStatus.NOT_FOUND
@@ -290,13 +292,10 @@ export class ICReplica implements Replica {
 		}
 	}
 
-	public async getCanisterInfo({
-		canisterId,
-		identity,
-	}: {
-		canisterId: string
-		identity: Identity
-	}): Promise<CanisterInfo> {
+	public async getCanisterInfo(
+		params: GetCanisterStatusParams,
+	): Promise<CanisterInfo> {
+		const { canisterId, identity } = params
 		if (!canisterId) {
 			return { status: CanisterStatus.NOT_FOUND } as const
 		}
@@ -414,19 +413,8 @@ export class ICReplica implements Replica {
 		return result
 	}
 
-	public async installCode({
-		canisterId,
-		wasm,
-		encodedArgs,
-		identity,
-		mode,
-	}: {
-		canisterId: string
-		wasm: Uint8Array
-		encodedArgs: Uint8Array
-		identity: Identity
-		mode: InstallModes
-	}): Promise<void> {
+	public async installCode(params: InstallCodeParams): Promise<void> {
+		const { canisterId, wasm, encodedArgs, identity, mode } = params
 		try {
 			const maxSize = 3670016
 			const isOverSize = wasm.length > maxSize
@@ -526,15 +514,8 @@ export class ICReplica implements Replica {
 			this.invalidateCache(canisterId, identity)
 		}
 	}
-	public async createCanister({
-		canisterId,
-		identity,
-		settings,
-	}: {
-		canisterId: string | undefined
-		identity: Identity
-		settings?: CanisterSettings
-	}): Promise<string> {
+	public async createCanister(params: CreateCanisterParams): Promise<string> {
+		const { canisterId, identity, settings } = params
 		// Optimistic invalidation before we start, just in case
 		if (canisterId) {
 			this.invalidateCache(canisterId, identity)
@@ -673,13 +654,8 @@ export class ICReplica implements Replica {
 			})
 		}
 	}
-	public async stopCanister({
-		canisterId,
-		identity,
-	}: {
-		canisterId: string
-		identity: Identity
-	}): Promise<void> {
+	public async stopCanister(params: GetCanisterStatusParams): Promise<void> {
+		const { canisterId, identity } = params
 		try {
 			const mgmt = await this.getMgmt(identity)
 			await mgmt.stop_canister({
@@ -695,13 +671,8 @@ export class ICReplica implements Replica {
 		}
 	}
 
-	public async removeCanister({
-		canisterId,
-		identity,
-	}: {
-		canisterId: string
-		identity: Identity
-	}): Promise<void> {
+	public async removeCanister(params: GetCanisterStatusParams): Promise<void> {
+		const { canisterId, identity } = params
 		try {
 			const mgmt = await this.getMgmt(identity)
 			await mgmt.delete_canister({
@@ -717,15 +688,10 @@ export class ICReplica implements Replica {
 		}
 	}
 
-	public async createActor<_SERVICE>({
-		canisterId,
-		canisterDID,
-		identity,
-	}: {
-		canisterId: string
-		canisterDID: any
-		identity: Identity
-	}): Promise<ActorSubclass<_SERVICE>> {
+	public async createActor<_SERVICE>(
+		params: CreateActorParams,
+	): Promise<ActorSubclass<_SERVICE>> {
+		const { canisterId, canisterDID, identity } = params
 		const agent = await this.getAgent(identity)
 		return Actor.createActor<_SERVICE>(canisterDID.idlFactory, {
 			agent,
@@ -759,9 +725,7 @@ export class ICReplica implements Replica {
 		// }
 	}
 
-	public async stop(args?: {
-		scope: "background" | "foreground"
-	}): Promise<void> {
+	public async stop(args?: StopOptions): Promise<void> {
 		// if (!this.manual) {
 		// 	if (args?.scope === "background" && this.ctx?.background) {
 		// 		this.proc?.kill("SIGTERM")

@@ -18,6 +18,9 @@ cursor/**
 **/.ice
 **/.ice_test*
 **/tsup/**
+**/.vitepress/cache/**
+**/.vitepress/dist/**
+
 
 **/.cursorrules
 **/.cursorignore
@@ -31,3 +34,4 @@ packages/runner/tests/fixtures/ice_deploy_trace.json
 .gitignore
 packages/runner/tests/integration/caching-test-sharded.sh
 packages/runner/docs/**
+packages/docs/reference/**

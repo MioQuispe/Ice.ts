@@ -46,6 +46,7 @@ export { Tags } from "./lib.js"
 // export * from "./custom.js"
 // export * from "./scope.js"
 // export * from "./remote.js"
+
 export const canister: {
 	custom: typeof customCanister
 	motoko: typeof motokoCanister
@@ -57,5 +58,5 @@ export const canister: {
 	rust: rustCanister,
 	remote: remoteCanister,
 }
-export { task } from "./task.js"
+export { task, TaskBuilder } from "./task.js"
 export { scope } from "./scope.js"

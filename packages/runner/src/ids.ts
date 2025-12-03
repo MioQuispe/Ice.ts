@@ -7,6 +7,7 @@ import crypto from "node:crypto"
 import os from "node:os"
 import psList from "ps-list"
 import { principalToAccountId } from "./utils/utils.js"
+import { ICEUser } from "./types/types.js"
 
 export class IdsError extends Data.TaggedError("IdsError")<{
 	message: string
@@ -189,16 +190,16 @@ const runtime = ManagedRuntime.make(Layer.mergeAll(NodeContext.layer))
 /**
  * Utilities for managing Internet Computer identities.
  *
- * @group Environment
+ * @group Config & Environment
  */
 export const Ids = {
 	/**
-	 * Loads an identity from the local dfx configuration.
+	 * Loads an identity from dfx.
 	 *
 	 * @param name - The name of the dfx identity to load. Defaults to the currently selected identity.
 	 * @returns An `ICEUser` object containing the identity, principal, and account ID.
 	 */
-	fromDfx: async (name?: string) => {
+	fromDfx: async (name?: string): Promise<ICEUser> => {
 		try {
 			const user = await runtime.runPromise(getIdentity(name))
 			return user
@@ -213,7 +214,7 @@ export const Ids = {
 	 * @param pem - The PEM-encoded private key.
 	 * @returns An `ICEUser` object.
 	 */
-	fromPem: async (pem: string) => {
+	fromPem: async (pem: string): Promise<ICEUser> => {
 		try {
 			const identity = parseIdentityFromPem(pem)
 			const principal = identity.getPrincipal().toText()
