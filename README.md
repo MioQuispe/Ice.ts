@@ -1,7 +1,7 @@
 
 # Ice.ts
 
-Typescript-native tooling & deployments for the IC. A task runner like hardhat.
+Typescript-native tooling & deployments for the Internet Computer. A task runner like hardhat.
 
 ```bash
 npm i -S @ice.ts/runner @ice.ts/canisters
