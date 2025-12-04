@@ -24,7 +24,7 @@ export const NFIDSwapTrsStorage = (
 		| ((args: { ctx: TaskCtx }) => { canisterId?: string }),
 ) =>
 	canister
-		.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -41,6 +41,7 @@ export const NFIDSwapTrsStorage = (
 				),
 			}
 		})
+		.as<_SERVICE, [Opt<InitArgs>]>()
 		.dependsOn({ NFIDIdentityManager: NFIDIdentityManager.provides })
 		.installArgs(async ({ ctx, deps }) => {
 			// TODO: Add installation logic if needed.
@@ -58,11 +59,11 @@ export const NFIDSwapTrsStorage = (
 		})
 
 NFIDSwapTrsStorage.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./nfid/${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [Opt<InitArgs>]>()
 }

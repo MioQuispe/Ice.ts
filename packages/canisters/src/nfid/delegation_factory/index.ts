@@ -26,7 +26,7 @@ export const NFIDDelegationFactory = (
 ) => {
 	//   return customCanister<[Opt<InitArgs>], _SERVICE>((ctx) => {
 	return canister
-		.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -43,6 +43,7 @@ export const NFIDDelegationFactory = (
 				),
 			}
 		})
+		.as<_SERVICE, [Opt<InitArgs>]>()
 		.dependsOn({
 			NFIDIdentityManager: NFIDIdentityManager.provides,
 		})
@@ -74,11 +75,11 @@ export const NFIDDelegationFactory = (
 }
 
 NFIDDelegationFactory.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./nfid/${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [Opt<InitArgs>]>()
 }

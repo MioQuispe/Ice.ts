@@ -39,7 +39,7 @@ export const ICRC7NFT = (
 		| ((args: { ctx: TaskCtx }) => WrapperInitArgs),
 ) => {
 	return canister
-		.custom<_SERVICE, [ICRC7NFTInitArgs], [ICRC7NFTInitArgs]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -56,6 +56,7 @@ export const ICRC7NFT = (
 				),
 			}
 		})
+		.as<_SERVICE, [ICRC7NFTInitArgs], [ICRC7NFTInitArgs]>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -153,13 +154,13 @@ export const ICRC7NFT = (
 }
 
 ICRC7NFT.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [ICRC7NFTInitArgs], [ICRC7NFTInitArgs]>()
 }
 
 // cond([])

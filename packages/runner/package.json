@@ -1,7 +1,7 @@
 {
   "name": "@ice.ts/runner",
   "type": "module",
-  "version": "0.0.22",
+  "version": "0.0.24",
   "main": "dist/index.js",
   "private": false,
   "source": "src",

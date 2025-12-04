@@ -46,7 +46,7 @@ const canisterName = "dip20"
 // type DIP20Builder = ReturnType<typeof customCanister<CanisterInitArgs, _SERVICE>>
 export const DIP20 = () => {
 	const result = canister
-		.custom<_SERVICE, DIP20InitArgs>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			// const initArgs =
 			// 	typeof initArgsOrFn === "function" ? initArgsOrFn({ ctx }) : initArgsOrFn
 			return {
@@ -61,6 +61,7 @@ export const DIP20 = () => {
 				),
 			}
 		})
+		.as<_SERVICE, DIP20InitArgs>()
 		.dependsOn({ CapRouter: CapRouter().make() })
 	// .installArgs(async ({ ctx, mode, deps }) => {
 	// 	const { CapRouter } = deps
@@ -74,13 +75,13 @@ export const DIP20 = () => {
 }
 
 DIP20.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, DIP20InitArgs>()
 }
 
 DIP20.makeArgs = (initArgs: InitArgsSimple): DIP20InitArgs => {

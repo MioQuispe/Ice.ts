@@ -67,7 +67,7 @@ export type CustomCanisterScope<
 > = {
 	_tag: "scope"
 	id: symbol
-	tags: Array<string | symbol>
+	tags: Array<string>
 	description: string
 	defaultTask: "deploy"
 	// only limited to tasks
@@ -697,8 +697,7 @@ export class CustomCanisterBuilder<
 		this.#upgradeArgs = upgradeArgs
 	}
 
-	// ✨ ADD this method
-	as<T>(): CustomCanisterBuilder<
+	as<T, I = unknown, U = unknown>(): CustomCanisterBuilder<
 		I,
 		U,
 		CustomCanisterScope<T, I, U, D, P>,

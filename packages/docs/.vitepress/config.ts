@@ -1,15 +1,14 @@
 import { defineConfig } from "vitepress"
 
-// Defines where your docs live. If hosting on https://site.com/ice/, this should be "/ice/"
-const basePath = ""
-
 export default defineConfig({
-	base: basePath,
-	title: "ICE Task Runner",
+	// Defines where your docs live. If hosting on https://site.com/ice/, this should be "/ice/"
+	base: "/ice/",
+	title: "Ice.ts Task Runner",
 	description: "TypeScript Task Runner for the Internet Computer",
 
 	// Clean URLs (remove .html extensions)
 	cleanUrls: true,
+    srcExclude: ["**/content/**"],
 
 	themeConfig: {
 		// Top-level Navigation

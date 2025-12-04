@@ -48,7 +48,7 @@ export type RemoteCanisterScope<
 > = {
 	_tag: "scope"
 	id: symbol
-	tags: Array<string | symbol>
+	tags: Array<string>
 	description: string
 	defaultTask: "deploy"
 	children: {
@@ -362,7 +362,7 @@ export class RemoteCanisterBuilder<
 	constructor(scope: RemoteCanisterScope<_SERVICE>) {
 		this.#scope = scope
 	}
-	as<T>(): RemoteCanisterBuilder<Config, T, TCtx> {
+	as<T, I = unknown, U = unknown>(): RemoteCanisterBuilder<Config, T, TCtx> {
 		return this as unknown as RemoteCanisterBuilder<Config, T, TCtx>
 	}
 

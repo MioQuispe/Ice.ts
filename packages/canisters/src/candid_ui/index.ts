@@ -23,7 +23,7 @@ const Ids = {
 }
 
 export const CandidUI = () => {
-	const result = canister.custom<_SERVICE, CanisterInitArgs>(
+	const result = canister.custom(
 		async ({ ctx }) => {
 			return {
 				wasm: path.resolve(
@@ -37,17 +37,17 @@ export const CandidUI = () => {
 				canisterId: Ids.ic,
 			}
 		},
-	)
+	).as<_SERVICE, CanisterInitArgs>()
 
 	return result
 }
 
 CandidUI.remote = (canisterId?: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? Ids.ic,
 		candid: path.resolve(
 			__dirname,
 			`./${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, CanisterInitArgs>()
 }

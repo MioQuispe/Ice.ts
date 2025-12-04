@@ -27,7 +27,7 @@ export const CyclesWallet = (
 ) => {
 	// TODO: init args
 	return canister
-		.custom<_SERVICE, InitArgs>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -45,6 +45,7 @@ export const CyclesWallet = (
 				),
 			}
 		})
+		.as<_SERVICE, InitArgs>()
 		.installArgs(async ({ ctx }) => {
 			return []
 		})
@@ -54,8 +55,8 @@ export const CyclesWallet = (
 }
 
 CyclesWallet.remote = (canisterId?: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? CyclesWalletIds.ic,
 		candid: path.resolve(__dirname, "./cycles_wallet/cycles_wallet.did"),
-	})
+	}).as<_SERVICE, InitArgs>()
 }

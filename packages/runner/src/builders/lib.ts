@@ -1004,7 +1004,7 @@ export type StatusTask = Task<{
 export type CanisterScopeSimple = {
 	_tag: "scope"
 	id: symbol
-	tags: Array<string | symbol>
+	tags: Array<string>
 	description: string
 	defaultTask: "deploy"
 	// only limited to tasks

@@ -65,8 +65,9 @@ export const ICRC1Ledger = (
 		| InitArgsSimple
 		| ((args: { ctx: TaskCtx }) => InitArgsSimple),
 ) => {
+	// <_SERVICE, [LedgerArg]>
 	return canister
-		.custom<_SERVICE, [LedgerArg]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -89,6 +90,7 @@ export const ICRC1Ledger = (
 				),
 			}
 		})
+		.as<_SERVICE, [{ Init: InitArgs }], [{ Upgrade: [] | [UpgradeArgs] }]>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -109,22 +111,24 @@ export const ICRC1Ledger = (
 }
 
 ICRC1Ledger.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
-		canisterId,
-		candid: path.resolve(
-			__dirname,
-			`./${canisterName}/${canisterName}.did`,
-		),
-	})
+	return canister
+		.remote({
+			canisterId,
+			candid: path.resolve(
+				__dirname,
+				`./${canisterName}/${canisterName}.did`,
+			),
+		})
+		.as<_SERVICE>()
 }
 
-ICRC1Ledger.makeUpgradeArgs = (): [LedgerArg] => [
+ICRC1Ledger.makeUpgradeArgs = (): [{ Upgrade: [] | [UpgradeArgs] }] => [
 	{
 		Upgrade: [],
 	},
 ]
 
-ICRC1Ledger.makeArgs = (initArgs: InitArgsSimple): [LedgerArg] => {
+ICRC1Ledger.makeArgs = (initArgs: InitArgsSimple): [{ Init: InitArgs }] => {
 	const mintingAccount: Account = {
 		owner: Principal.from(initArgs.minting_account),
 		subaccount: [],

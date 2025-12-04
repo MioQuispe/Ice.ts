@@ -28,7 +28,7 @@ export const NFIDIcrc1Registry = (
 		| ((args: { ctx: TaskCtx }) => NFIDIcrc1RegistryInitArgs),
 ) =>
 	canister
-		.custom<_SERVICE, [InitArgs]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -45,6 +45,7 @@ export const NFIDIcrc1Registry = (
 				),
 			}
 		})
+		.as<_SERVICE, [InitArgs]>()
 		.dependsOn({ NFIDIdentityManager: NFIDIdentityManager.provides })
 		.installArgs(async ({ ctx, deps }) => {
 			// TODO: Add installation logic if needed.
@@ -62,11 +63,11 @@ export const NFIDIcrc1Registry = (
 		})
 
 NFIDIcrc1Registry.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./nfid/${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [InitArgs]>()
 }

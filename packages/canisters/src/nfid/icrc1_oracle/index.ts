@@ -34,7 +34,7 @@ export const NFIDIcrc1Oracle = (
 		| ((args: { ctx: TaskCtx }) => NFIDIcrc1OracleInitArgs),
 ) =>
 	canister
-		.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -51,6 +51,7 @@ export const NFIDIcrc1Oracle = (
 				),
 			}
 		})
+		.as<_SERVICE, [Opt<InitArgs>]>()
 		.dependsOn({ NFIDIdentityManager: NFIDIdentityManager.provides })
 		.installArgs(async ({ ctx, deps }) => {
 			const initArgs =
@@ -70,11 +71,11 @@ export const NFIDIcrc1Oracle = (
 		})
 
 NFIDIcrc1Oracle.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./nfid/${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [Opt<InitArgs>]>()
 }

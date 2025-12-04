@@ -12,6 +12,7 @@ import {
 	CustomCanisterConfig,
 	type TaskCtx,
 } from "@ice.ts/runner"
+import { T } from "vitest/dist/chunks/reporters.d.BFLkQcL6"
 // TODO: make subtasks easily overrideable. maybe helpers like withInstall(). or just let users keep chaining the builder api
 type InitArgsSimple = {
 	owner: string
@@ -52,21 +53,21 @@ export const InternetIdentity = (
 		| Partial<CustomCanisterConfig>
 		| ((env: TaskCtx) => Partial<CustomCanisterConfig>),
 ) => {
-	return canister.custom<_SERVICE, CanisterInitArgs>((env) => ({
+	return canister.custom((env) => ({
 		canisterId: InternetIdentityIds.ic,
 		...(ConfigOrFn && typeof ConfigOrFn === "function"
 			? ConfigOrFn(env.ctx)
 			: ConfigOrFn),
 		wasm,
 		candid,
-	}))
+	})).as<_SERVICE>()
 }
 
 InternetIdentity.remote = (canisterId?: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? InternetIdentityIds.ic,
 		candid,
-	})
+	}).as<_SERVICE, CanisterInitArgs>()
 }
 
 InternetIdentity.makeArgs = (initArgs: InitArgsSimple): CanisterInitArgs => {

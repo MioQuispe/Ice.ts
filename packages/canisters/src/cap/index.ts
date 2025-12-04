@@ -50,7 +50,7 @@ export const CapBucket = (
 	//   next_canisters = [0], // Vec<BucketId>,
 	// } = args
 	return canister
-		.custom<CAP_BUCKET_SERVICE, []>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -67,6 +67,7 @@ export const CapBucket = (
 				canisterId: CapBucketIds.ic,
 			}
 		})
+		.as<CAP_BUCKET_SERVICE, []>()
 		.installArgs(async ({ ctx }) => {
 			return [
 				// args: [{
@@ -82,10 +83,10 @@ export const CapBucket = (
 }
 
 CapBucket.remote = (canisterId?: string) => {
-	return canister.remote<CAP_BUCKET_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? CapBucketIds.ic,
 		candid: path.resolve(__dirname, "./cap/cap-bucket/cap-bucket.did"),
-	})
+	}).as<CAP_BUCKET_SERVICE>()
 }
 
 CapBucket.id = CapBucketIds
@@ -120,7 +121,7 @@ export const CapRoot = (
 	//   contract,
 	//   writers,
 	// } = args
-	return canister.custom<CAP_ROOT_SERVICE, []>(({ ctx }) => {
+	return canister.custom(({ ctx }) => {
 		const initArgs =
 			typeof initArgsOrFn === "function"
 				? initArgsOrFn({ ctx })
@@ -130,7 +131,7 @@ export const CapRoot = (
 			wasm: path.resolve(__dirname, "./cap/cap-root/cap-root.wasm.gz"),
 			canisterId: initArgs?.canisterId ?? CapRootIds.local,
 		}
-	})
+	}).as<CAP_ROOT_SERVICE, []>()
 	// .installArgs(async ({ ctx, mode }) => {
 	//   const initArgs =
 	//     typeof initArgsOrFn === "function" ? initArgsOrFn(ctx) : initArgsOrFn
@@ -144,10 +145,10 @@ export const CapRoot = (
 }
 
 CapRoot.remote = (canisterId?: string) => {
-	return canister.remote<CAP_ROOT_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? CapRootIds.ic,
 		candid: path.resolve(__dirname, "./cap/cap-root/cap-root.did"),
-	})
+	}).as<CAP_ROOT_SERVICE, []>()
 }
 
 CapRoot.id = CapRootIds
@@ -171,11 +172,11 @@ type CapRouterInitArgs = {
 }
 
 // Here we create the shape
-const capRouter = canister.custom<CAP_ROUTER_SERVICE, []>(({ ctx }) => ({
+const capRouter = canister.custom(({ ctx }) => ({
 	candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
 	wasm: path.resolve(__dirname, "./cap/cap-router/cap-router.wasm.gz"),
 	canisterId: CapRouterIds.local,
-}))
+})).as<CAP_ROUTER_SERVICE, []>()
 
 export const CapRouter = (
 	initArgsOrFn?:
@@ -208,10 +209,10 @@ export const CapRouter = (
 // CapRouter.provides = capRouter.make().children.install
 
 CapRouter.remote = (canisterId?: string) => {
-	return canister.remote<CAP_ROUTER_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? CapRouterIds.ic,
 		candid: path.resolve(__dirname, "./cap/cap-router/cap-router.did"),
-	})
+	}).as<CAP_ROUTER_SERVICE, []>()
 }
 
 // CapRouter.id = CapRouterIds

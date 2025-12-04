@@ -76,7 +76,7 @@ export const NNSDapp = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSDappInitArgs>),
 ) => {
 	return canister
-		.custom<NNSDappService, []>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -87,6 +87,7 @@ export const NNSDapp = (
 				candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
 			}
 		})
+		.as<NNSDappService, []>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -98,10 +99,12 @@ export const NNSDapp = (
 }
 
 NNSDapp.remote = (canisterId?: string) => {
-	return canister.remote<NNSDappService>({
-		canisterId: canisterId ?? NNSDappIds.ic,
-		candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
-	})
+	return canister
+		.remote({
+			canisterId: canisterId ?? NNSDappIds.ic,
+			candid: path.resolve(__dirname, "./nns/nns-ui/nns.did"),
+		})
+		.as<NNSDappService, []>()
 }
 
 NNSDapp.id = NNSDappIds
@@ -123,25 +126,24 @@ export const NNSSNSWasm = (
 		| ((args: { ctx: TaskCtx }) => Promise<SnsWasmCanisterInitPayload>),
 ) => {
 	return canister
-		.custom<NNSSNSWasmService, [SnsWasmCanisterInitPayload]>(
-			async ({ ctx }) => {
-				const initArgs =
-					typeof initArgsOrFn === "function"
-						? await initArgsOrFn({ ctx })
-						: initArgsOrFn
-				return {
-					canisterId: NNSSNSWasmIds.local,
-					wasm: path.resolve(
-						__dirname,
-						"./nns/nns-sns-wasm/nns-sns-wasm.wasm.gz",
-					),
-					candid: path.resolve(
-						__dirname,
-						"./nns/nns-sns-wasm/nns-sns-wasm.did",
-					),
-				}
-			},
-		)
+		.custom(async ({ ctx }) => {
+			const initArgs =
+				typeof initArgsOrFn === "function"
+					? await initArgsOrFn({ ctx })
+					: initArgsOrFn
+			return {
+				canisterId: NNSSNSWasmIds.local,
+				wasm: path.resolve(
+					__dirname,
+					"./nns/nns-sns-wasm/nns-sns-wasm.wasm.gz",
+				),
+				candid: path.resolve(
+					__dirname,
+					"./nns/nns-sns-wasm/nns-sns-wasm.did",
+				),
+			}
+		})
+		.as<NNSSNSWasmService, [SnsWasmCanisterInitPayload]>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -215,10 +217,10 @@ export const NNSSNSWasm = (
 }
 
 NNSSNSWasm.remote = (canisterId?: string) => {
-	return canister.remote<NNSSNSWasmService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSSNSWasmIds.ic,
 		candid: path.resolve(__dirname, "./nns/nns-sns-wasm/nns-sns-wasm.did"),
-	})
+	}).as<NNSSNSWasmService, [SnsWasmCanisterInitPayload]>()
 }
 
 NNSSNSWasm.id = NNSSNSWasmIds
@@ -239,7 +241,7 @@ export const NNSRoot = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSRootInitArgs>),
 ) => {
 	return canister
-		.custom<NNSRootService, []>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -253,6 +255,7 @@ export const NNSRoot = (
 				candid: path.resolve(__dirname, "./nns/nns-root/nns-root.did"),
 			}
 		})
+		.as<NNSRootService, []>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -266,10 +269,10 @@ export const NNSRoot = (
 }
 
 NNSRoot.remote = (canisterId?: string) => {
-	return canister.remote<NNSRootService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSRootIds.ic,
 		candid: path.resolve(__dirname, "./nns/nns-root/nns-root.did"),
-	})
+	}).as<NNSRootService, []>()
 }
 
 NNSRoot.id = NNSRootIds
@@ -366,7 +369,7 @@ export const NNSRegistry = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSRegistryInitArgs>),
 ) => {
 	return canister
-		.custom<NNSRegistryService, [RegistryCanisterInitPayload]>(
+		.custom(
 			async ({ ctx }) => {
 				const initArgs =
 					typeof initArgsOrFn === "function"
@@ -388,6 +391,7 @@ export const NNSRegistry = (
 				}
 			},
 		)
+		.as<NNSRegistryService, [RegistryCanisterInitPayload]>()
 		.installArgs(
 			async ({ ctx }) => {
 				const initArgs =
@@ -544,10 +548,10 @@ export const NNSRegistry = (
 }
 
 NNSRegistry.remote = (canisterId?: string) => {
-	return canister.remote<NNSRegistryService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSRegistryIds.ic,
 		candid: path.resolve(__dirname, "./nns/nns-registry/nns-registry.did"),
-	})
+	}).as<NNSRegistryService, [RegistryCanisterInitPayload]>()
 }
 
 NNSRegistry.id = NNSRegistryIds
@@ -568,7 +572,7 @@ export const NNSGovernance = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSGovernanceInitArgs>),
 ) => {
 	return canister
-		.custom<NNSGovernanceService, [NNSGovernanceInitArgs]>(
+		.custom(
 			async ({ ctx }) => {
 				const initArgs =
 					typeof initArgsOrFn === "function"
@@ -587,6 +591,7 @@ export const NNSGovernance = (
 				}
 			},
 		)
+		.as<NNSGovernanceService, [NNSGovernanceInitArgs]>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -850,13 +855,13 @@ export const NNSGovernance = (
 }
 
 NNSGovernance.remote = (canisterId?: string) => {
-	return canister.remote<NNSGovernanceService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSGovernanceIds.ic,
 		candid: path.resolve(
 			__dirname,
 			"./nns/nns-governance/governance_latest.did",
 		),
-	})
+	}).as<NNSGovernanceService, [NNSGovernanceInitArgs]>()
 }
 
 NNSGovernance.id = NNSGovernanceIds
@@ -877,7 +882,7 @@ export const NNSLedger = (
 		| ((args: { ctx: TaskCtx }) => Promise<LedgerCanisterPayload>),
 ) => {
 	return canister
-		.custom<NNSLedgerService, [LedgerCanisterPayload]>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -894,6 +899,7 @@ export const NNSLedger = (
 				),
 			}
 		})
+		.as<NNSLedgerService, [LedgerCanisterPayload]>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -931,10 +937,10 @@ export const NNSLedger = (
 }
 
 NNSLedger.remote = (canisterId?: string) => {
-	return canister.remote<NNSLedgerService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSLedgerIds.ic,
 		candid: path.resolve(__dirname, "./nns/nns-ledger/ledger-canister.did"),
-	})
+	}).as<NNSLedgerService, [LedgerCanisterPayload]>()
 }
 
 NNSLedger.id = NNSLedgerIds
@@ -955,7 +961,7 @@ export const NNSGenesisToken = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSGenesisTokenInitArgs>),
 ) => {
 	return canister
-		.custom<NNSGenesisTokenService, Gtc, Gtc>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -972,6 +978,7 @@ export const NNSGenesisToken = (
 				),
 			}
 		})
+		.as<NNSGenesisTokenService, Gtc, Gtc>()
 		.installArgs(
 			async ({ ctx }) => {
 				const initArgs =
@@ -1037,13 +1044,13 @@ export const NNSGenesisToken = (
 }
 
 NNSGenesisToken.remote = (canisterId?: string) => {
-	return canister.remote<NNSGenesisTokenService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSGenesisTokenIds.ic,
 		candid: path.resolve(
 			__dirname,
 			"./nns/nns-genesis-token/nns-genesis-token.did",
 		),
-	})
+	}).as<NNSGenesisTokenService, Gtc, Gtc>()
 }
 
 NNSGenesisToken.id = NNSGenesisTokenIds
@@ -1065,7 +1072,7 @@ export const NNSCyclesMinting = (
 ) => {
 	return (
 		canister
-			.custom<NNSCyclesMintingService, [Opt<NNSCyclesInitArgs>]>(
+			.custom(
 				async ({ ctx }) => {
 					const initArgs =
 						typeof initArgsOrFn === "function"
@@ -1089,6 +1096,7 @@ export const NNSCyclesMinting = (
 			//   NNSGovernance,
 			//   NNSLedger,
 			// })
+			.as<NNSCyclesMintingService, [Opt<NNSCyclesInitArgs>]>()
 			.installArgs(async ({ ctx }) => {
 				const initArgs =
 					typeof initArgsOrFn === "function"
@@ -1191,13 +1199,13 @@ export const NNSCyclesMinting = (
 }
 
 NNSCyclesMinting.remote = (canisterId?: string) => {
-	return canister.remote<NNSCyclesMintingService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSCyclesMintingIds.ic,
 		candid: path.resolve(
 			__dirname,
 			"./nns/nns-cycles-minting/nns-cycles-minting.did",
 		),
-	})
+	}).as<NNSCyclesMintingService, [Opt<NNSCyclesInitArgs>]>()
 }
 
 NNSCyclesMinting.id = NNSCyclesMintingIds
@@ -1218,7 +1226,7 @@ export const NNSLifeline = (
 		| ((args: { ctx: TaskCtx }) => Promise<NNSLifelineInitArgs>),
 ) => {
 	return canister
-		.custom<NNSLifelineService, []>(async ({ ctx }) => {
+		.custom(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? await initArgsOrFn({ ctx })
@@ -1235,6 +1243,7 @@ export const NNSLifeline = (
 				),
 			}
 		})
+		.as<NNSLifelineService, []>()
 		.installArgs(async ({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
@@ -1252,10 +1261,10 @@ export const NNSLifeline = (
 }
 
 NNSLifeline.remote = (canisterId?: string) => {
-	return canister.remote<NNSLifelineService>({
+	return canister.remote({
 		canisterId: canisterId ?? NNSLifelineIds.ic,
 		candid: path.resolve(__dirname, "./nns/nns-lifeline/nns-lifeline.did"),
-	})
+	}).as<NNSLifelineService, []>()
 }
 
 NNSLifeline.id = NNSLifelineIds

@@ -37,7 +37,7 @@ export const CyclesLedger = (
 ) => {
 	// TODO: init args
 	return canister
-		.custom<_SERVICE, [LedgerInitArgs], [LedgerUpgradeArgs]>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -55,6 +55,7 @@ export const CyclesLedger = (
 				),
 			}
 		})
+		.as<_SERVICE, [LedgerInitArgs], [LedgerUpgradeArgs]>()
 		.installArgs(async ({ ctx }) => {
 			return [
 				{
@@ -75,8 +76,8 @@ export const CyclesLedger = (
 }
 
 CyclesLedger.remote = (canisterId?: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId: canisterId ?? CyclesLedgerIds.ic,
 		candid: path.resolve(__dirname, "./cycles_ledger/cycles_ledger.did"),
-	})
+	}).as<_SERVICE, [LedgerInitArgs], [LedgerUpgradeArgs]>()
 }

@@ -21,7 +21,7 @@ export const DIP721 = (
 		| DIP721InitArgs
 		| ((args: { ctx: TaskCtx }) => DIP721InitArgs),
 ) => {
-	return canister.custom<_SERVICE, [Opt<InitArgs>]>(({ ctx }) => {
+	return canister.custom(({ ctx }) => {
 		// TODO: support async?
 		const initArgs =
 			typeof initArgsOrFn === "function"
@@ -38,7 +38,7 @@ export const DIP721 = (
 				`./${canisterName}/${canisterName}.did`,
 			),
 		}
-	})
+	}).as<_SERVICE, [Opt<InitArgs>]>()
 	// .installArgs(async ({ ctx, mode }) => {
 	// 	// TODO: optional cap canister?
 	// 	const initArgs =
@@ -65,13 +65,13 @@ type DIP721Args = {
 }
 
 DIP721.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, [Opt<InitArgs>]>()
 }
 
 DIP721.makeArgs = (args: DIP721Args) => {

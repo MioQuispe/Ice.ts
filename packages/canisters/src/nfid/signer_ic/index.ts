@@ -19,7 +19,7 @@ export const NFIDSignerIc = (
 		| ((args: { ctx: TaskCtx }) => { canisterId?: string }),
 ) =>
 	canister
-		.custom<_SERVICE, InitArgs>(({ ctx }) => {
+		.custom(({ ctx }) => {
 			const initArgs =
 				typeof initArgsOrFn === "function"
 					? initArgsOrFn({ ctx })
@@ -36,6 +36,7 @@ export const NFIDSignerIc = (
 				),
 			}
 		})
+		.as<_SERVICE, InitArgs>()
 		.installArgs(async ({ ctx }) => {
 			// TODO: Add installation logic if needed.
 			const initArgs =
@@ -46,11 +47,11 @@ export const NFIDSignerIc = (
 		})
 
 NFIDSignerIc.remote = (canisterId: string) => {
-	return canister.remote<_SERVICE>({
+	return canister.remote({
 		canisterId,
 		candid: path.resolve(
 			__dirname,
 			`./nfid/${canisterName}/${canisterName}.did`,
 		),
-	})
+	}).as<_SERVICE, InitArgs>()
 }
