@@ -2,11 +2,24 @@ import fs from 'fs';
 import path from 'path';
 
 // Configuration
-const SOURCE_DIR = './reference';
 const OUTPUT_FILE = 'full.md';
 
 /**
+ * Get source paths from command line arguments or use default.
+ * @returns {string[]} Array of source paths (files and/or directories)
+ */
+function getSourcePaths() {
+  const args = process.argv.slice(2);
+  if (args.length === 0) {
+    return ['./reference'];
+  }
+  return args;
+}
+
+/**
  * Helper function to recursively get all .md files from a directory.
+ * @param {string} dir - Directory path to scan
+ * @returns {Promise<string[]>} Array of markdown file paths
  */
 async function getMarkdownFilesRecursively(dir) {
   let results = [];
@@ -29,32 +42,67 @@ async function getMarkdownFilesRecursively(dir) {
 }
 
 /**
+ * Process a single source path (file or directory) and return all markdown files.
+ * @param {string} sourcePath - Path to a file or directory
+ * @returns {Promise<string[]>} Array of markdown file paths
+ */
+async function processSourcePath(sourcePath) {
+  const resolvedPath = path.resolve(sourcePath);
+  
+  // Check if path exists
+  if (!fs.existsSync(resolvedPath)) {
+    console.warn(`Warning: Path "${sourcePath}" does not exist. Skipping.`);
+    return [];
+  }
+  
+  const stats = await fs.promises.stat(resolvedPath);
+  
+  if (stats.isDirectory()) {
+    // If it's a directory, recursively get all .md files
+    return await getMarkdownFilesRecursively(resolvedPath);
+  } else if (stats.isFile()) {
+    // If it's a file, check if it's a markdown file
+    if (path.extname(resolvedPath).toLowerCase() === '.md') {
+      return [resolvedPath];
+    } else {
+      console.warn(`Warning: "${sourcePath}" is not a markdown file. Skipping.`);
+      return [];
+    }
+  }
+  
+  return [];
+}
+
+/**
  * Main function to combine markdown files.
  */
 async function combineMarkdownFiles() {
   try {
-    // Check if source directory exists
-    if (!fs.existsSync(SOURCE_DIR)) {
-      console.error(`Error: Directory "${SOURCE_DIR}" not found.`);
-      process.exit(1);
+    const sourcePaths = getSourcePaths();
+    
+    console.log(`Processing ${sourcePaths.length} source path(s): ${sourcePaths.join(', ')}`);
+
+    // Process all source paths and collect markdown files
+    const allMdFiles = [];
+    for (const sourcePath of sourcePaths) {
+      const mdFiles = await processSourcePath(sourcePath);
+      allMdFiles.push(...mdFiles);
     }
 
-    console.log(`Scanning "${SOURCE_DIR}" recursively for Markdown files...`);
+    // Remove duplicates (in case a file is specified multiple times)
+    const uniqueMdFiles = [...new Set(allMdFiles)];
 
-    // Get all md files recursively
-    const mdFiles = await getMarkdownFilesRecursively(SOURCE_DIR);
-
-    if (mdFiles.length === 0) {
-      console.log('No .md files found in the directory or subdirectories.');
+    if (uniqueMdFiles.length === 0) {
+      console.log('No .md files found in the specified paths.');
       return;
     }
 
-    console.log(`Found ${mdFiles.length} Markdown files. Combining...`);
+    console.log(`Found ${uniqueMdFiles.length} Markdown file(s). Combining...`);
 
     let combinedContent = '';
 
     // Iterate through files and build content
-    for (const filePath of mdFiles) {
+    for (const filePath of uniqueMdFiles) {
       const content = await fs.promises.readFile(filePath, 'utf8');
 
       // Add a header and separator for each file
@@ -67,10 +115,11 @@ async function combineMarkdownFiles() {
     // Write the result to output file
     await fs.promises.writeFile(OUTPUT_FILE, combinedContent, 'utf8');
 
-    console.log(`Successfully created "${OUTPUT_FILE}" with content from ${mdFiles.length} files.`);
+    console.log(`Successfully created "${OUTPUT_FILE}" with content from ${uniqueMdFiles.length} file(s).`);
 
   } catch (error) {
     console.error('An error occurred:', error);
+    process.exit(1);
   }
 }
 
