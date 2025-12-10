@@ -25,6 +25,9 @@ npm i -S @ice.ts/runner @ice.ts/canisters
 
 ---
 
+## Documentation
+For full documentation, visit [ice-ts.github.io/docs](https://ice-ts.github.io/docs)
+
 ## Quick Start
 
 ### 1. Install
@@ -224,7 +227,7 @@ Install from the [Visual Studio Marketplace](https://marketplace.visualstudio.co
 ![Kapture 2025-02-23 at 22 16 11](https://github.com/user-attachments/assets/66bfbea1-ca18-4b1e-8b91-a16bf37d7aea)
 
 
-## Community
+## Resources
 
   - [Discord](https://discord.gg/SdeC8PF69M)
   - [Twitter](https://twitter.com/antimaximal)
