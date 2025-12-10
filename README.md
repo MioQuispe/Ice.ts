@@ -28,6 +28,8 @@ npm i -S @ice.ts/runner @ice.ts/canisters
 ## Documentation
 For full documentation, visit [ice-ts.github.io/docs](https://ice-ts.github.io/docs)
 
+### Example repo
+Clone this repo to try it out quickly [github.com/MioQuispe/ice-demo](https://github.com/MioQuispe/ice-demo)
 ## Quick Start
 
 ### 1. Install
